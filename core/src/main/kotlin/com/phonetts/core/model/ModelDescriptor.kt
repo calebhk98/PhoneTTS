@@ -31,6 +31,12 @@ data class ModelDescriptor(
     val speedRange: ClosedFloatingPointRange<Float>,
     val defaultVoiceId: String,
     val defaultSpeed: Float,
+    /**
+     * Logical file name → on-device absolute path for this model's weights and side files,
+     * populated by the engine from the bundle it inspected. Generic (every model has files);
+     * WHICH names an engine looks up is the engine's own business, never shared code's.
+     */
+    val assetPaths: Map<String, String> = emptyMap(),
 ) {
     init {
         require(voices.isNotEmpty()) { "descriptor $modelId must expose at least one voice" }

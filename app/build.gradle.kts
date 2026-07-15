@@ -43,6 +43,14 @@ android {
 dependencies {
     implementation(project(":core"))
 
+    // The built-in engines. Present on the classpath = discovered by ServiceLoader at startup.
+    // This is the aggregation point; no code here names or branches on any specific model.
+    runtimeOnly(project(":engines:cosyvoice2"))
+    runtimeOnly(project(":engines:melotts"))
+    runtimeOnly(project(":engines:piper"))
+    runtimeOnly(project(":engines:kittentts"))
+    runtimeOnly(project(":engines:kokoro"))
+
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

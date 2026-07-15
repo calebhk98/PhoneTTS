@@ -1,27 +1,24 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+// A single engine module. It depends ONLY on :core's generic seams (VoiceEngine, the
+// Runtime/InferenceSession/Tensor inference seam, Phonemizer, EngineProvider). It knows
+// nothing about any other model, and nothing outside this module references it — deleting
+// this directory + its settings include removes the model cleanly (spec §1.1.6).
 plugins {
     alias(libs.plugins.kotlin.jvm)
-    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktlint)
-    `java-test-fixtures`
 }
 
 dependencies {
+    implementation(project(":core"))
     implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.serialization.json)
-
-    // Shared seam-test doubles (FakeEngine, FakeRuntime, FakePhonemizer, testDescriptor) live in
-    // src/testFixtures so every engine module can reuse them: testImplementation(testFixtures(project(":core"))).
-    testFixturesImplementation(libs.kotlinx.coroutines.core)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(testFixtures(project(":core")))
 }
 
-// Compile with whatever JDK runs Gradle (JDK 21 here) but emit JVM 17 bytecode, so the
-// Android :app module — which caps at 17 — can depend on :core unchanged.
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
