@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# PhoneTTS pre-commit hook (spec §8.1).
+# Blocks the commit on any failure:
+#   1. ktlint  — formatting
+#   2. detekt  — nesting depth, method/class size (never-nesting + no-large-files)
+#   3. tests   — the :core seam tests
+#
+# Install with: scripts/install-hooks.sh  (or: git config core.hooksPath scripts/githooks)
+
+set -e
+
+# Prefer the wrapper; fall back to a system Gradle if the wrapper can't run.
+if [ -x "./gradlew" ]; then
+    GRADLE="./gradlew"
+elif command -v gradle >/dev/null 2>&1; then
+    GRADLE="gradle"
+else
+    echo "pre-commit: no gradlew or gradle found; cannot run checks." >&2
+    exit 1
+fi
+
+echo "pre-commit: ktlint + detekt + :core tests ..."
+"$GRADLE" --quiet ktlintCheck detekt :core:test
+
+echo "pre-commit: all checks passed."
