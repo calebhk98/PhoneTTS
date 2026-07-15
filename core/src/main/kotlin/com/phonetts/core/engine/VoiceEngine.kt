@@ -47,5 +47,9 @@ interface VoiceEngine {
      * utterance is generated. [speed] always routes to the model's native duration/speed
      * parameter — never resample the output to change speed (that shifts pitch, spec §1.1.3).
      */
-    fun synthesize(text: String, voiceId: String, speed: Float): Flow<FloatArray>
+    fun synthesize(
+        text: String,
+        voiceId: String,
+        speed: Float,
+    ): Flow<FloatArray>
 }

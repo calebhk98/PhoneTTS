@@ -9,10 +9,8 @@ import com.phonetts.core.model.Origin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 
-/**
- * Shared test fixtures for the seam tests. A configurable [FakeEngine] plus a descriptor
- * builder so registry/resolver/audio tests can construct realistic inputs with no real model.
- */
+// Shared test fixtures for the seam tests. A configurable [FakeEngine] plus a descriptor
+// builder so registry/resolver/audio tests can construct realistic inputs with no real model.
 
 /** Build a valid [ModelDescriptor] for tests without hand-writing every field. */
 fun testDescriptor(
@@ -83,7 +81,11 @@ class FakeEngine(
 
     override fun voices(): List<Voice> = voiceList
 
-    override fun synthesize(text: String, voiceId: String, speed: Float): Flow<FloatArray> {
+    override fun synthesize(
+        text: String,
+        voiceId: String,
+        speed: Float,
+    ): Flow<FloatArray> {
         lastSpeed = speed
         lastVoiceId = voiceId
         return flowOf(*audio.toTypedArray())

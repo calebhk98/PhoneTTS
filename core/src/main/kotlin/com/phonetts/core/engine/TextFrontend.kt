@@ -23,5 +23,8 @@ class ModelInput(
  *  - CosyVoice2 -> a token-based frontend.
  */
 interface TextFrontend {
-    fun toModelInput(text: String, language: String): ModelInput
+    fun toModelInput(
+        text: String,
+        language: String,
+    ): ModelInput
 }
