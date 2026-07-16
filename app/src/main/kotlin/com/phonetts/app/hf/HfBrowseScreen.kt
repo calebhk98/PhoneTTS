@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -58,6 +60,39 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             }
         }
     }
+
+    state.variantChoice?.let { choice ->
+        VariantPicker(
+            choice = choice,
+            onPick = viewModel::chooseVariant,
+            onDismiss = viewModel::cancelVariantChoice,
+        )
+    }
+}
+
+/** Lets the user pick which weight precision to download when a repo ships more than one. */
+@Composable
+private fun VariantPicker(
+    choice: HfBrowseViewModel.VariantChoice,
+    onPick: (com.phonetts.core.download.hf.QuantizationVariant) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {},
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("Choose precision") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${choice.modelId} offers several precisions. Smaller = faster/less RAM.")
+                choice.variants.forEach { variant ->
+                    Button(onClick = { onPick(variant) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(variant.name)
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable
