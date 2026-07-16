@@ -7,6 +7,13 @@ complexity:
   NestedBlockDepth:
     active: true
     threshold: 3
+  TooManyFunctions:
+    # An engine implements the 6-method VoiceEngine interface plus a few private helpers;
+    # ~14 is a realistic ceiling before a class is genuinely doing too much.
+    active: true
+    thresholdInClasses: 15
+    thresholdInFiles: 20
+    thresholdInObjects: 15
   LongMethod:
     active: true
     threshold: 40
