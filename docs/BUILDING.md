@@ -72,9 +72,12 @@ Release builds are not signing-configured yet — see the "release readiness" no
 placeholder and the pieces below are **not yet wired**, so the app does not produce audio yet:
 
 - No startup wiring calls `EngineLoader.seed()` / builds the `RuntimeRegistry` + `EngineManager`.
-- No concrete `Runtime` (ONNX), `Phonemizer` (espeak-ng), or `AudioSink` (`AudioTrack`)
-  implementation exists yet — the interfaces are in `:core`, the implementations are Phase-2
-  on-device work.
+- `Runtime` (ONNX) and `AudioSink` (`AudioTrack`) now have concrete implementations.
+  `Phonemizer` does too (`EspeakPhonemizer`, an espeak-ng JNI bridge — see
+  [`docs/espeak-ng-integration.md`](espeak-ng-integration.md)), but it is **unverified without a
+  device build**: the espeak-ng source (`scripts/fetch-espeak-ng.sh`) and its data files
+  (`assets/espeak-ng-data/`) still need to be fetched/generated and the native build run once an
+  NDK is available.
 - The five engines' ONNX input/output tensor names and vocab are **unverified assumptions**
   (marked `// ASSUMPTION` in each engine) — they must be validated against the real exported
   model graphs before any audio is correct.

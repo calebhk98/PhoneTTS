@@ -9,9 +9,11 @@ Built to run on budget hardware (developed against a Samsung Galaxy A16, ~4 GB R
 but designed to run unmodified on better and worse phones.
 
 > **Status: in development.** Phase 1 (the deterministic "seams") and Phase 2 (all five engine
-> modules) are implemented and unit-tested on the JVM — 122 tests green. Real audio is the
-> remaining on-device work: enabling `:app`, the concrete ONNX/LLM runtimes, the espeak-ng
-> frontend, and model weights (none of which can run without the Android SDK + a device). See
+> modules) are implemented and unit-tested on the JVM. The espeak-ng phonemizer (JNI bridge +
+> `EspeakPhonemizer`, see [`docs/espeak-ng-integration.md`](docs/espeak-ng-integration.md)) is
+> wired but unverified without a device build. Real audio is the remaining on-device work:
+> enabling `:app`, the concrete ONNX/LLM runtimes, running the native espeak-ng build, and model
+> weights (none of which can run without the Android SDK + a device). See
 > [build order](#build-order) and the full [engineering spec](docs/SPEC.md).
 
 ## Highlights

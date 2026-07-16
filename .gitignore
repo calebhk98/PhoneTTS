@@ -24,3 +24,10 @@ models/
 
 # Claude Code local settings and agent worktrees
 .claude/
+
+# espeak-ng (GPLv3 source, ~hundreds of MB with generated data): fetched by hand with
+# scripts/fetch-espeak-ng.sh, never committed. See docs/espeak-ng-integration.md.
+app/src/main/cpp/espeak-ng/
+# The compiled language/phoneme data this build produces (espeak-ng-data/) is a build artifact
+# of that same fetch, ~3-50 MB depending on how many languages are kept; also not committed.
+app/src/main/assets/espeak-ng-data/

@@ -9,6 +9,13 @@ plugins {
     alias(libs.plugins.kotlin.compose) // Kotlin 2.0+ Compose compiler plugin
 }
 
+// The espeak-ng JNI bridge needs the NDK + CMake, which aren't present in every build
+// environment (core-only CI, or an SDK install without the NDK). Gate the native build on an
+// explicit opt-in so `:app` still assembles everywhere; when it's off, EspeakNative simply fails
+// to loadLibrary and EspeakPhonemizer falls back to PassthroughPhonemizer (logged, never crashes).
+// Real device builds pass -PwithEspeak=true after running scripts/fetch-espeak-ng.sh.
+val buildEspeak = (project.findProperty("withEspeak") as String?)?.toBooleanStrictOrNull() ?: false
+
 android {
     namespace = "com.phonetts.app"
     compileSdk = 35
@@ -25,7 +32,25 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+
+        // espeak-ng JNI bridge (Blocker 1 — docs/espeak-ng-integration.md). Only configured when
+        // -PwithEspeak=true (NDK + CMake present); CMake itself then links whether or not
+        // app/src/main/cpp/espeak-ng/ has been fetched (see that file's stub guard).
+        if (buildEspeak) {
+            externalNativeBuild {
+                cmake {
+                    // c++_shared keeps one copy of the STL shared across native libs in the APK
+                    // instead of statically duplicating it into libphonetts_espeak.so.
+                    arguments += "-DANDROID_STL=c++_shared"
+                }
+            }
+        }
     }
+
+    // NDK version is intentionally left to the installed default rather than pinned here: this
+    // module was authored without a local NDK to test against (no Android SDK in this dev
+    // environment). Any NDK new enough for CMake 3.22.1 (r23+) should work; pin this once a real
+    // build has been run and the resolved version is known-good.
 
     buildFeatures {
         compose = true
@@ -53,6 +78,19 @@ android {
             // critical keeps (ServiceLoader EngineProviders, kotlinx.serialization) for when it's enabled.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    // Entry point for the espeak-ng JNI bridge build (see the defaultConfig block above and
+    // src/main/cpp/CMakeLists.txt). version pins the CMake release Gradle downloads via the SDK
+    // manager, matching what espeak-ng's own CMakeLists.txt requires (cmake_minimum_required).
+    // Only wired when -PwithEspeak=true so builds without the NDK still assemble.
+    if (buildEspeak) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 }

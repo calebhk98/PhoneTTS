@@ -3,6 +3,14 @@
 **Date:** July 2026  
 **Scope:** Building espeak-ng with Android NDK and wrapping it as a shared phoneme frontend for on-device neural TTS (Piper/KittenTTS/Kokoro)
 
+> **Implementation status:** this research has been acted on. The CMake build, JNI wrapper,
+> `EspeakPhonemizer`, and data-installer described below are implemented — see
+> [`docs/espeak-ng-integration.md`](../espeak-ng-integration.md) for the concrete file list,
+> pinned version (1.52.0), exact build steps, and the specific places this research doc's
+> pseudocode diverged from what shipped (notably the `espeak_TextToPhonemes` clause-loop in
+> §4.1, which needed a real multi-clause loop, not a single call). This document is kept as-is
+> below as the original research log.
+
 ---
 
 ## 1. eSpeak NG Source, Version, and License

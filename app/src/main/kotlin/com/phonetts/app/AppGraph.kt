@@ -5,7 +5,7 @@ import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
 import com.phonetts.app.runtime.OnnxRuntime
 import com.phonetts.app.sideload.SideloadCoordinator
-import com.phonetts.app.text.PassthroughPhonemizer
+import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
@@ -32,7 +32,11 @@ class AppGraph(context: Context) {
     private val appContext = context.applicationContext
 
     val runtimeRegistry = RuntimeRegistry().apply { register(OnnxRuntime()) }
-    private val phonemizer = PassthroughPhonemizer()
+
+    // EspeakPhonemizer never throws (see its kdoc): it falls back to PassthroughPhonemizer
+    // internally and logs a warning if the native lib/data files aren't present on this device
+    // or this build (docs/espeak-ng-integration.md), so no try/catch is needed here.
+    private val phonemizer = EspeakPhonemizer(appContext)
     private val engineContext = EngineContext(runtimeRegistry, phonemizer, appContext.filesDir.absolutePath)
 
     val engineRegistry = EngineRegistry().also { EngineLoader.seed(it, engineContext) }

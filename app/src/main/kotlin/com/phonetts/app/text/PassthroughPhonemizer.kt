@@ -3,12 +3,18 @@ package com.phonetts.app.text
 import com.phonetts.core.text.Phonemizer
 
 /**
- * Placeholder [Phonemizer]. The real one is an espeak-ng NDK binding (see
- * docs/research/espeak-ng.md) — the last native piece before the phoneme-based engines
- * (Piper/KittenTTS/Kokoro) produce correct audio. Until then this returns the text unchanged so
- * the app is wired and doesn't crash; engines that phonemize will simply map few/no ids and
- * produce silence/garbage, consistent with the still-unvalidated ONNX tensor names.
+ * Labelled no-op [Phonemizer]: returns text unchanged. Was the sole implementation before the
+ * espeak-ng NDK binding landed (see docs/espeak-ng-integration.md); now it is [EspeakPhonemizer]'s
+ * fallback, used only when the native library fails to load, its data files are missing, or
+ * `espeak_Initialize` fails on a given device — never the primary path.
+ *
+ * Kept deliberately dumb: engines that phonemize will map few/no ids and produce silence/garbage
+ * on this fallback, which is the honest, fail-closed behavior (spec rule 4's spirit) — degrade
+ * loudly (a logged warning from [EspeakPhonemizer]) rather than silently mis-synthesizing.
  */
 class PassthroughPhonemizer : Phonemizer {
-    override fun phonemize(text: String, language: String): String = text
+    override fun phonemize(
+        text: String,
+        language: String,
+    ): String = text
 }
