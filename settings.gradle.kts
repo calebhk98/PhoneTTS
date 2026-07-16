@@ -29,6 +29,9 @@ include(":engines:piper")
 include(":engines:kittentts")
 include(":engines:kokoro")
 
+// Cross-module integration tests (pure JVM) — the one place all engines share a classpath.
+include(":integration")
+
 // :app is the Android application module (Compose UI, AudioTrack, ONNX engines).
 // It requires the Android SDK to configure/build, so it is intentionally left out of
 // the default build until the SDK is available. Uncomment locally / in CI to enable it:
