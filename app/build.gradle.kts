@@ -26,6 +26,30 @@ val buildCosyVoice = (project.findProperty("withCosyVoice") as String?)?.toBoole
 // Either native bridge pulls in the NDK + CMake externalNativeBuild; configure it if either is on.
 val buildNative = buildEspeak || buildCosyVoice
 
+// Auto-versioning: the patch number tracks git commits, so EVERY commit bumps the version
+// (0.1.0 -> 0.1.1 -> 0.1.2 …) with no manual edit. [VERSION_BASE_COMMITS] is the commit count at
+// which patch 0 was anchored; patch = commits since then. versionCode uses the raw count so it is
+// monotonic (Android requires an increasing integer). Falls back to a safe default when git history
+// isn't available (e.g. building from a source tarball) — CI checks out full history
+// (fetch-depth: 0) so the count is correct there. Bump MAJOR/MINOR by editing VERSION_MAJOR_MINOR
+// and re-anchoring VERSION_BASE_COMMITS.
+val VERSION_MAJOR_MINOR = "0.1"
+val VERSION_BASE_COMMITS = 64
+
+fun gitCommitCount(): Int =
+    runCatching {
+        val process =
+            ProcessBuilder("git", "rev-list", "--count", "HEAD")
+                .directory(rootDir)
+                .redirectErrorStream(true)
+                .start()
+        process.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 0
+    }.getOrDefault(0)
+
+val gitCommits = gitCommitCount()
+val autoVersionCode = gitCommits.coerceAtLeast(1)
+val autoVersionName = "$VERSION_MAJOR_MINOR.${(gitCommits - VERSION_BASE_COMMITS).coerceAtLeast(0)}"
+
 android {
     namespace = "com.phonetts.app"
     compileSdk = 35
@@ -34,8 +58,8 @@ android {
         applicationId = "com.phonetts"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = autoVersionCode
+        versionName = autoVersionName
 
         // Ship only the ABIs real target devices use (the Galaxy A16 is arm64-v8a) — keeps the
         // APK from carrying ONNX Runtime's x86 native libs that no phone needs.
@@ -67,6 +91,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true // exposes BuildConfig.VERSION_NAME to the in-app update check
     }
 
     compileOptions {

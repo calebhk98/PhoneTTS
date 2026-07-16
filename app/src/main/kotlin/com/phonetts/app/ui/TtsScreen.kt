@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Surface
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
@@ -78,6 +80,10 @@ fun TtsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("PhoneTTS")
+
+        state.update?.let { update ->
+            UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
+        }
 
         if (state.models.isEmpty()) {
             Text("No models yet. Browse Hugging Face or sideload a folder to add one.")
@@ -286,6 +292,27 @@ private fun FavoriteStar(
         text = if (isFavorite) "★" else "☆", // filled / outline star
         modifier = Modifier.clickable(onClick = onToggle),
     )
+}
+
+// Offer (never force) an update: a dismissible banner that opens the new APK's download URL in the
+// browser, where the user chooses to download and install it. Shown only when the update check found
+// a strictly-newer release with an installable APK.
+@Composable
+private fun UpdateBanner(
+    update: com.phonetts.core.update.UpdateStatus,
+    onDismiss: () -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    val target = update.apkDownloadUrl ?: update.releasePageUrl
+    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Update available: ${update.latestVersion} (you have ${update.currentVersion})")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { target?.let(uriHandler::openUri) }, enabled = target != null) { Text("Download") }
+                OutlinedButton(onClick = onDismiss) { Text("Not now") }
+            }
+        }
+    }
 }
 
 // DYNAMIC: one control per parameter the model DECLARES (descriptor.parameters — the SSOT the engine

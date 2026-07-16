@@ -24,22 +24,32 @@ Four abstractions (all in `:core`):
 - **`VoiceEngine`** — loads weights, runs inference. Never references another engine.
 - **`TextFrontend`** — turns text into model input (phonemes/tokens). Varies hardest between
   models, so it is deliberately **not** part of `VoiceEngine`; it lives *inside* each engine.
-- **`Runtime`** — pluggable inference backend (ONNX for most; a second, LLM-style one for
-  CosyVoice2). Behind an interface so adding one touches nothing else.
-- **`ModelDescriptor`** — the single authority for every user-visible model fact.
+  (Not every engine has one: CosyVoice's native runtime tokenizes internally.)
+- **`Runtime`** — pluggable inference backend behind an interface, so adding one touches nothing
+  else. Two exist: the ONNX `Runtime` most engines use, and `NativeTtsRuntime` — a non-ONNX ggml
+  backend that runs CosyVoice3's **entire** text→audio pipeline in one native call (CrispASR's
+  `cosyvoice3_tts`; see docs/COSYVOICE2.md).
+- **`ModelDescriptor`** — the single authority for every user-visible model fact, including the
+  **dynamic list of tunable `ModelParameter`s** a model supports (see rule 1). The UI is derived
+  entirely from it.
 
 ## The rules that must never be broken
 
 These come straight from the spec and are the whole point of the design:
 
 1. **SSOT — a model constant outside the resolver/descriptor layer is a bug.** No sample
-   rate, voice name, speed bound, or display name may appear as a literal in the UI or an
-   engine. If it does, you have two sources of truth and the guarantee is broken. This is a
-   review reflex and, where expressible, a detekt rule.
+   rate, voice name, speed bound, tunable-parameter, or display name may appear as a literal in
+   the UI or an engine. Tunable knobs are **discovered, not assumed**: each engine inspects the
+   model and declares the `ModelParameter`s it actually supports (speed, and anything a future
+   model adds like emotion), so the UI renders a control per parameter with no app change. A model
+   with no knob (CosyVoice3) declares none. If a fact is duplicated, the guarantee is broken.
 2. **Speed always routes to the model's native parameter** (Piper `length_scale`, others a
-   `speed`/duration arg). **Never** resample output audio to change speed — that shifts pitch.
-3. **One generation path.** `synthesize()` returns `Flow<FloatArray>`. Real-time playback and
-   file export are two *consumers* of that one flow. No second synthesis path.
+   `speed`/duration arg), carried in the `SynthesisParams` bag. **Never** resample output audio to
+   change speed — that shifts pitch. A model whose runtime exposes no speed knob advertises a
+   locked range rather than faking one.
+3. **One generation path.** `synthesize(text, voiceId, params: SynthesisParams)` returns
+   `Flow<FloatArray>`. Real-time playback and file export are two *consumers* of that one flow. No
+   second synthesis path.
 4. **`inspect()` fails closed.** `null` means "not mine," never a guess. If a dropped-in model
    can't be identified with confidence, the app drops to the user-pick fallback rather than
    guessing. That refusal is a feature.
@@ -112,6 +122,22 @@ Shared test fixtures (`FakeEngine`, `testDescriptor`) live in
 - Commits: clear, descriptive messages. Pre-commit hook runs ktlint + detekt + `:core:test`
   and blocks on failure (see `scripts/`).
 - Weights, `.onnx`/`.bin` files, and `models/` are git-ignored — never commit model data.
+
+## Release, versioning, and self-update
+
+- **CI + APK:** `.github/workflows/android.yml` runs the core seam tests on every push and builds
+  the debug APK; on a `v*` tag (or a manual run) it publishes the APK to a **GitHub Release** for
+  one-click sideload. The checked-in `gradle-wrapper.jar` **must** be the official one (the
+  workflow validates it) — regenerate with the pinned Gradle, never hand-edit it.
+- **Auto-versioning:** `app/build.gradle.kts` derives the version from git — `versionCode` is the
+  commit count, `versionName` is `0.1.<commits − VERSION_BASE_COMMITS>`, so **every commit bumps
+  the patch** (0.1.0 → 0.1.1 → …) with no manual edit. Bump MAJOR/MINOR by editing
+  `VERSION_MAJOR_MINOR` and re-anchoring `VERSION_BASE_COMMITS`. CI checks out full history so the
+  count is right.
+- **In-app update check (offer, never force):** `core/.../update/UpdateChecker` compares
+  `BuildConfig.VERSION_NAME` to the latest GitHub Release and, if newer, the app shows a
+  **dismissible** banner that opens the new APK's download URL — it never downloads or installs on
+  its own. Fail-closed: a network hiccup shows nothing.
 
 ## Build order (locked — hardest first, see spec §3–§4)
 

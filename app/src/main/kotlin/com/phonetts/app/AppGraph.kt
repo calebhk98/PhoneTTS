@@ -23,6 +23,7 @@ import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.resolver.Resolver
 import com.phonetts.core.sideload.DirectoryBundleReader
 import com.phonetts.core.sideload.ModelImporter
+import com.phonetts.core.update.UpdateChecker
 
 /** Raised when no engine can identify a bundle and no manual pick is wired yet (see resolver). */
 class UserPickRequiredException(bundleId: String) :
@@ -68,6 +69,10 @@ class AppGraph(context: Context) {
     val hfCatalog = HfCatalog(HttpUrlConnectionClient())
     val hfDownloader = HfDownloader(appContext.filesDir, importer)
 
+    // Checks GitHub Releases for a newer APK than the running build (BuildConfig.VERSION_NAME) and
+    // only ever OFFERS it — never force-updates (the UI shows a dismissible banner). Fail-closed.
+    val updateChecker = UpdateChecker(HttpUrlConnectionClient())
+
     // Manage (list sizes / delete) downloaded models. File I/O is injected so :core stays pure;
     // deleting the loaded model unloads it first and forgets its saved override (PrefsOverrideStore
     // is clearable), keeping the catalog, memory, and override store consistent.
@@ -101,5 +106,11 @@ class AppGraph(context: Context) {
         val modelsDir = appContext.filesDir.resolve(ModelStorage.MODELS_DIR)
         val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: return
         folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
+    }
+
+    companion object {
+        // Where the in-app update check looks for newer APKs (the GitHub Releases of this repo).
+        const val REPO_OWNER = "calebhk98"
+        const val REPO_NAME = "PhoneTTS"
     }
 }

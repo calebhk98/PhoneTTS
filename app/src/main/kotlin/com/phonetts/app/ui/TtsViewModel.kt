@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
+import com.phonetts.app.BuildConfig
 import com.phonetts.app.audio.AudioTrackSink
 import com.phonetts.core.audio.buffer.BufferedPlayback
 import com.phonetts.core.audio.buffer.GeneratedAudio
@@ -19,6 +20,7 @@ import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.WordCounter
 import com.phonetts.core.metrics.trackGeneration
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.update.UpdateStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +66,8 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // the voice picker reads this to star/sort — the voices themselves still come from
         // descriptor.voices (SSOT).
         val favoriteVoiceIds: Set<String> = emptySet(),
+        // Set when a newer APK is available on GitHub Releases; drives the dismissible update banner.
+        val update: UpdateStatus? = null,
     ) {
         /** The chosen parameter values, as the [SynthesisParams] bag the one generation path consumes. */
         val params: SynthesisParams get() = SynthesisParams(paramValues)
@@ -99,7 +103,24 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     init {
         refreshModels()
+        checkForUpdate()
     }
+
+    // Ask GitHub Releases (off the main thread) whether a newer APK exists. Only ever surfaces a
+    // dismissible banner — never downloads or installs on its own (offer, don't force). Fail-closed:
+    // any error leaves [UiState.update] null, so a network hiccup is silent.
+    private fun checkForUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val status =
+                runCatching {
+                    graph.updateChecker.check(BuildConfig.VERSION_NAME, AppGraph.REPO_OWNER, AppGraph.REPO_NAME)
+                }.getOrNull() ?: return@launch
+            if (status.updateAvailable) mutableState.update { it.copy(update = status) }
+        }
+    }
+
+    /** Dismiss the update banner for this session (the check runs again next launch). */
+    fun dismissUpdate() = mutableState.update { it.copy(update = null) }
 
     fun refreshModels() {
         val models = graph.catalog.list()

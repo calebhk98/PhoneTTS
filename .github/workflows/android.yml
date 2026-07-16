@@ -42,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so app/build.gradle.kts can derive the version from commit count
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -57,8 +59,12 @@ jobs:
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "pre=false" >> "$GITHUB_OUTPUT"
           else
-            # A manual (workflow_dispatch) run publishes the current app versionName as a prerelease.
-            echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+            # A manual (workflow_dispatch) run publishes the current auto-derived version as a
+            # prerelease. Keep these two constants in sync with app/build.gradle.kts.
+            base=64; major_minor="0.1"
+            count=$(git rev-list --count HEAD)
+            patch=$(( count - base )); [ "$patch" -lt 0 ] && patch=0
+            echo "tag=v${major_minor}.${patch}" >> "$GITHUB_OUTPUT"
             echo "pre=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Name the APK
