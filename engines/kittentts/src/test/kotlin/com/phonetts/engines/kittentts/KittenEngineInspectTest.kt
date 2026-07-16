@@ -11,17 +11,19 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Covers spec §9.1: `inspect()` must claim genuine KittenTTS bundles by their companion
- * files and fail closed — return null, never guess — for a bare `.onnx` and for a
- * foreign/unrelated bundle. Also covers `forcedMatch()`: the user's manual assignment is
- * authoritative, so it never refuses a bundle that has at least one `.onnx` weights file,
- * filling in family defaults (a single "Default" voice) when no real speaker table is present.
+ * Covers spec §9.1: `inspect()` must claim genuine KittenTTS bundles by their companion files
+ * and fail closed -- return null, never guess -- for a bare `.onnx` and for a foreign/unrelated
+ * bundle. The real voice companion is `voices.npz` (a binary ZIP archive), which
+ * [com.phonetts.core.model.ModelBundle] cannot carry as a text side file, so `inspect()` can only
+ * confirm the file is *present by name*, not read its embeddings (see [KittenEngine] KDoc).
+ * Also covers `forcedMatch()`: the user's manual assignment is authoritative, so it never refuses
+ * a bundle that has at least one `.onnx` weights file, filling in family defaults (a single
+ * "Default" voice) when no `voices.npz` is present.
  */
 class KittenEngineInspectTest {
     private val engine = KittenEngine(engineContext())
 
     private val validConfig = """{"model_type":"kitten_tts","sample_rate":24000}"""
-    private val validVoices = """["Bella","Jasper","Luna","Bruno","Rosie","Hugo","Kiki","Leo"]"""
 
     @Test
     fun `bare onnx with no companion files is refused`() {
@@ -40,18 +42,14 @@ class KittenEngineInspectTest {
             ModelBundle(
                 id = "some-other-family",
                 fileNames = setOf("weights.onnx", KittenEngine.CONFIG_FILE, KittenEngine.VOICES_FILE),
-                sideFiles =
-                    mapOf(
-                        KittenEngine.CONFIG_FILE to """{"model_type":"totally_different_family"}""",
-                        KittenEngine.VOICES_FILE to validVoices,
-                    ),
+                sideFiles = mapOf(KittenEngine.CONFIG_FILE to """{"model_type":"totally_different_family"}"""),
             )
 
         assertInspectRejects(engine, bundle)
     }
 
     @Test
-    fun `bundle missing the speaker table is refused even with a matching config`() {
+    fun `bundle missing the voices npz is refused even with a matching config`() {
         val bundle =
             ModelBundle(
                 id = "half-a-bundle",
@@ -68,11 +66,7 @@ class KittenEngineInspectTest {
             ModelBundle(
                 id = "kitten-nano",
                 fileNames = setOf("kitten_tts_nano.onnx", KittenEngine.CONFIG_FILE, KittenEngine.VOICES_FILE),
-                sideFiles =
-                    mapOf(
-                        KittenEngine.CONFIG_FILE to validConfig,
-                        KittenEngine.VOICES_FILE to validVoices,
-                    ),
+                sideFiles = mapOf(KittenEngine.CONFIG_FILE to validConfig),
                 rootPath = "/models/kitten-nano",
             )
 
@@ -83,10 +77,10 @@ class KittenEngineInspectTest {
         val descriptor = match.descriptor
         assertEquals(24_000, descriptor.sampleRate)
         assertEquals(8, descriptor.voices.size)
-        val expectedNames = listOf("Bella", "Jasper", "Luna", "Bruno", "Rosie", "Hugo", "Kiki", "Leo")
-        assertEquals(expectedNames, descriptor.voices.map { it.name })
+        assertEquals(KittenEngine.VOICE_NAMES, descriptor.voices.map { it.name })
+        assertEquals(KittenEngine.VOICE_NAMES, descriptor.voices.map { it.id })
         assertTrue(descriptor.voices.all { it.language == KittenEngine.LANGUAGE })
-        assertEquals("0", descriptor.defaultVoiceId)
+        assertEquals(KittenEngine.VOICE_NAMES.first(), descriptor.defaultVoiceId)
         assertEquals(
             "/models/kitten-nano/kitten_tts_nano.onnx",
             descriptor.assetPaths[KittenEngine.MODEL_ASSET_KEY],
@@ -102,7 +96,7 @@ class KittenEngineInspectTest {
     }
 
     @Test
-    fun `forcedMatch never returns null and fills in a default voice when no speaker table is present`() {
+    fun `forcedMatch never returns null and fills in a default voice when no voices npz is present`() {
         val bundle =
             ModelBundle(
                 id = "sideloaded-kitten",
@@ -123,12 +117,11 @@ class KittenEngineInspectTest {
     }
 
     @Test
-    fun `forcedMatch uses the real speaker table when one is present`() {
+    fun `forcedMatch uses the real 8-voice table when voices npz is present`() {
         val bundle =
             ModelBundle(
                 id = "sideloaded-with-voices",
                 fileNames = setOf("weights.onnx", KittenEngine.VOICES_FILE),
-                sideFiles = mapOf(KittenEngine.VOICES_FILE to validVoices),
                 rootPath = "/models/sideloaded-with-voices",
             )
 
@@ -136,6 +129,7 @@ class KittenEngineInspectTest {
 
         assertEquals(Origin.SIDELOADED, match.descriptor.origin)
         assertEquals(8, match.descriptor.voices.size)
+        assertEquals(KittenEngine.VOICE_NAMES, match.descriptor.voices.map { it.name })
     }
 
     @Test
