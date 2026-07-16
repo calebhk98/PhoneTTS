@@ -9,12 +9,31 @@ Built to run on budget hardware (developed against a Samsung Galaxy A16, ~4 GB R
 but designed to run unmodified on better and worse phones.
 
 > **Status: in development.** Phase 1 (the deterministic "seams") and Phase 2 (all five engine
-> modules) are implemented and unit-tested on the JVM. The espeak-ng phonemizer (JNI bridge +
-> `EspeakPhonemizer`, see [`docs/espeak-ng-integration.md`](docs/espeak-ng-integration.md)) is
-> wired but unverified without a device build. Real audio is the remaining on-device work:
-> enabling `:app`, the concrete ONNX/LLM runtimes, running the native espeak-ng build, and model
-> weights (none of which can run without the Android SDK + a device). See
-> [build order](#build-order) and the full [engineering spec](docs/SPEC.md).
+> modules) are implemented and unit-tested on the JVM, and the `:app` module compiles into an
+> installable APK. All five models are verified to produce real audio off-device (see
+> [`docs/MODEL-VERIFICATION.md`](docs/MODEL-VERIFICATION.md)); the espeak-ng phonemizer and the
+> CosyVoice native ggml runtime are opt-in native builds (`-PwithEspeak` / `-PwithCosyVoice`).
+> On-device/emulator verification of those native bridges is the remaining work. See the full
+> [engineering spec](docs/SPEC.md).
+
+## Download
+
+Grab the latest APK from the [**Releases page**](https://github.com/calebhk98/PhoneTTS/releases)
+(built by CI — see [`.github/workflows/android.yml`](.github/workflows/android.yml)).
+
+1. Download `phonetts-*.apk` from the newest release.
+2. On your phone, allow "install unknown apps" for your browser or files app.
+3. Open the APK to install.
+
+It's a **debug-signed** build (installs without a Play account, ideal for personal/sideload use).
+The ONNX engines (Piper, Kokoro, KittenTTS, MeloTTS) are included. espeak-ng phonemization and the
+CosyVoice engine are **opt-in native builds** not bundled in this baseline APK — build from source
+with `-PwithEspeak=true` / `-PwithCosyVoice=true` to include them (see
+[`docs/COSYVOICE2.md`](docs/COSYVOICE2.md) and
+[`docs/espeak-ng-integration.md`](docs/espeak-ng-integration.md)).
+
+No release yet? Push a `v*` tag (or run the **Android CI + APK release** workflow manually) and CI
+publishes the APK; every push also attaches the APK to its Actions run as a build artifact.
 
 ## Highlights
 
@@ -47,7 +66,7 @@ seen from different entry points. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | Module | What | Buildable without Android SDK? |
 |---|---|---|
 | `:core` | Pure Kotlin/JVM. Contracts, registry, resolver, descriptors, WAV encoder, streaming driver, manifest + SHA-256. All the testable "seam" logic. | **Yes** — its unit tests run on any JVM. |
-| `:app`  | Android app: Compose UI, `AudioTrack` playback, ONNX/LLM runtimes, concrete engines, downloader. | No (needs the SDK). Enable by uncommenting `include(":app")` in `settings.gradle.kts`. |
+| `:app`  | Android app: Compose UI, `AudioTrack` playback, ONNX/native runtimes, concrete engines, downloader. | No (needs the SDK). `settings.gradle.kts` includes it automatically when an SDK is present. |
 
 ## Building
 
