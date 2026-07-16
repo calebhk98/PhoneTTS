@@ -147,6 +147,6 @@ class KittenEngineInspectTest {
     fun `forcedMatch throws when the bundle has no onnx weights file at all`() {
         val bundle = ModelBundle(id = "no-weights", fileNames = setOf("readme.txt"))
 
-        assertFailsWith<IllegalStateException> { engine.forcedMatch(bundle) }
+        assertFailsWith<IllegalArgumentException> { engine.forcedMatch(bundle) }
     }
 }

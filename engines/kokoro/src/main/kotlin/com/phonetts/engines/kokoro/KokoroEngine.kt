@@ -25,8 +25,11 @@ import java.io.File
  * Runs on the shared "onnx" [com.phonetts.core.runtime.Runtime] (spec §5.3); its own
  * [KokoroFrontend] handles text -> token ids.
  */
-class KokoroEngine(
+internal class KokoroEngine(
     private val context: EngineContext,
+    // Injected so load() stays plain-JVM testable without real files on disk (parity with
+    // PiperEngine's sidecarReader). Defaults to a real file read.
+    private val fileReader: (path: String) -> String = { File(it).readText() },
 ) : VoiceEngine {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
@@ -145,7 +148,7 @@ class KokoroEngine(
 
     private fun loadVoiceTable(descriptor: ModelDescriptor) {
         val tablePath = descriptor.assetPaths[VOICES_TABLE_ASSET]
-        val entries = tablePath?.let { KokoroVoiceTable.parse(File(it).readText()) }.orEmpty()
+        val entries = tablePath?.let { KokoroVoiceTable.parse(fileReader(it)) }.orEmpty()
 
         if (entries.isEmpty()) {
             // Sideloaded/forced-match bundle with no real embeddings table on disk: fall back to

@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.flow
  * Verified facts (docs/research/model-facts.md): 44100 Hz sample rate, MIT license,
  * multilingual, native speed parameter `speed`.
  */
-class MeloEngine(
+internal class MeloEngine(
     private val context: EngineContext,
 ) : VoiceEngine {
     override val id: String = ENGINE_ID

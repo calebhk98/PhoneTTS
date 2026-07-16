@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.flow
  *    ships per model-facts.md). A bare `.onnx` with none of these companions, or a bundle
  *    whose config doesn't carry the marker, is refused — never guessed.
  */
-class KittenEngine(private val context: EngineContext) : VoiceEngine {
+internal class KittenEngine(private val context: EngineContext) : VoiceEngine {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
 
@@ -51,9 +51,10 @@ class KittenEngine(private val context: EngineContext) : VoiceEngine {
     }
 
     override fun forcedMatch(bundle: ModelBundle): EngineMatch {
-        val modelFile =
-            bundle.fileNames.firstOrNull { it.endsWith(MODEL_SUFFIX) }
-                ?: error("bundle '${bundle.id}' has no $MODEL_SUFFIX weights file; KittenTTS cannot run it")
+        val modelFile = bundle.fileNames.firstOrNull { it.endsWith(MODEL_SUFFIX) }
+        // A bundle with no weights is a bad ARGUMENT (unusable input), not bad object state —
+        // hence require/IllegalArgumentException, consistent with the other engines' forcedMatch.
+        requireNotNull(modelFile) { "bundle '${bundle.id}' has no $MODEL_SUFFIX weights file; KittenTTS cannot run it" }
 
         // User-assigned bundle: honor a real speaker table if present, otherwise supply the
         // family default of a single generic voice so the dropdowns have something to render

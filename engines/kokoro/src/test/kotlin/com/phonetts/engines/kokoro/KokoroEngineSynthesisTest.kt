@@ -9,8 +9,6 @@ import com.phonetts.core.testing.FakeRuntime
 import com.phonetts.core.testing.FakeSession
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
-import java.io.File
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -35,19 +33,16 @@ private const val VOICES =
  * session, and load()/unload() manage the one live session (spec §5.5).
  */
 class KokoroEngineSynthesisTest {
-    /** Writes a real Kokoro-shaped bundle to a temp dir so load() has real files to read from disk. */
-    private fun realBundle(): ModelBundle {
-        val dir = Files.createTempDirectory("kokoro-engine-test").toFile()
-        File(dir, "model.onnx").writeText("stub-weights")
-        File(dir, "config.json").writeText(CONFIG)
-        File(dir, "voices.json").writeText(VOICES)
-        return ModelBundle(
+    // A fully in-memory Kokoro-shaped bundle: inspect() reads the companions from sideFiles, and
+    // load() reads the voices table through the engine's injected fileReader (Fixture below) — no
+    // temp files needed. rootPath is a virtual string only used to build (unread) asset paths.
+    private fun inMemoryBundle(): ModelBundle =
+        ModelBundle(
             id = "kokoro-synth-test",
             fileNames = setOf("model.onnx", "config.json", "voices.json"),
             sideFiles = mapOf("config.json" to CONFIG, "voices.json" to VOICES),
-            rootPath = dir.absolutePath,
+            rootPath = "/virtual/kokoro",
         )
-    }
 
     private class Fixture {
         val session = FakeSession(outputs = mapOf("audio" to Tensor.floats(floatArrayOf(0.1f, -0.2f))))
@@ -58,6 +53,8 @@ class KokoroEngineSynthesisTest {
                     runtimes = RuntimeRegistry().apply { register(runtime) },
                     phonemizer = FakePhonemizer(),
                 ),
+                // The injected reader seam: load() gets the voices table without touching disk.
+                fileReader = { VOICES },
             )
     }
 
@@ -65,7 +62,7 @@ class KokoroEngineSynthesisTest {
     fun loadPopulatesVoicesFromTheEmbeddingsTable() =
         runTest {
             val fixture = Fixture()
-            val descriptor = requireNotNull(fixture.engine.inspect(realBundle())).descriptor
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
 
             fixture.engine.load(descriptor)
 
@@ -76,7 +73,7 @@ class KokoroEngineSynthesisTest {
     fun synthesizeRoutesSpeedToTheNativeSpeedParameter() =
         runTest {
             val fixture = Fixture()
-            val descriptor = requireNotNull(fixture.engine.inspect(realBundle())).descriptor
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
             fixture.engine.load(descriptor)
 
             fixture.engine.synthesize("Hello world.", "af_heart", 1.7f).toList()
@@ -89,7 +86,7 @@ class KokoroEngineSynthesisTest {
     fun synthesizeFeedsTheSelectedVoicesEmbeddingNotAnyOthers() =
         runTest {
             val fixture = Fixture()
-            val descriptor = requireNotNull(fixture.engine.inspect(realBundle())).descriptor
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
             fixture.engine.load(descriptor)
 
             fixture.engine.synthesize("Hi.", "bf_emma", 1.0f).toList()
@@ -102,7 +99,7 @@ class KokoroEngineSynthesisTest {
     fun synthesizeUsesTheOtherVoicesEmbeddingWhenThatOneIsSelectedInstead() =
         runTest {
             val fixture = Fixture()
-            val descriptor = requireNotNull(fixture.engine.inspect(realBundle())).descriptor
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
             fixture.engine.load(descriptor)
 
             fixture.engine.synthesize("Hi.", "af_heart", 1.0f).toList()
@@ -115,7 +112,7 @@ class KokoroEngineSynthesisTest {
     fun synthesizeEmitsOneChunkPerSentence() =
         runTest {
             val fixture = Fixture()
-            val descriptor = requireNotNull(fixture.engine.inspect(realBundle())).descriptor
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
             fixture.engine.load(descriptor)
 
             val audio = fixture.engine.synthesize("First sentence. Second sentence!", "af_heart", 1.0f).toList()
@@ -138,7 +135,7 @@ class KokoroEngineSynthesisTest {
     fun synthesizeWithAnUnknownVoiceIdFails() =
         runTest {
             val fixture = Fixture()
-            val descriptor = requireNotNull(fixture.engine.inspect(realBundle())).descriptor
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
             fixture.engine.load(descriptor)
 
             assertFailsWith<IllegalStateException> {
@@ -150,7 +147,7 @@ class KokoroEngineSynthesisTest {
     fun unloadClosesTheSessionAndDropsVoices() =
         runTest {
             val fixture = Fixture()
-            val descriptor = requireNotNull(fixture.engine.inspect(realBundle())).descriptor
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
             fixture.engine.load(descriptor)
 
             fixture.engine.unload()

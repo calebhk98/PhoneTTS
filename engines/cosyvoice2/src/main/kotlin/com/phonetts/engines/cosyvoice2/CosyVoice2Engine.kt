@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.flow
  * Real tensor names are not yet known (the real runtime lands later); the ones used here are
  * documented assumptions, called out at each call site.
  */
-class CosyVoice2Engine(
+internal class CosyVoice2Engine(
     private val context: EngineContext,
 ) : VoiceEngine {
     override val id: String = ENGINE_ID
