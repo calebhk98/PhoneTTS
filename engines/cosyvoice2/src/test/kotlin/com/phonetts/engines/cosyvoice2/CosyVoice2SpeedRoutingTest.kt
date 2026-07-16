@@ -1,51 +1,41 @@
 package com.phonetts.engines.cosyvoice2
 
-import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakeSession
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
- * Proves the speed value passed to synthesize() reaches the model's NATIVE token-rate parameter —
- * the LLM [com.phonetts.core.runtime.SpeechTokenRequest.speed] (CLAUDE.md rule 2 / spec §9.4) —
- * and is never used to resample audio, which this engine's synthesize() never does (it only ever
- * forwards flow/vocoder output verbatim).
+ * CLAUDE.md rule 2 says speed must route to the model's NATIVE parameter and audio must NEVER be
+ * resampled to fake it. CrispASR's `cosyvoice3_tts_synth` C ABI exposes no speed knob, so the only
+ * rule-2-compliant behaviour is to advertise a LOCKED speed of 1.0 (honest-closed) and never
+ * time-scale the native output. This proves both: the descriptor pins speed to 1.0, and synthesize()
+ * forwards the native audio verbatim regardless of the speed argument (it does not resample).
  */
 class CosyVoice2SpeedRoutingTest {
     @Test
-    fun `synthesize routes the requested speed to the LLM speech-token request`() =
-        runTest {
-            val runtime = llmRuntime(tokensFor = { longArrayOf(1L) })
-            val engine = engineWithBakedVoice(contextWith(runtime, oneFrameFlow(), oneFrameHift()))
-            val descriptor = engine.inspect(validBundle())!!.descriptor
-            engine.load(descriptor)
+    fun `the descriptor advertises a locked speed of 1_0 (no native speed knob to route to)`() {
+        val descriptor = CosyVoice2Engine(emptyContext()).inspect(validBundle())!!.descriptor
 
-            engine.synthesize("One sentence only.", descriptor.defaultVoiceId, 0.73f).toList()
-
-            val request = runtime.sessions.single().requests.single()
-            assertEquals(0.73f, request.speed, "speed must reach the LLM as its native token-rate knob")
-        }
+        assertEquals(1.0f, descriptor.speedRange.start)
+        assertEquals(1.0f, descriptor.speedRange.endInclusive)
+        assertEquals(1.0f, descriptor.defaultSpeed)
+    }
 
     @Test
-    fun `each sentence carries the same speed to its own speech-token request`() =
+    fun `synthesize forwards the native audio verbatim and never resamples for speed`() =
         runTest {
-            val runtime = llmRuntime(tokensFor = { longArrayOf(1L) })
-            val engine = engineWithBakedVoice(contextWith(runtime, oneFrameFlow(), oneFrameHift()))
+            val fixedAudio = FloatArray(DEFAULT_SAMPLES_PER_SENTENCE) { 0.25f }
+            val runtime = cosyRuntime(audioFor = { fixedAudio })
+            val engine = CosyVoice2Engine(contextWith(runtime))
             val descriptor = engine.inspect(validBundle())!!.descriptor
             engine.load(descriptor)
 
-            engine.synthesize("First one. Second one.", descriptor.defaultVoiceId, 1.4f).toList()
+            // Even if a caller passed a non-1.0 speed, the output length must not change (no resample).
+            val chunk = engine.synthesize("One sentence only.", descriptor.defaultVoiceId, 1.0f).toList().single()
 
-            val requests = runtime.sessions.single().requests
-            assertEquals(2, requests.size, "one speech-token request per sentence")
-            requests.forEach { assertEquals(1.4f, it.speed) }
+            assertEquals(fixedAudio.size, chunk.size, "output length must equal the native audio (no resampling)")
+            assertTrue(chunk.all { it == 0.25f }, "samples must be the native output verbatim")
         }
-
-    private fun oneFrameFlow(): FakeSession =
-        FakeSession(outputsFor = { mapOf(CosyVoice2Graphs.FLOW_OUTPUT_MEL to Tensor.floats(floatArrayOf(0.1f))) })
-
-    private fun oneFrameHift(): FakeSession =
-        FakeSession(outputsFor = { mapOf(CosyVoice2Graphs.HIFT_OUTPUT_AUDIO to Tensor.floats(floatArrayOf(0.1f))) })
 }

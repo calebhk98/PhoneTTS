@@ -4,7 +4,7 @@ import android.content.Context
 import com.phonetts.app.audio.export.ExportFormats
 import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
-import com.phonetts.app.runtime.LlamaCppSpeechTokenRuntime
+import com.phonetts.app.runtime.NativeCosyVoiceRuntime
 import com.phonetts.app.runtime.OnnxRuntime
 import com.phonetts.app.sideload.SideloadCoordinator
 import com.phonetts.app.text.EspeakPhonemizer
@@ -38,13 +38,14 @@ class AppGraph(context: Context) {
     private val appContext = context.applicationContext
 
     // Both pluggable backends live in one registry (spec §5.3): the ONNX Runtime the Tier-A/B
-    // engines use, and the non-ONNX llama.cpp/ggml SpeechTokenRuntime for CosyVoice2's LLM stage.
-    // The latter reports isAvailable()=false unless the app was built with -PwithCosyVoice=true, in
-    // which case CosyVoice2 simply isn't offered — registration itself is harmless and unconditional.
+    // engines use, and the non-ONNX ggml NativeTtsRuntime that runs CosyVoice3's whole text→audio
+    // pipeline. The latter reports isAvailable()=false unless the app was built with
+    // -PwithCosyVoice=true, in which case CosyVoice simply isn't offered — registration itself is
+    // harmless and unconditional.
     val runtimeRegistry =
         RuntimeRegistry().apply {
             register(OnnxRuntime())
-            register(LlamaCppSpeechTokenRuntime())
+            register(NativeCosyVoiceRuntime())
         }
 
     // EspeakPhonemizer never throws (see its kdoc): it falls back to PassthroughPhonemizer

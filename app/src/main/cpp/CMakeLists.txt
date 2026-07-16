@@ -2,7 +2,7 @@
 # each built only when Gradle passes the matching define (see app/build.gradle.kts):
 #
 #   -DPHONETTS_BUILD_ESPEAK=ON     (from -PwithEspeak=true)     -> the espeak-ng phonemizer, below
-#   -DPHONETTS_BUILD_COSYVOICE=ON  (from -PwithCosyVoice=true)  -> the llama.cpp CosyVoice2 LLM
+#   -DPHONETTS_BUILD_COSYVOICE=ON  (from -PwithCosyVoice=true)  -> the CrispASR ggml CosyVoice3 TTS
 #                                                                  bridge, in cosyvoice/CMakeLists.txt
 #
 # Neither native tree is vendored in git; each is fetched, pinned, by its own helper script and each
@@ -71,8 +71,8 @@ else()
 endif()
 endif() # PHONETTS_BUILD_ESPEAK
 
-# --- CosyVoice2 speech-token LLM JNI bridge (spec §5.3 second, LLM-style runtime). Its own
-#     CMakeLists builds llama.cpp (or a fail-closed stub). See docs/COSYVOICE2.md.
+# --- CosyVoice native ggml TTS JNI bridge (spec §5.3 second, non-ONNX runtime). Its own CMakeLists
+#     builds CrispASR's cosyvoice3_tts (or a fail-closed stub). See docs/COSYVOICE2.md.
 if(PHONETTS_BUILD_COSYVOICE)
     add_subdirectory(cosyvoice)
 endif()

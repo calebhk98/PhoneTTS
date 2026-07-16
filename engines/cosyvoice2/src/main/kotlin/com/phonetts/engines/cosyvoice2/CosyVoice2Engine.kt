@@ -6,118 +6,85 @@ import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
-import com.phonetts.core.runtime.InferenceSession
-import com.phonetts.core.runtime.Runtime
-import com.phonetts.core.runtime.SpeechTokenRequest
-import com.phonetts.core.runtime.SpeechTokenRuntime
-import com.phonetts.core.runtime.SpeechTokenSession
+import com.phonetts.core.runtime.NativeTtsRequest
+import com.phonetts.core.runtime.NativeTtsRuntime
+import com.phonetts.core.runtime.NativeTtsSession
 import com.phonetts.engines.common.AbstractVoiceEngine
-import com.phonetts.engines.common.closeAllQuietly
 import com.phonetts.engines.common.joinAssetPath
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
-import com.phonetts.engines.common.sideFileContainsAnyMarker
-import java.io.File
 
 /**
- * CosyVoice2-0.5B — the hardest model in the registry (see CLAUDE.md build order). It exists to
- * prove the seams are right, and its REAL pipeline is three genuinely different stages:
+ * CosyVoice — the hardest model in the registry (see CLAUDE.md build order). It exists to prove the
+ * seams are right, and it is the one engine whose runtime is NOT ONNX.
  *
- *  1. text -> Qwen2 BPE token ids ([CosyVoice2Frontend]);
- *  2. token ids -> speech token ids via an autoregressive LLM — the non-ONNX
- *     [SpeechTokenRuntime] (a llama.cpp / ggml GGUF loop on-device, id [LLM_RUNTIME_ID]). This is
- *     the "pluggable second runtime" the spec priced in, distinct from every other engine's ONNX;
- *  3. speech tokens -> mel -> waveform via the deterministic ONNX flow + HiFT graphs
- *     ([CosyVoice2Graphs], id [ONNX_RUNTIME_ID]).
+ * The deployable on-device model is **CosyVoice3-0.5B** (Apache-2.0, GGUF-native — the sibling of
+ * the CosyVoice2 model proven in PyTorch), and its runtime is CrispStrobe/CrispASR's self-contained
+ * C++/ggml `cosyvoice3_tts` engine: a Qwen2-0.5B LLM (speech-token head) → DiT-CFM flow →
+ * HiFi-GAN/iSTFT HiFT, with a native Qwen2 BPE tokenizer and a baked voice bank, all in one library
+ * (docs/COSYVOICE2.md; proven end-to-end in `scripts/model-verify/run_cosy_native.sh`).
  *
- * The speaker is a bundled pre-baked voice ([SpeakerPrompt]) — no reference wav in v1
- * (docs/research/cosyvoice2-mobile.md §Q5). Speed routes to the LLM's native token-rate parameter
- * ([SpeechTokenRequest.speed]) and is NEVER used to resample output audio (CLAUDE.md rule 2).
+ * Because that native library does the *entire* text→audio pipeline in one call, this engine is a
+ * thin delegate over the [NativeTtsRuntime] seam (id [NATIVE_RUNTIME_ID]) — there is deliberately no
+ * Kotlin [com.phonetts.core.engine.TextFrontend], speech-token stage, or ONNX flow/HiFT graph here
+ * (the earlier skeleton's Qwen2 token-id placeholder frontend and separate ONNX graphs are gone).
+ * The voice list is the SSOT-clean set the native session reads from the model's voices GGUF.
  *
- * Verified facts (docs/research/model-facts.md): 24000 Hz, Apache-2.0, native speed control.
- * The three-stage pipeline still fits the one `Flow<FloatArray>` generation path: each sentence
- * is one generate -> flow -> vocode pass, emitted as one chunk (spec §8).
+ * Speed: the CrispASR synth C ABI exposes no speed knob, and CLAUDE.md rule 2 forbids resampling
+ * output audio to fake one (that shifts pitch). So this engine advertises a **locked speed of 1.0**
+ * ([SPEED_RANGE]) — honest-closed — until the native path routes a native token-rate parameter.
+ *
+ * One engine loaded at a time (spec §5.5): [load] opens one [NativeTtsSession], [unload] closes it.
  */
 internal class CosyVoice2Engine(
     context: EngineContext,
-    // Injected so load() stays plain-JVM testable without a real voices.bin on disk (parity with
-    // KokoroEngine's fileReader seam) -- the baked voice is a binary little-endian blob.
-    private val fileReader: (path: String) -> ByteArray = { File(it).readBytes() },
 ) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
     override val engineLabel: String = ENGINE_ID
 
-    private val frontend = CosyVoice2Frontend(context.phonemizer)
     private var state: LoadedState? = null
 
     override fun isLoaded(): Boolean = state != null
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
-        if (!looksLikeCosyVoice2(bundle)) return null
+        if (!looksLikeCosyVoice(bundle)) return null
         return EngineMatch(id, buildDescriptor(bundle, Origin.BUILT_IN))
     }
 
     override fun forcedMatch(bundle: ModelBundle): EngineMatch {
         require(hasAnyComponent(bundle)) {
-            "bundle '${bundle.id}' has none of CosyVoice2's components (a .gguf LLM, $FLOW_FILE, $HIFT_FILE)" +
-                " — cannot force-assign it to the CosyVoice2 engine"
+            "bundle '${bundle.id}' has none of CosyVoice's GGUF components (an LLM/flow/HiFT/voices" +
+                " '$GGUF_SUFFIX') — cannot force-assign it to the CosyVoice engine"
         }
         return EngineMatch(id, buildDescriptor(bundle, Origin.SIDELOADED))
     }
 
     override suspend fun load(descriptor: ModelDescriptor) {
-        val llmRuntime = requireSpeechTokenRuntime()
-        val onnxRuntime = requireRuntime(context, ONNX_RUNTIME_ID, engineLabel)
-        check(llmRuntime.isAvailable()) {
-            "$engineLabel needs the native CosyVoice2 LLM backend (build the app with -PwithCosyVoice=true);" +
-                " it is not available on this device, so CosyVoice2 cannot load"
+        val runtime = requireNativeTtsRuntime()
+        check(runtime.isAvailable()) {
+            "$engineLabel needs the native CosyVoice ggml backend (build the app with -PwithCosyVoice=true);" +
+                " it is not available on this device, so CosyVoice cannot load"
         }
+        // The native runtime loads all four GGUF stages that sit as siblings in the model directory,
+        // so hand it that directory (the parent of the LLM gguf), not a single file.
         val llmPath = requireAssetPath(descriptor, LLM_ASSET, engineLabel)
-        val flowPath = requireAssetPath(descriptor, FLOW_ASSET, engineLabel)
-        val hiftPath = requireAssetPath(descriptor, HIFT_ASSET, engineLabel)
-        val prompt = loadSpeakerPrompt(descriptor)
+        val modelDir = llmPath.substringBeforeLast('/', missingDelimiterValue = ".")
 
         unload()
-        state = openState(descriptor, llmRuntime, onnxRuntime, llmPath, flowPath, hiftPath, prompt)
-    }
-
-    // Rolls the partial load back on ANY failure so a half-open pipeline never leaks native
-    // sessions on a 4 GB phone -- the same rationale as engines.common.openWithRollback, but here
-    // over a mix of a SpeechTokenSession and two InferenceSessions.
-    @Suppress("TooGenericExceptionCaught", "LongParameterList")
-    private fun openState(
-        descriptor: ModelDescriptor,
-        llmRuntime: SpeechTokenRuntime,
-        onnxRuntime: Runtime,
-        llmPath: String,
-        flowPath: String,
-        hiftPath: String,
-        prompt: SpeakerPrompt,
-    ): LoadedState {
-        var llm: SpeechTokenSession? = null
-        var flow: InferenceSession? = null
-        try {
-            llm = llmRuntime.openSpeechSession(llmPath)
-            flow = onnxRuntime.createSession(flowPath)
-            val hift = onnxRuntime.createSession(hiftPath)
-            return LoadedState(descriptor, llm, flow, hift, prompt)
-        } catch (failure: Throwable) {
-            closeAllQuietly(flow)
-            runCatching { llm?.close() }
-            throw failure
-        }
+        val session = runtime.openTtsSession(modelDir)
+        state = LoadedState(descriptor, session, voicesFrom(session))
     }
 
     override fun unload() {
-        state?.let {
-            closeAllQuietly(it.flowSession, it.hiftSession)
-            runCatching { it.llmSession.close() }
-        }
+        state?.let { runCatching { it.session.close() } }
         state = null
     }
 
-    override fun voices(): List<Voice> = state?.descriptor?.voices ?: listOf(DEFAULT_VOICE)
+    // After load(), the voice list is the SSOT set the native session read from the voices GGUF;
+    // before load() (the picker showing a not-yet-loaded model), fall back to the descriptor's
+    // single default so the UI always has something valid to show.
+    override fun voices(): List<Voice> = state?.voices ?: state?.descriptor?.voices ?: listOf(DEFAULT_VOICE)
 
     override fun synthesizeSentence(
         sentence: String,
@@ -125,48 +92,41 @@ internal class CosyVoice2Engine(
         speed: Float,
     ): FloatArray {
         val loaded = checkNotNull(state) { "$engineLabel.synthesizeSentence called before load()" }
-        val voice = loaded.descriptor.voices.firstOrNull { it.id == voiceId } ?: loaded.descriptor.voices.first()
-        val input = frontend.toModelInput(sentence, voice.language)
-        val speechTokens =
-            loaded.llmSession.generate(
-                SpeechTokenRequest(
-                    textTokenIds = input.tokenIds,
-                    speakerEmbedding = loaded.prompt.embedding,
-                    speed = speed,
-                    promptSpeechTokens = loaded.prompt.promptTokens,
-                ),
-            )
-        val mel = CosyVoice2Graphs.decodeFlow(loaded.flowSession, speechTokens, loaded.prompt, engineLabel)
-        return CosyVoice2Graphs.vocode(loaded.hiftSession, mel, engineLabel)
+        // speed is intentionally unused: SPEED_RANGE locks it to 1.0 (see the class kdoc) so the
+        // native synth is never asked to time-scale, and audio is never resampled (CLAUDE.md rule 2).
+        val voiceName = loaded.voices.firstOrNull { it.id == voiceId }?.id ?: loaded.voices.first().id
+        return loaded.session.synthesize(NativeTtsRequest(text = sentence, voiceName = voiceName))
     }
 
-    private fun requireSpeechTokenRuntime(): SpeechTokenRuntime {
-        val runtime = requireRuntime(context, LLM_RUNTIME_ID, engineLabel)
-        return runtime as? SpeechTokenRuntime
-            ?: error("$engineLabel: runtime '$LLM_RUNTIME_ID' is registered but is not a SpeechTokenRuntime")
+    private fun requireNativeTtsRuntime(): NativeTtsRuntime {
+        val runtime = requireRuntime(context, NATIVE_RUNTIME_ID, engineLabel)
+        return runtime as? NativeTtsRuntime
+            ?: error("$engineLabel: runtime '$NATIVE_RUNTIME_ID' is registered but is not a NativeTtsRuntime")
     }
 
-    private fun loadSpeakerPrompt(descriptor: ModelDescriptor): SpeakerPrompt {
-        val path = descriptor.assetPaths[VOICES_ASSET] ?: return CosyVoice2SpeakerPrompt.fallback()
-        val bytes = runCatching { fileReader(path) }.getOrNull() ?: return CosyVoice2SpeakerPrompt.fallback()
-        return CosyVoice2SpeakerPrompt.parse(bytes) ?: CosyVoice2SpeakerPrompt.fallback()
+    private fun voicesFrom(session: NativeTtsSession): List<Voice> {
+        val names = session.voiceNames
+        if (names.isEmpty()) return listOf(DEFAULT_VOICE)
+        return names.map { name -> Voice(id = name, name = prettyVoiceName(name), language = languageOf(name)) }
     }
 
     /**
-     * Fail-closed recognition (spec §9.1): confident only when ALL three pipeline components are
-     * present (a `.gguf` LLM, the flow ONNX and the HiFT ONNX) AND the config side file carries a
-     * CosyVoice2 signature. Anything less returns false so [inspect] refuses to guess.
+     * Fail-closed recognition (spec §9.1): confident only when ALL FOUR GGUF stages of the native
+     * CosyVoice3 pipeline are present — an LLM, flow, HiFT and voices GGUF, matched by their
+     * conventional `cosyvoice3-<stage>-*.gguf` names. That four-file set is itself the signature;
+     * anything less returns false so [inspect] refuses to guess.
      */
-    private fun looksLikeCosyVoice2(bundle: ModelBundle): Boolean {
-        if (llmFileIn(bundle) == null) return false
-        if (!bundle.hasFile(FLOW_FILE) || !bundle.hasFile(HIFT_FILE)) return false
-        return bundle.sideFileContainsAnyMarker(CONFIG_FILE, SIGNATURE_MARKERS)
-    }
+    private fun looksLikeCosyVoice(bundle: ModelBundle): Boolean =
+        STAGE_PREFIXES.all { prefix -> stageFile(bundle, prefix) != null }
 
     private fun hasAnyComponent(bundle: ModelBundle): Boolean =
-        llmFileIn(bundle) != null || bundle.hasFile(FLOW_FILE) || bundle.hasFile(HIFT_FILE)
+        STAGE_PREFIXES.any { prefix -> stageFile(bundle, prefix) != null }
 
-    private fun llmFileIn(bundle: ModelBundle): String? = bundle.fileNames.firstOrNull { it.endsWith(LLM_SUFFIX) }
+    /** The bundle file for a stage (e.g. `cosyvoice3-llm-q4_k.gguf` for the `cosyvoice3-llm` prefix). */
+    private fun stageFile(
+        bundle: ModelBundle,
+        prefix: String,
+    ): String? = bundle.fileNames.firstOrNull { it.startsWith(prefix) && it.endsWith(GGUF_SUFFIX) }
 
     private fun buildDescriptor(
         bundle: ModelBundle,
@@ -185,63 +145,61 @@ internal class CosyVoice2Engine(
             assetPaths = buildAssetPaths(bundle),
         )
 
+    // Only the LLM path is needed at load() (its parent dir is the model dir the native runtime
+    // auto-discovers all four stages from). The others are recorded for completeness / diagnostics.
     private fun buildAssetPaths(bundle: ModelBundle): Map<String, String> {
         val paths = mutableMapOf<String, String>()
-        llmFileIn(bundle)?.let { paths[LLM_ASSET] = joinAssetPath(bundle, it) }
-        putIfPresent(paths, bundle, FLOW_FILE, FLOW_ASSET)
-        putIfPresent(paths, bundle, HIFT_FILE, HIFT_ASSET)
-        putIfPresent(paths, bundle, VOICES_FILE, VOICES_ASSET)
-        putIfPresent(paths, bundle, CONFIG_FILE, CONFIG_ASSET)
+        STAGE_PREFIXES.forEach { prefix ->
+            stageFile(bundle, prefix)?.let { paths[prefix] = joinAssetPath(bundle, it) }
+        }
         return paths
-    }
-
-    private fun putIfPresent(
-        paths: MutableMap<String, String>,
-        bundle: ModelBundle,
-        fileName: String,
-        assetKey: String,
-    ) {
-        if (bundle.hasFile(fileName)) paths[assetKey] = joinAssetPath(bundle, fileName)
     }
 
     /** Everything the loaded engine needs to synthesize; null while unloaded (spec §5.5). */
     private class LoadedState(
         val descriptor: ModelDescriptor,
-        val llmSession: SpeechTokenSession,
-        val flowSession: InferenceSession,
-        val hiftSession: InferenceSession,
-        val prompt: SpeakerPrompt,
+        val session: NativeTtsSession,
+        val voices: List<Voice>,
     )
 
     companion object {
         const val ENGINE_ID = "cosyvoice2"
-        private const val DISPLAY_NAME = "CosyVoice2-0.5B"
+        private const val DISPLAY_NAME = "CosyVoice3-0.5B"
 
-        /** The non-ONNX, LLM-style backend this engine looks up in [EngineContext.runtimes]. */
-        const val LLM_RUNTIME_ID = "cosyvoice-llm"
-
-        /** The shared ONNX backend used for the deterministic flow + HiFT stages. */
-        const val ONNX_RUNTIME_ID = "onnx"
+        /** The non-ONNX, full-pipeline backend this engine looks up in [EngineContext.runtimes]. */
+        const val NATIVE_RUNTIME_ID = "cosyvoice"
 
         private const val SAMPLE_RATE_HZ = 24_000
-        private val SPEED_RANGE = 0.5f..1.5f
+
+        // Locked at 1.0: the native synth exposes no speed knob and rule 2 forbids resampling.
+        private val SPEED_RANGE = 1.0f..1.0f
         private const val DEFAULT_SPEED = 1.0f
-        private const val DEFAULT_LANGUAGE = "en"
-        private val DEFAULT_VOICE = Voice(id = "default", name = "Default Voice", language = DEFAULT_LANGUAGE)
 
-        // Bundle layout this engine recognizes: the GGUF LLM (matched by suffix, since quant/name
-        // varies), the flow + HiFT ONNX graphs, the baked voice bank, and the signed config.
-        const val LLM_SUFFIX = ".gguf"
-        const val FLOW_FILE = "flow.onnx"
-        const val HIFT_FILE = "hift.onnx"
-        const val VOICES_FILE = "voices.bin"
-        const val CONFIG_FILE = "cosyvoice2.yaml"
-        private val SIGNATURE_MARKERS = listOf("cosyvoice2", "qwen2lm")
+        // CosyVoice3 is multilingual and reads any language directly, so this default is cosmetic
+        // (the native BPE tokenizer, not the Kotlin phonemizer, handles text). zero_shot is the
+        // always-present Mandarin baked voice in every CosyVoice3 voices GGUF.
+        private const val DEFAULT_LANGUAGE = "zh"
+        private val DEFAULT_VOICE = Voice(id = "zero_shot", name = "Zero-shot", language = DEFAULT_LANGUAGE)
 
-        const val LLM_ASSET = "llm"
-        const val FLOW_ASSET = "flow"
-        const val HIFT_ASSET = "hift"
-        const val VOICES_ASSET = "voices"
-        const val CONFIG_ASSET = "config"
+        // Bundle layout this engine recognizes: the four GGUF stages of the cstr/cosyvoice3 stack,
+        // matched by stage prefix (quant suffix varies: q4_k / q8_0 / f16). These prefixes double as
+        // the assetPaths keys.
+        const val GGUF_SUFFIX = ".gguf"
+        const val LLM_ASSET = "cosyvoice3-llm"
+        const val FLOW_ASSET = "cosyvoice3-flow"
+        const val HIFT_ASSET = "cosyvoice3-hift"
+        const val VOICES_ASSET = "cosyvoice3-voices"
+        private val STAGE_PREFIXES = listOf(LLM_ASSET, FLOW_ASSET, HIFT_ASSET, VOICES_ASSET)
+
+        // "fleurs-en" -> "en"; "zero_shot" -> the Mandarin default. Name-derived only (no fabricated
+        // table): CosyVoice3's per-voice language is cosmetic since the model reads any language.
+        private fun languageOf(voiceName: String): String =
+            voiceName.substringAfter("fleurs-", missingDelimiterValue = DEFAULT_LANGUAGE)
+
+        // "fleurs-en" -> "Fleurs En"; "zero_shot" -> "Zero Shot".
+        private fun prettyVoiceName(voiceName: String): String =
+            voiceName.split('-', '_').joinToString(" ") { part ->
+                part.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            }
     }
 }

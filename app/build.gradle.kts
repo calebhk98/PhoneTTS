@@ -16,11 +16,11 @@ plugins {
 // Real device builds pass -PwithEspeak=true after running scripts/fetch-espeak-ng.sh.
 val buildEspeak = (project.findProperty("withEspeak") as String?)?.toBooleanStrictOrNull() ?: false
 
-// The CosyVoice2 speech-token LLM bridge (spec §5.3 second runtime) links llama.cpp/ggml and is
-// gated the exact same way as espeak: opt-in via -PwithCosyVoice=true after running
-// scripts/fetch-cosyvoice-llama.sh. When off, libphonetts_cosyvoice.so isn't built,
-// LlamaCppSpeechTokenRuntime.isAvailable() is false, and CosyVoice2 simply isn't offered — the app
-// still assembles everywhere. See docs/COSYVOICE2.md.
+// The CosyVoice native ggml TTS bridge (spec §5.3 second runtime) links CrispASR's cosyvoice3_tts
+// (Qwen2 LLM + flow + HiFT + BPE, all ggml) and is gated the exact same way as espeak: opt-in via
+// -PwithCosyVoice=true after running scripts/fetch-cosyvoice-ggml.sh. When off,
+// libphonetts_cosyvoice.so isn't built, NativeCosyVoiceRuntime.isAvailable() is false, and CosyVoice
+// simply isn't offered — the app still assembles everywhere. See docs/COSYVOICE2.md.
 val buildCosyVoice = (project.findProperty("withCosyVoice") as String?)?.toBooleanStrictOrNull() ?: false
 
 // Either native bridge pulls in the NDK + CMake externalNativeBuild; configure it if either is on.

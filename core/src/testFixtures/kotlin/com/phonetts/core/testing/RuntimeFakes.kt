@@ -1,11 +1,11 @@
 package com.phonetts.core.testing
 
 import com.phonetts.core.runtime.InferenceSession
+import com.phonetts.core.runtime.NativeTtsRequest
+import com.phonetts.core.runtime.NativeTtsRuntime
+import com.phonetts.core.runtime.NativeTtsSession
 import com.phonetts.core.runtime.Runtime
 import com.phonetts.core.runtime.RuntimeOptions
-import com.phonetts.core.runtime.SpeechTokenRequest
-import com.phonetts.core.runtime.SpeechTokenRuntime
-import com.phonetts.core.runtime.SpeechTokenSession
 import com.phonetts.core.runtime.Tensor
 import com.phonetts.core.text.Phonemizer
 
@@ -58,20 +58,23 @@ class FakeRuntime(
 }
 
 /**
- * Records every [SpeechTokenRequest] it decodes (so a test can assert the engine routed the right
- * native speed/embedding, spec §9.4) and returns tokens from [tokensFor] — configure these to the
- * speech token ids the engine under test then feeds to its flow-matching graph.
+ * Records every [NativeTtsRequest] it synthesizes (so a test can assert the engine handed the right
+ * text + voice to the native pipeline) and returns audio from [audioFor] — configure these to the
+ * PCM the engine under test emits as one sentence's chunk. [voiceNames]/[sampleRate] stand in for
+ * what the real backend reads from the model's voices GGUF.
  */
-class FakeSpeechTokenSession(
-    private val tokensFor: (SpeechTokenRequest) -> LongArray = { longArrayOf(0L) },
-) : SpeechTokenSession {
-    val requests = mutableListOf<SpeechTokenRequest>()
+class FakeNativeTtsSession(
+    override val sampleRate: Int = 24_000,
+    override val voiceNames: List<String> = listOf("zero_shot"),
+    private val audioFor: (NativeTtsRequest) -> FloatArray = { floatArrayOf(0.1f, -0.1f) },
+) : NativeTtsSession {
+    val requests = mutableListOf<NativeTtsRequest>()
     var closed = false
         private set
 
-    override fun generate(request: SpeechTokenRequest): LongArray {
+    override fun synthesize(request: NativeTtsRequest): FloatArray {
         requests.add(request)
-        return tokensFor(request)
+        return audioFor(request)
     }
 
     override fun close() {
@@ -80,26 +83,26 @@ class FakeSpeechTokenSession(
 }
 
 /**
- * A [SpeechTokenRuntime] (the non-ONNX, LLM-style seam) that hands out [FakeSpeechTokenSession]s
- * and records the model paths it was asked to load. [available] lets a test simulate the native
- * GGUF backend being absent (the `-PwithCosyVoice` off case).
+ * A [NativeTtsRuntime] (the non-ONNX, full-pipeline seam) that hands out [FakeNativeTtsSession]s and
+ * records the model directories it was asked to load. [available] lets a test simulate the native
+ * ggml backend being absent (the `-PwithCosyVoice` off case).
  */
-class FakeSpeechTokenRuntime(
-    override val id: String = "fake-llm",
+class FakeNativeTtsRuntime(
+    override val id: String = "fake-cosyvoice",
     private val available: Boolean = true,
-    private val sessionFactory: (String) -> FakeSpeechTokenSession = { FakeSpeechTokenSession() },
-) : SpeechTokenRuntime {
-    val createdPaths = mutableListOf<String>()
-    val sessions = mutableListOf<FakeSpeechTokenSession>()
+    private val sessionFactory: (String) -> FakeNativeTtsSession = { FakeNativeTtsSession() },
+) : NativeTtsRuntime {
+    val createdDirs = mutableListOf<String>()
+    val sessions = mutableListOf<FakeNativeTtsSession>()
 
     override fun isAvailable(): Boolean = available
 
-    override fun openSpeechSession(
-        modelPath: String,
+    override fun openTtsSession(
+        modelDir: String,
         options: RuntimeOptions,
-    ): SpeechTokenSession {
-        createdPaths.add(modelPath)
-        val session = sessionFactory(modelPath)
+    ): NativeTtsSession {
+        createdDirs.add(modelDir)
+        val session = sessionFactory(modelDir)
         sessions.add(session)
         return session
     }
