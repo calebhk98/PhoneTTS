@@ -149,6 +149,64 @@ class PiperEngineSynthesisTest {
         }
 
     @Test
+    fun `long text is chunked into sentences and each chunk is run through the session`() =
+        runTest {
+            val runCount = mutableListOf<Map<String, Tensor>>()
+            val fakeSession =
+                FakeSession(
+                    outputsFor = { inputs ->
+                        runCount.add(inputs)
+                        mapOf("output" to Tensor.floats(floatArrayOf(0.1f)))
+                    },
+                )
+            val (engine, _) = buildLoadedEngine(fakeSession)
+            val match = assertNotNull(engine.inspect(bundle))
+            engine.load(match.descriptor)
+
+            val chunks =
+                engine.synthesize("First sentence. Second sentence!", voiceId = "voice", speed = 1.0f).toList()
+
+            assertEquals(2, chunks.size, "expected one audio chunk per sentence (Flow must fully drain)")
+            assertEquals(2, runCount.size)
+        }
+
+    @Test
+    fun `voice selection reaches the right loaded voice's own session`() =
+        runTest {
+            val alphaSession =
+                FakeSession(outputsFor = { mapOf("output" to Tensor.floats(floatArrayOf(0.1f))) })
+            val betaSession =
+                FakeSession(outputsFor = { mapOf("output" to Tensor.floats(floatArrayOf(0.2f))) })
+            val multiVoiceBundle =
+                ModelBundle(
+                    id = "voice-pack-2",
+                    fileNames = setOf("alpha.onnx", "alpha.onnx.json", "beta.onnx", "beta.onnx.json"),
+                    sideFiles = mapOf("alpha.onnx.json" to sidecarJson, "beta.onnx.json" to sidecarJson),
+                    rootPath = "/models/voice-pack-2",
+                )
+            val runtime =
+                FakeRuntime(
+                    id = "onnx",
+                    sessionFactory = { path ->
+                        if (path.endsWith("alpha.onnx")) alphaSession else betaSession
+                    },
+                )
+            val context =
+                EngineContext(
+                    runtimes = RuntimeRegistry().apply { register(runtime) },
+                    phonemizer = FakePhonemizer { it },
+                )
+            val engine = PiperEngine(context, sidecarReader = { sidecarJson })
+            val match = assertNotNull(engine.inspect(multiVoiceBundle))
+            engine.load(match.descriptor)
+
+            engine.synthesize("hi", voiceId = "alpha", speed = 1.0f).toList()
+
+            assertEquals(1, alphaSession.runs.size)
+            assertEquals(0, betaSession.runs.size)
+        }
+
+    @Test
     fun `unload closes every loaded voice session`() =
         runTest {
             val fakeSession = FakeSession(outputs = mapOf("output" to Tensor.floats(floatArrayOf(0f))))

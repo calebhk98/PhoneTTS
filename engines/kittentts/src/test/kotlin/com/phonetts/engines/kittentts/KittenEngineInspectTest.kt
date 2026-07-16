@@ -2,10 +2,12 @@ package com.phonetts.engines.kittentts
 
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
+import com.phonetts.core.model.Origin
 import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.testing.FakePhonemizer
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -13,7 +15,9 @@ import kotlin.test.assertTrue
 /**
  * Covers spec §9.1: `inspect()` must claim genuine KittenTTS bundles by their companion
  * files and fail closed — return null, never guess — for a bare `.onnx` and for a
- * foreign/unrelated bundle.
+ * foreign/unrelated bundle. Also covers `forcedMatch()`: the user's manual assignment is
+ * authoritative, so it never refuses a bundle that has at least one `.onnx` weights file,
+ * filling in family defaults (a single "Default" voice) when no real speaker table is present.
  */
 class KittenEngineInspectTest {
     private val engine =
@@ -100,5 +104,49 @@ class KittenEngineInspectTest {
             "/models/kitten-nano/${KittenEngine.VOICES_FILE}",
             descriptor.assetPaths[KittenEngine.VOICES_ASSET_KEY],
         )
+    }
+
+    @Test
+    fun `forcedMatch never returns null and fills in a default voice when no speaker table is present`() {
+        val bundle =
+            ModelBundle(
+                id = "sideloaded-kitten",
+                fileNames = setOf("weights.onnx"),
+                rootPath = "/models/sideloaded-kitten",
+            )
+
+        val match = engine.forcedMatch(bundle)
+
+        assertEquals(KittenEngine.ENGINE_ID, match.engineId)
+        assertEquals(Origin.SIDELOADED, match.descriptor.origin)
+        assertEquals(listOf("Default"), match.descriptor.voices.map { it.name })
+        assertTrue(match.descriptor.defaultSpeed in match.descriptor.speedRange)
+        assertEquals(
+            "/models/sideloaded-kitten/weights.onnx",
+            match.descriptor.assetPaths[KittenEngine.MODEL_ASSET_KEY],
+        )
+    }
+
+    @Test
+    fun `forcedMatch uses the real speaker table when one is present`() {
+        val bundle =
+            ModelBundle(
+                id = "sideloaded-with-voices",
+                fileNames = setOf("weights.onnx", KittenEngine.VOICES_FILE),
+                sideFiles = mapOf(KittenEngine.VOICES_FILE to validVoices),
+                rootPath = "/models/sideloaded-with-voices",
+            )
+
+        val match = engine.forcedMatch(bundle)
+
+        assertEquals(Origin.SIDELOADED, match.descriptor.origin)
+        assertEquals(8, match.descriptor.voices.size)
+    }
+
+    @Test
+    fun `forcedMatch throws when the bundle has no onnx weights file at all`() {
+        val bundle = ModelBundle(id = "no-weights", fileNames = setOf("readme.txt"))
+
+        assertFailsWith<IllegalStateException> { engine.forcedMatch(bundle) }
     }
 }

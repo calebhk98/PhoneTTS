@@ -66,6 +66,33 @@ class CosyVoice2SynthesizeInvariantsTest {
     }
 
     @Test
+    fun `unload closes the LLM, flow-matching, and vocoder sessions`() =
+        runTest {
+            val llmSession =
+                FakeSession(
+                    outputsFor = {
+                        mapOf(
+                            CosyVoice2Engine.LLM_OUTPUT_NEXT_TOKEN to Tensor.longs(longArrayOf(1)),
+                            CosyVoice2Engine.LLM_OUTPUT_STOP to Tensor.floats(floatArrayOf(1f)),
+                        )
+                    },
+                )
+            val flowSession =
+                FakeSession(outputsFor = { inputs -> flowOutputFor(inputs) })
+            val hiftSession =
+                FakeSession(outputsFor = { inputs -> vocoderOutputFor(inputs) })
+            val engine = CosyVoice2Engine(contextWithRuntime(fakeRuntimeFor(llmSession, flowSession, hiftSession)))
+            val descriptor = engine.inspect(validBundle())!!.descriptor
+            engine.load(descriptor)
+
+            engine.unload()
+
+            assertTrue(llmSession.closed, "expected the LLM session to be closed on unload()")
+            assertTrue(flowSession.closed, "expected the flow-matching session to be closed on unload()")
+            assertTrue(hiftSession.closed, "expected the vocoder session to be closed on unload()")
+        }
+
+    @Test
     fun `load fails with a clear error when no runtime is registered under the expected id`() =
         runTest {
             val engine = CosyVoice2Engine(emptyContext())
