@@ -1,0 +1,100 @@
+package com.phonetts.integration
+
+import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.registry.EngineLoader
+import com.phonetts.core.registry.EngineManager
+import com.phonetts.core.registry.EngineRegistry
+import com.phonetts.core.registry.ModelCatalog
+import com.phonetts.core.registry.RuntimeRegistry
+import com.phonetts.core.resolver.InMemoryOverrideStore
+import com.phonetts.core.resolver.Resolver
+import com.phonetts.core.sideload.DirectoryBundleReader
+import com.phonetts.core.sideload.ModelImporter
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import java.io.File
+import java.net.URL
+import java.nio.file.Files
+import kotlin.math.abs
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
+
+/**
+ * Proves the claim "a user downloads a RANDOM model for one of our engines and it just works — no
+ * code changes." This is NOT a re-implementation of the pipeline: it drives the app's OWN code —
+ * [DirectoryBundleReader] -> [Resolver] -> each engine's real `inspect()` -> [ModelImporter] ->
+ * [EngineManager] -> the engine's real `synthesize()` — over a real, un-curated model, with only
+ * the platform backends swapped for their JVM twins ([JvmOnnxRuntime], [EspeakCliPhonemizer]).
+ *
+ * Network + system `espeak-ng` are required, so it is opt-in: run with `-DrunRealModel=true`.
+ * (`gradle :integration:test --tests "*RealModelAutoLoadTest" -DrunRealModel=true`.)
+ */
+class RealModelAutoLoadTest {
+    // A Piper voice that is deliberately NOT in BuiltInCatalog (that ships en_US-lessac-medium) — a
+    // stand-in for "some random model the user found and downloaded."
+    private val base =
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/low/en_US-amy-low.onnx"
+
+    @Test
+    fun downloadingARandomPiperVoiceAutoLoadsAndActuallySpeaks() =
+        runTest(timeout = 5.minutes) {
+            assumeTrue(System.getProperty("runRealModel") == "true", "opt-in: set -DrunRealModel=true")
+
+            // 1. THE DOWNLOAD — fetch the model + its sidecar into a fresh folder, exactly the files
+            //    the in-app download/sideload flow would drop on disk.
+            val dir = Files.createTempDirectory("random-piper").toFile()
+            download(base, File(dir, "en_US-amy-low.onnx"))
+            download("$base.json", File(dir, "en_US-amy-low.onnx.json"))
+
+            // 2. THE APP'S REAL WIRING — real engines seeded via ServiceLoader, real resolver/catalog,
+            //    real platform backends. The user-pick fallback throws: detection MUST succeed on its own.
+            val runtimes = RuntimeRegistry().apply { register(JvmOnnxRuntime()) }
+            val context = EngineContext(runtimes, EspeakCliPhonemizer(), dir.absolutePath)
+            val registry = EngineRegistry().also { EngineLoader.seed(it, context) }
+            val catalog = ModelCatalog()
+            val resolver =
+                Resolver(registry.list(), InMemoryOverrideStore()) {
+                    error("should have auto-detected the Piper voice, not asked the user")
+                }
+            val importer = ModelImporter(DirectoryBundleReader(), resolver, catalog)
+
+            // 3. THE CLICK — importing the folder is exactly what a download/sideload triggers.
+            val descriptor = importer.import(dir.absolutePath)
+
+            assertEquals("piper", descriptor.engineId, "a bare Piper voice must auto-detect as Piper")
+            assertTrue(descriptor.voices.isNotEmpty(), "auto-loaded model must be first-class with voices")
+            assertEquals(listOf(descriptor.modelId), catalog.list().map { it.modelId }, "it must appear in the catalog")
+
+            // 4. THE USER PLAYS IT — select + synthesize through the engine's real generation path.
+            val manager = EngineManager(registry)
+            manager.switchTo(descriptor.engineId, descriptor)
+            val engine = requireNotNull(manager.currentEngine) { "engine failed to load" }
+
+            val text = "Text to speech turns written words into natural sounding audio."
+            val chunks = engine.synthesize(text, descriptor.defaultVoiceId, 1.0f).toList()
+
+            // 5. IT ACTUALLY SPEAKS — real audio out: > 2 seconds, bounded, no NaNs.
+            val samples = chunks.sumOf { it.size }
+            val durationSeconds = samples.toDouble() / descriptor.sampleRate
+            assertTrue(samples > 0, "synthesize produced no audio")
+            assertTrue(durationSeconds > 2.0, "expected > 2s of audio, got ${"%.2f".format(durationSeconds)}s")
+            assertTrue(
+                chunks.all { chunk -> chunk.all { !it.isNaN() && abs(it) <= 1.5f } },
+                "audio must be finite and bounded",
+            )
+            println(
+                "REAL AUTO-LOAD: engine=${descriptor.engineId} voice=${descriptor.defaultVoiceId} " +
+                    "sr=${descriptor.sampleRate} samples=$samples duration=${"%.2f".format(durationSeconds)}s",
+            )
+        }
+
+    private fun download(
+        url: String,
+        target: File,
+    ) {
+        URL(url).openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+    }
+}
