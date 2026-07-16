@@ -28,9 +28,12 @@ class Resolver(
     private val userPicksEngine: (ModelBundle) -> String,
 ) {
     fun resolve(bundle: ModelBundle): ModelDescriptor {
-        val savedEngineId = overrideStore.get(bundle.id)
-        if (savedEngineId != null) {
-            return engineById(savedEngineId).forcedMatch(bundle).descriptor
+        // A saved override is honored only if its engine is still registered. If that engine was
+        // removed, the stale mapping is ignored and we re-detect / fall to the user pick, rather
+        // than crashing (spec rule #6: removing an engine leaves no dangling reference).
+        val savedEngine = overrideStore.get(bundle.id)?.let { id -> engines.firstOrNull { it.id == id } }
+        if (savedEngine != null) {
+            return savedEngine.forcedMatch(bundle).descriptor
         }
 
         val match = autoDetect(bundle) ?: forcedMatchFromUserPick(bundle)

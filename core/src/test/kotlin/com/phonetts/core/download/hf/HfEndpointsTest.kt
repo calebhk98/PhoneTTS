@@ -28,6 +28,14 @@ class HfEndpointsTest {
     }
 
     @Test
+    fun treeUrlEncodesTheModelIdKeepingTheOwnerSlash() {
+        assertEquals(
+            "https://huggingface.co/api/models/owner/Model%20Name/tree/main?recursive=true",
+            HfEndpoints.treeUrl("owner/Model Name", "main"),
+        )
+    }
+
+    @Test
     fun resolveUrlKeepsModelSlashAndEncodesPathSegments() {
         val url = HfEndpoints.resolveUrl("owner/Model Name", "main", "onnx/model file.onnx")
         assertEquals(

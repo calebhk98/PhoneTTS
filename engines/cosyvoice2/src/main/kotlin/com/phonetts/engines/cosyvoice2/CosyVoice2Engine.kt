@@ -12,6 +12,7 @@ import com.phonetts.engines.common.AbstractVoiceEngine
 import com.phonetts.engines.common.closeAllQuietly
 import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.openWithRollback
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
 import com.phonetts.engines.common.sideFileContainsAnyMarker
@@ -66,12 +67,14 @@ internal class CosyVoice2Engine(
 
         unload()
         state =
-            LoadedState(
-                descriptor = descriptor,
-                llmSession = runtime.createSession(llmPath),
-                flowSession = runtime.createSession(flowPath),
-                hiftSession = runtime.createSession(hiftPath),
-            )
+            openWithRollback { opened ->
+                LoadedState(
+                    descriptor = descriptor,
+                    llmSession = runtime.createSession(llmPath).also(opened::add),
+                    flowSession = runtime.createSession(flowPath).also(opened::add),
+                    hiftSession = runtime.createSession(hiftPath).also(opened::add),
+                )
+            }
     }
 
     override fun unload() {

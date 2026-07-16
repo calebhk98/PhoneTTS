@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.phonetts.app.ModelStorage
+import com.phonetts.core.download.SafePath
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.sideload.ModelImporter
 import java.io.File
@@ -42,6 +43,7 @@ class SideloadCoordinator(
         destination.mkdirs()
         for (child in source.listFiles()) {
             val name = child.name ?: continue
+            if (!SafePath.isSafe(name)) continue // skip entries that could escape the model folder
             if (child.isDirectory) {
                 copyTree(child, File(destination, name))
                 continue

@@ -1,6 +1,7 @@
 package com.phonetts.app.hf
 
 import com.phonetts.app.ModelStorage
+import com.phonetts.core.download.SafePath
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.model.ModelDescriptor
@@ -8,6 +9,7 @@ import com.phonetts.core.sideload.ModelImporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -25,6 +27,8 @@ class HfDownloader(
     private val filesDir: File,
     private val importer: ModelImporter,
     private val userAgent: Map<String, String> = HfCatalog.USER_AGENT,
+    private val timeoutMs: Int = DEFAULT_TIMEOUT_MS,
+    private val maxFileBytes: Long = DEFAULT_MAX_FILE_BYTES,
 ) {
     suspend fun downloadAndImport(
         modelId: String,
@@ -35,6 +39,8 @@ class HfDownloader(
             val destination = ModelStorage.modelDir(filesDir, modelId)
             destination.mkdirs()
             items.forEachIndexed { index, item ->
+                // Defense-in-depth against path traversal (HfDownloadPlan already validates).
+                SafePath.require(item.relativePath)
                 downloadFile(item.url, File(destination, item.relativePath))
                 onProgress(index + 1, items.size)
             }
@@ -45,13 +51,33 @@ class HfDownloader(
         target.parentFile?.mkdirs()
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true // resolve URLs redirect to the CDN
+            connectTimeout = timeoutMs
+            readTimeout = timeoutMs
             userAgent.forEach { (key, value) -> setRequestProperty(key, value) }
         }
         try {
-            connection.inputStream.use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+            connection.inputStream.use { input -> target.outputStream().use { output -> copyCapped(input, output) } }
         } finally {
             connection.disconnect()
         }
     }
 
+    // Stream to disk with a hard byte cap so a malicious/misconfigured repo can't fill storage.
+    private fun copyCapped(input: java.io.InputStream, output: java.io.OutputStream) {
+        val buffer = ByteArray(BUFFER_SIZE)
+        var total = 0L
+        var read = input.read(buffer)
+        while (read >= 0) {
+            total += read
+            if (total > maxFileBytes) throw IOException("download exceeds $maxFileBytes bytes cap")
+            output.write(buffer, 0, read)
+            read = input.read(buffer)
+        }
+    }
+
+    companion object {
+        private const val DEFAULT_TIMEOUT_MS = 30_000
+        private const val DEFAULT_MAX_FILE_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB per file
+        private const val BUFFER_SIZE = 8192
+    }
 }

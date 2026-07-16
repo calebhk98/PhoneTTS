@@ -27,12 +27,11 @@ class DirectoryBundleReader(
         return ModelBundle(id = root.name, fileNames = names, sideFiles = sideFiles, rootPath = root.absolutePath)
     }
 
-    // A file is a side file if it has a known text extension, or it is small and not a known
-    // weight format (covers extensionless tokenizer/vocab files). Weights are never read in.
+    // A file is a side file if it is non-empty, within the size cap, and not a known weight
+    // format. The size cap is applied UNIFORMLY (including known text extensions) so an oversized
+    // config.json/tokens.txt — accidental or hostile — can't be read whole into memory and OOM.
     private fun isSideFile(file: File): Boolean {
-        val ext = file.extension.lowercase()
-        if (ext in WEIGHT_EXTENSIONS) return false
-        if (ext in SIDE_FILE_EXTENSIONS) return true
+        if (file.extension.lowercase() in WEIGHT_EXTENSIONS) return false
         return file.length() in 1..maxSideFileBytes
     }
 
@@ -40,7 +39,6 @@ class DirectoryBundleReader(
 
     companion object {
         const val DEFAULT_MAX_SIDE_FILE_BYTES = 1_000_000L
-        private val SIDE_FILE_EXTENSIONS = setOf("json", "yaml", "yml", "txt", "cfg", "vocab", "tokens", "model")
         private val WEIGHT_EXTENSIONS = setOf("onnx", "bin", "npz", "pt", "pth", "safetensors")
     }
 }

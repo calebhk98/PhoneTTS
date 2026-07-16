@@ -19,9 +19,11 @@ class DocxTextExtractor : TextExtractor {
     ): Boolean = matchesExtensionOrMime(fileName, mimeType, EXTENSIONS, DOCX_MIME)
 
     override fun extract(bytes: ByteArray): String {
+        // runCatching normalizes a corrupt/non-zip .docx (raw ZipException) to the same fail-closed
+        // IllegalArgumentException as a valid zip that is simply missing word/document.xml.
         val documentXml =
-            readZipEntry(bytes, DOCUMENT_ENTRY)
-                ?: throw IllegalArgumentException("not a valid .docx: missing $DOCUMENT_ENTRY")
+            runCatching { readZipEntry(bytes, DOCUMENT_ENTRY) }.getOrNull()
+                ?: throw IllegalArgumentException("not a valid .docx: missing or unreadable $DOCUMENT_ENTRY")
         return xmlToText(documentXml)
     }
 

@@ -32,8 +32,16 @@ class HtmlTextExtractor : TextExtractor {
     private fun decodeEntities(text: String): String {
         var out = text
         NAMED_ENTITIES.forEach { (entity, replacement) -> out = out.replace(entity, replacement) }
-        out = NUMERIC_ENTITY.replace(out) { match -> match.groupValues[1].toInt().toChar().toString() }
+        out = NUMERIC_ENTITY.replace(out) { match -> decodeNumericEntity(match) }
         return out
+    }
+
+    // Decode &#N; safely: reject out-of-range / overflowing / surrogate code points (leave them as-is)
+    // and build astral code points (emoji, some CJK) as UTF-16 surrogate pairs rather than truncating.
+    private fun decodeNumericEntity(match: MatchResult): String {
+        val code = match.groupValues[1].toIntOrNull() ?: return match.value
+        if (code !in 0..MAX_CODE_POINT || code in MIN_SURROGATE..MAX_SURROGATE) return match.value
+        return String(Character.toChars(code))
     }
 
     companion object {
@@ -47,6 +55,9 @@ class HtmlTextExtractor : TextExtractor {
         private val BLOCK_BOUNDARY = Regex("""</?($BLOCK_TAGS)[^>]*>""", RegexOption.IGNORE_CASE)
         private val TAG = Regex("""<[^>]+>""")
         private val NUMERIC_ENTITY = Regex("""&#(\d+);""")
+        private const val MAX_CODE_POINT = 0x10FFFF
+        private const val MIN_SURROGATE = 0xD800
+        private const val MAX_SURROGATE = 0xDFFF
         private val NAMED_ENTITIES =
             mapOf(
                 "&nbsp;" to " ",

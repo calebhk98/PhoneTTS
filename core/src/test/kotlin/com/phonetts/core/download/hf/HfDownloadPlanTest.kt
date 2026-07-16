@@ -2,6 +2,7 @@ package com.phonetts.core.download.hf
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class HfDownloadPlanTest {
@@ -21,5 +22,11 @@ class HfDownloadPlanTest {
         assertEquals("https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/config.json", config.url)
         assertEquals(1200L, config.sizeBytes)
         assertTrue(items.any { it.url.endsWith("/resolve/main/onnx/model.onnx") })
+    }
+
+    @Test
+    fun rejectsATraversalPathInTheRepoFileList() {
+        val hostile = listOf(HfTreeEntry(type = "file", path = "../../evil.bin", size = 10))
+        assertFailsWith<IllegalArgumentException> { HfDownloadPlan.forFiles("owner/repo", hostile) }
     }
 }

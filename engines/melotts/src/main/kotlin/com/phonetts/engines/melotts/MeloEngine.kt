@@ -12,6 +12,7 @@ import com.phonetts.engines.common.AbstractVoiceEngine
 import com.phonetts.engines.common.closeAllQuietly
 import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.openWithRollback
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
 import com.phonetts.engines.common.requireVoiceIndex
@@ -71,12 +72,14 @@ internal class MeloEngine(
         val bertPath = requireAssetPath(descriptor, BERT_ASSET, engineLabel)
         val acousticPath = requireAssetPath(descriptor, ACOUSTIC_ASSET, engineLabel)
 
-        val bert = runtime.createSession(bertPath)
-        val acoustic = runtime.createSession(acousticPath)
-        bertSession = bert
-        acousticSession = acoustic
-        frontend = MeloFrontend(bert)
-        loadedDescriptor = descriptor
+        openWithRollback { opened ->
+            val bert = runtime.createSession(bertPath).also(opened::add)
+            val acoustic = runtime.createSession(acousticPath).also(opened::add)
+            bertSession = bert
+            acousticSession = acoustic
+            frontend = MeloFrontend(bert)
+            loadedDescriptor = descriptor
+        }
     }
 
     override fun unload() {

@@ -1,5 +1,7 @@
 package com.phonetts.core.download.hf
 
+import com.phonetts.core.download.SafePath
+
 /** One file to fetch: where from ([url]) and where it goes inside the model folder ([relativePath]). */
 data class HfDownloadItem(
     val url: String,
@@ -21,6 +23,8 @@ object HfDownloadPlan {
         files
             .filter { it.isFile }
             .map { entry ->
+                // Fail closed: a repo file path that could escape the model folder is rejected.
+                SafePath.require(entry.path)
                 HfDownloadItem(
                     url = HfEndpoints.resolveUrl(modelId, revision, entry.path),
                     relativePath = entry.path,

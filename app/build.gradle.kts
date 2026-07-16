@@ -19,6 +19,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // Ship only the ABIs real target devices use (the Galaxy A16 is arm64-v8a) — keeps the
+        // APK from carrying ONNX Runtime's x86 native libs that no phone needs.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildFeatures {
@@ -34,9 +40,19 @@ android {
         jvmTarget = "17"
     }
 
+    packaging {
+        resources {
+            // Pre-empt duplicate-file collisions between ONNX Runtime, PDFBox and Compose AARs.
+            excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/*.kotlin_module", "/META-INF/DEPENDENCIES")
+        }
+    }
+
     buildTypes {
         release {
+            // R8/shrinking is OFF until validated on-device: proguard-rules.pro already carries the
+            // critical keeps (ServiceLoader EngineProviders, kotlinx.serialization) for when it's enabled.
             isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 }

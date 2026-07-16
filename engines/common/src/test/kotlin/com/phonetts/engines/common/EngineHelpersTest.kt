@@ -8,6 +8,7 @@ import com.phonetts.engines.common.testing.engineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class EngineHelpersTest {
@@ -23,6 +24,32 @@ class EngineHelpersTest {
         val descriptor = testDescriptor("m", "e").copy(assetPaths = mapOf("weights" to "/p/model.onnx"))
         assertEquals("/p/model.onnx", requireAssetPath(descriptor, "weights", "X"))
         assertFailsWith<IllegalStateException> { requireAssetPath(descriptor, "missing", "X") }
+    }
+
+    @Test
+    fun openWithRollbackClosesOpenedSessionsWhenLoadingFailsPartway() {
+        val first = FakeSession()
+        val second = FakeSession()
+        assertFailsWith<IllegalStateException> {
+            openWithRollback { opened ->
+                opened.add(first)
+                opened.add(second)
+                error("third createSession fails") // simulate a mid-load failure
+            }
+        }
+        assertTrue(first.closed && second.closed, "every already-opened session must be closed on failure")
+    }
+
+    @Test
+    fun openWithRollbackReturnsTheResultAndKeepsSessionsOpenOnSuccess() {
+        val session = FakeSession()
+        val result =
+            openWithRollback { opened ->
+                opened.add(session)
+                "loaded"
+            }
+        assertEquals("loaded", result)
+        assertFalse(session.closed, "a successful load must NOT close the sessions it opened")
     }
 
     @Test

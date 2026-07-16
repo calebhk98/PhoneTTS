@@ -13,6 +13,7 @@ import com.phonetts.engines.common.AbstractVoiceEngine
 import com.phonetts.engines.common.closeAllQuietly
 import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.openWithRollback
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
 import java.io.File
@@ -72,7 +73,14 @@ internal class PiperEngine(
     override suspend fun load(descriptor: ModelDescriptor) {
         unload()
         val runtime = requireRuntime(context, ONNX_RUNTIME_ID, engineLabel)
-        loadedVoices = descriptor.voices.associate { voice -> voice.id to loadVoice(descriptor, voice, runtime) }
+        loadedVoices =
+            openWithRollback { opened ->
+                descriptor.voices.associate { voice ->
+                    val loaded = loadVoice(descriptor, voice, runtime)
+                    opened.add(loaded.session)
+                    voice.id to loaded
+                }
+            }
         loadedDescriptor = descriptor
     }
 

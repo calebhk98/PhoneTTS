@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- No INTERNET permission at inference time is required for TTS itself; model downloads
-         happen through an explicit, user-initiated flow. Kept minimal on purpose. -->
+    <!-- Speech is fully offline; INTERNET is used ONLY for the explicit, user-initiated model
+         browse/download flow (Hugging Face). No network is touched during synthesis. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:label="PhoneTTS"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">

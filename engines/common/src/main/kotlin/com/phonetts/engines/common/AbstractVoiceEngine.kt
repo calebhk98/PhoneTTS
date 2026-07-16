@@ -3,8 +3,10 @@ package com.phonetts.engines.common
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.text.TextChunker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 
 /**
  * The one part of every engine's `synthesize()` that is genuinely identical: guard the speed,
@@ -46,6 +48,8 @@ abstract class AbstractVoiceEngine(
             for (sentence in TextChunker.intoSentences(text)) {
                 emit(synthesizeSentence(sentence, voiceId, speed))
             }
-        }
+            // flowOn moves the per-sentence inference off the collector's thread (rule 8: never on
+            // the main thread), so a UI callsite can't accidentally run ONNX/AR inference on Main.
+        }.flowOn(Dispatchers.Default)
     }
 }

@@ -11,6 +11,29 @@ import kotlin.test.assertSame
 
 class EngineManagerTest {
     @Test
+    fun aFailedLoadLeavesNoCurrentEngineRatherThanAStaleOne() =
+        runTest {
+            val engineA = FakeEngine(id = "a")
+            val failing = FakeEngine(id = "b", loadError = IllegalStateException("boom"))
+            val registry =
+                EngineRegistry().apply {
+                    register(engineA)
+                    register(failing)
+                }
+            val manager = EngineManager(registry)
+
+            manager.switchTo("a", testDescriptor("m", "a"))
+            assertSame(engineA, manager.currentEngine)
+
+            assertFailsWith<IllegalStateException> { manager.switchTo("b", testDescriptor("m", "b")) }
+
+            // The old engine was unloaded and the failed one didn't load — no stale "ready" engine.
+            assertNull(manager.currentEngine)
+            assertNull(manager.currentDescriptor)
+            assertEquals(1, engineA.unloadCount)
+        }
+
+    @Test
     fun switchingToTheFirstEngineLoadsItWithoutUnloadingAnything() =
         runTest {
             val events = mutableListOf<String>()

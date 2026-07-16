@@ -38,6 +38,19 @@ class DirectoryBundleReaderTest {
     }
 
     @Test
+    fun oversizedSideFileIsNotReadIntoMemory() {
+        val dir = Files.createTempDirectory("bundle").toFile()
+        File(dir, "config.json").writeText("x".repeat(100))
+        // A "text" file larger than the cap must be excluded from sideFiles (name still present).
+        File(dir, "huge.json").writeText("y".repeat(200))
+        val bundle = DirectoryBundleReader(maxSideFileBytes = 150).read(dir.absolutePath)
+
+        assertEquals("x".repeat(100), bundle.sideFile("config.json"))
+        assertNull(bundle.sideFile("huge.json"), "an oversized side file must not be read into memory")
+        assertTrue(bundle.hasFile("huge.json"), "but it should still be listed by name")
+    }
+
+    @Test
     fun rejectsANonDirectory() {
         val file = Files.createTempFile("not-a-dir", ".onnx").toFile()
         try {

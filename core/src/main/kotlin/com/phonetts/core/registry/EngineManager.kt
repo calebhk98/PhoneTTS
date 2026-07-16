@@ -36,6 +36,11 @@ class EngineManager(private val registry: EngineRegistry) {
         mutex.withLock {
             val next = registry.get(engineId) ?: error("no engine registered under id '$engineId'")
             currentEngine?.unload()
+            // Clear state before load: if load() throws (corrupt/oversized model, missing asset),
+            // we must NOT leave currentEngine pointing at the already-unloaded previous engine, or a
+            // caller would treat a non-null currentEngine as "ready" and get a crash on synthesize().
+            currentEngine = null
+            currentDescriptor = null
             next.load(descriptor)
             currentEngine = next
             currentDescriptor = descriptor

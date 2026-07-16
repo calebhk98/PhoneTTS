@@ -49,6 +49,7 @@ class FakeEngine(
     private val voiceList: List<Voice> = listOf(Voice("v0", "Voice 0", "en")),
     private val audio: List<FloatArray> = listOf(floatArrayOf(0f, 0.1f, -0.1f)),
     private val eventLog: MutableList<String>? = null,
+    private val loadError: Throwable? = null,
 ) : VoiceEngine {
     var inspectCount = 0
         private set
@@ -70,6 +71,7 @@ class FakeEngine(
     override fun forcedMatch(bundle: ModelBundle): EngineMatch = EngineMatch(id, descriptorFor(bundle))
 
     override suspend fun load(descriptor: ModelDescriptor) {
+        loadError?.let { throw it }
         loadCount++
         eventLog?.add("load:$id")
     }

@@ -11,6 +11,24 @@ class ResolverTest {
     private val unknownBundle = ModelBundle(id = "unknown-bundle", fileNames = setOf("mystery.bin"))
 
     @Test
+    fun `a saved override for a removed engine is ignored and the bundle is re-detected`() {
+        // Simulate an engine that was unregistered after its decision was persisted.
+        val store = InMemoryOverrideStore().apply { put(knownBundle.id, "engine-that-was-removed") }
+        val claimingEngine = FakeEngine(id = "engine-a", claims = { it.id == knownBundle.id })
+        val resolver =
+            Resolver(
+                engines = listOf(claimingEngine),
+                overrideStore = store,
+                userPicksEngine = { error("should re-detect, not ask the user") },
+            )
+
+        val descriptor = resolver.resolve(knownBundle)
+
+        // Did not crash on the stale override; fell through to detection.
+        assertEquals("engine-a", descriptor.engineId)
+    }
+
+    @Test
     fun `resolve returns a complete descriptor for a known auto-detected bundle`() {
         val claimingEngine = FakeEngine(id = "engine-a", claims = { it.id == knownBundle.id })
         val otherEngine = FakeEngine(id = "engine-b")

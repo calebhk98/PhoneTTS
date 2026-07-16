@@ -21,11 +21,11 @@ object HfEndpoints {
         return "$base&search=${encodeQuery(query)}"
     }
 
-    /** The full (recursive) file tree of a repo at a revision. */
+    /** The full (recursive) file tree of a repo at a revision. Owner/name keeps its '/', segments encoded. */
     fun treeUrl(
         modelId: String,
         revision: String,
-    ): String = "$API_BASE/models/$modelId/tree/$revision?recursive=true"
+    ): String = "$API_BASE/models/${encodePathSegments(modelId)}/tree/$revision?recursive=true"
 
     /** The download URL for one file. Owner/name and the file path keep their '/'; each segment is encoded. */
     fun resolveUrl(

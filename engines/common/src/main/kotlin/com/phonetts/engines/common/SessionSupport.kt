@@ -26,6 +26,23 @@ fun requireAssetPath(
     descriptor.assetPaths[assetKey]
         ?: error("$engineLabel descriptor '${descriptor.modelId}' is missing its '$assetKey' asset path")
 
+/**
+ * Open several sessions with all-or-nothing cleanup: the block adds each session it creates to
+ * [opened] as it goes; if any `createSession` throws part-way, every already-opened session is
+ * closed before the failure propagates — so a partial `load()` never leaks native sessions (which
+ * matters on a 4 GB device where a corrupt/oversized model fails mid-load).
+ */
+@Suppress("TooGenericExceptionCaught") // rolling back on ANY failure is the whole point
+inline fun <T> openWithRollback(block: (opened: MutableList<InferenceSession>) -> T): T {
+    val opened = mutableListOf<InferenceSession>()
+    try {
+        return block(opened)
+    } catch (failure: Throwable) {
+        closeAllQuietly(opened)
+        throw failure
+    }
+}
+
 /** Close every non-null session, ignoring individual close failures (best-effort cleanup). */
 fun closeAllQuietly(sessions: Iterable<InferenceSession?>) {
     for (session in sessions) {

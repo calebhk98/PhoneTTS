@@ -53,4 +53,13 @@ class HtmlTextExtractorTest {
     fun registryRoutesHtmlFiles() {
         assertEquals("html", TextExtractorRegistry.withDefaults().extractorFor("index.html")?.id)
     }
+
+    @Test
+    fun numericEntitiesAreSafeOnOverflowAndAstralCodePoints() {
+        // A huge digit run must not throw (left as-is); a valid astral code point (emoji) decodes
+        // to a surrogate pair, not a truncated char.
+        val text = extractor.extract("<p>keep &#99999999999; grin &#128512;</p>".toByteArray())
+        assertTrue(text.contains("&#99999999999;"), "overflowing numeric entity should be left as-is: $text")
+        assertTrue(text.contains("😀"), "astral code point should decode to a surrogate pair: $text")
+    }
 }
