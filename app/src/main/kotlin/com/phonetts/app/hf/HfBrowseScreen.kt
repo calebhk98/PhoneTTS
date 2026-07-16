@@ -48,6 +48,20 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         state.error?.let { Text("Error: $it") }
         if (state.loading) CircularProgressIndicator()
 
+        if (viewModel.recommended.isNotEmpty()) {
+            Text("Recommended (one-tap)", fontWeight = FontWeight.Bold)
+            viewModel.recommended.forEach { model ->
+                RecommendedRow(
+                    model = model,
+                    isDownloading = state.downloadingId == model.id,
+                    progress = state.progress.takeIf { state.downloadingId == model.id },
+                    isImported = state.importedModelId == model.id,
+                    onDownload = { viewModel.downloadBuiltIn(model) },
+                )
+            }
+            Text("Or search Hugging Face:")
+        }
+
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.results, key = { it.id }) { model ->
                 ModelRow(
@@ -93,6 +107,27 @@ private fun VariantPicker(
             }
         },
     )
+}
+
+@Composable
+private fun RecommendedRow(
+    model: com.phonetts.core.download.builtin.BuiltInModel,
+    isDownloading: Boolean,
+    progress: Pair<Int, Int>?,
+    isImported: Boolean,
+    onDownload: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(model.displayName, fontWeight = FontWeight.Bold)
+            Text("~${model.approxSizeMb} MB${model.note?.let { " · $it" } ?: ""}")
+        }
+        DownloadControl(isDownloading, progress, isImported, onDownload)
+    }
 }
 
 @Composable

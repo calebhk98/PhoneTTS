@@ -2,6 +2,7 @@ package com.phonetts.app.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -25,8 +26,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.engine.Voice
+import kotlinx.coroutines.delay
 
 /**
  * The main screen. Model list, voice list and speed bounds are read entirely from the
@@ -49,6 +53,7 @@ fun TtsScreen(
     viewModel: TtsViewModel,
     onBrowseModels: () -> Unit,
     onManageModels: () -> Unit,
+    sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
@@ -77,7 +82,13 @@ fun TtsScreen(
         } else {
             ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
             state.selected?.let { descriptor ->
-                VoicePicker(descriptor.voices, state.voiceId) { viewModel.setVoice(it) }
+                VoicePicker(
+                    voices = descriptor.voices,
+                    selectedVoiceId = state.voiceId,
+                    favoriteVoiceIds = state.favoriteVoiceIds,
+                    onSelect = viewModel::setVoice,
+                    onToggleFavorite = viewModel::toggleFavoriteVoice,
+                )
                 SpeedControl(descriptor, state.speed) { viewModel.setSpeed(it) }
             }
         }
@@ -118,6 +129,7 @@ fun TtsScreen(
         if (viewModel.exportFormats.size > 1) {
             ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
         }
+        SleepTimerControls(sleepTimer)
 
         if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.stats?.let { GenerationStatsView(it) }
@@ -221,15 +233,23 @@ private fun ModelPicker(
     }
 }
 
+/**
+ * Voice picker; voices always come from [voices] (a descriptor's own list — SSOT). Favorited
+ * voices ([favoriteVoiceIds], sourced from [com.phonetts.core.prefs.FavoriteVoices]) sort first
+ * and show a filled star; the star toggle never changes the voice list itself, only its order.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun VoicePicker(
     voices: List<Voice>,
     selectedVoiceId: String?,
+    favoriteVoiceIds: Set<String>,
     onSelect: (String) -> Unit,
+    onToggleFavorite: (Voice) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selectedName = voices.firstOrNull { it.id == selectedVoiceId }?.name ?: "Select a voice"
+    val ordered = voices.sortedByDescending { it.id in favoriteVoiceIds }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         TextField(
             value = selectedName,
@@ -240,9 +260,10 @@ private fun VoicePicker(
             modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            voices.forEach { voice ->
+            ordered.forEach { voice ->
                 DropdownMenuItem(
                     text = { Text("${voice.name} (${voice.language})") },
+                    trailingIcon = { FavoriteStar(voice.id in favoriteVoiceIds) { onToggleFavorite(voice) } },
                     onClick = {
                         onSelect(voice.id)
                         expanded = false
@@ -251,6 +272,17 @@ private fun VoicePicker(
             }
         }
     }
+}
+
+@Composable
+private fun FavoriteStar(
+    isFavorite: Boolean,
+    onToggle: () -> Unit,
+) {
+    Text(
+        text = if (isFavorite) "★" else "☆", // filled / outline star
+        modifier = Modifier.clickable(onClick = onToggle),
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -283,3 +315,68 @@ private val IMPORT_MIME_TYPES =
         "application/pdf",
         com.phonetts.core.text.extract.DocxTextExtractor.DOCX_MIME,
     )
+
+/**
+ * Facade [MainActivity] implements over `PlaybackService.LocalBinder`'s sleep-timer calls, so
+ * this UI file needs no dependency on the playback service/binder types (spec: Compose UI stays
+ * a consumer, never owns service-binding lifecycle). [None] is the safe default while unbound.
+ */
+interface SleepTimerHandle {
+    fun start(durationMillis: Long)
+
+    fun cancel()
+
+    fun isRunning(): Boolean
+
+    fun remainingMillis(): Long
+
+    companion object {
+        val None =
+            object : SleepTimerHandle {
+                override fun start(durationMillis: Long) = Unit
+
+                override fun cancel() = Unit
+
+                override fun isRunning() = false
+
+                override fun remainingMillis() = 0L
+            }
+    }
+}
+
+/** "Stop after N minutes" — routes to the same `stop()` a Stop tap uses (see [PlaybackService]). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SleepTimerControls(sleepTimer: SleepTimerHandle) {
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(sleepTimer) {
+        while (true) {
+            delay(SLEEP_TIMER_TICK_MILLIS)
+            tick++
+        }
+    }
+    // Re-executed each tick (key(tick) re-composes this block) so the remaining time stays live.
+    key(tick) {
+        val running = sleepTimer.isRunning()
+        Text(if (running) "Sleep timer: ${formatRemaining(sleepTimer.remainingMillis())}" else "Sleep timer: off")
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SLEEP_TIMER_PRESET_MINUTES.forEach { minutes ->
+            OutlinedButton(onClick = { sleepTimer.start(minutes * MILLIS_PER_MINUTE) }) { Text("${minutes}m") }
+        }
+        OutlinedButton(onClick = sleepTimer::cancel) { Text("Off") }
+    }
+}
+
+private fun formatRemaining(millis: Long): String {
+    val totalSeconds = (millis / MILLIS_PER_SECOND).coerceAtLeast(0)
+    val minutes = totalSeconds / SECONDS_PER_MINUTE
+    val seconds = totalSeconds % SECONDS_PER_MINUTE
+    return "%d:%02d".format(minutes, seconds)
+}
+
+private val SLEEP_TIMER_PRESET_MINUTES = listOf(15L, 30L, 60L)
+private const val MILLIS_PER_MINUTE = 60_000L
+private const val MILLIS_PER_SECOND = 1_000L
+private const val SECONDS_PER_MINUTE = 60L
+private const val SLEEP_TIMER_TICK_MILLIS = 1_000L

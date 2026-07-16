@@ -22,6 +22,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import com.phonetts.app.hf.HfBrowseScreen
 import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.manage.ModelManagementScreen
 import com.phonetts.app.manage.ModelManagementViewModel
+import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
 
@@ -45,7 +47,9 @@ class MainActivity : ComponentActivity() {
     private val ttsViewModel: TtsViewModel by viewModels {
         viewModelFactory { initializer { TtsViewModel(graph) } }
     }
-    private var binder: PlaybackService.LocalBinder? = null
+    // A Compose State (not a plain var) so AppNav recomposes — and rebuilds the SleepTimerHandle
+    // it hands TtsScreen — the moment the service connects/disconnects.
+    private val binderState = mutableStateOf<PlaybackService.LocalBinder?>(null)
 
     // Bind to the foreground playback service so its notification/lock-screen Play/Pause/Stop
     // reach the same TtsViewModel controls, and forward every playback-state change back to it so
@@ -54,13 +58,13 @@ class MainActivity : ComponentActivity() {
         object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
                 val localBinder = service as? PlaybackService.LocalBinder ?: return
-                binder = localBinder
+                binderState.value = localBinder
                 localBinder.attachController(ttsViewModel.playbackController)
                 forwardState(localBinder)
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
-                binder = null
+                binderState.value = null
             }
         }
 
@@ -70,7 +74,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AppNav(graph, ttsViewModel, sharedText)
+                    AppNav(graph, ttsViewModel, sharedText, binderState)
                 }
             }
         }
@@ -83,9 +87,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        binder?.detachController()
+        binderState.value?.detachController()
         unbindService(connection)
-        binder = null
+        binderState.value = null
     }
 
     private fun forwardState(localBinder: PlaybackService.LocalBinder) {
@@ -108,13 +112,32 @@ private fun Intent.readSharedText(): String? =
         else -> null
     }?.takeIf { it.isNotBlank() }
 
+// Adapts the (possibly still-unbound) PlaybackService.LocalBinder to the small SleepTimerHandle
+// facade TtsScreen depends on, so the UI layer never needs to know about service binding.
+private fun PlaybackService.LocalBinder?.toSleepTimerHandle(): SleepTimerHandle {
+    val binder = this
+    return object : SleepTimerHandle {
+        override fun start(durationMillis: Long) {
+            binder?.startSleepTimer(durationMillis)
+        }
+
+        override fun cancel() = binder?.cancelSleepTimer() ?: Unit
+
+        override fun isRunning() = binder?.isSleepTimerRunning ?: false
+
+        override fun remainingMillis() = binder?.sleepTimerRemainingMillis() ?: 0L
+    }
+}
+
 @Composable
 private fun AppNav(
     graph: AppGraph,
     ttsViewModel: TtsViewModel,
     sharedText: String?,
+    binderState: State<PlaybackService.LocalBinder?>,
 ) {
     var screen by remember { mutableStateOf(Screen.MAIN) }
+    val binder by binderState
 
     // Load shared/handed-in text into the reader once, when the activity was opened via a share.
     LaunchedEffect(sharedText) {
@@ -127,6 +150,7 @@ private fun AppNav(
                 viewModel = ttsViewModel,
                 onBrowseModels = { screen = Screen.BROWSE },
                 onManageModels = { screen = Screen.MANAGE },
+                sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
         Screen.BROWSE -> {
             val hfViewModel: HfBrowseViewModel =

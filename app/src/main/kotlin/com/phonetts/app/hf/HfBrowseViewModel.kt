@@ -2,6 +2,8 @@ package com.phonetts.app.hf
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.phonetts.core.download.builtin.BuiltInCatalog
+import com.phonetts.core.download.builtin.BuiltInModel
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.download.hf.HfDownloadPlan
 import com.phonetts.core.download.hf.HfModelSummary
@@ -48,6 +50,12 @@ class HfBrowseViewModel(
 
     private val mutableState = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = mutableState.asStateFlow()
+
+    /** Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md). */
+    val recommended: List<BuiltInModel> = BuiltInCatalog.ALL
+
+    /** Download a curated model directly — no search, no webpage — using its known file list. */
+    fun downloadBuiltIn(model: BuiltInModel) = runDownload(model.id, model.downloadItems())
 
     fun onQueryChange(query: String) = mutableState.update { it.copy(query = query) }
 

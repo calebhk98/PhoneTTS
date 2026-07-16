@@ -12,6 +12,7 @@ import com.phonetts.core.audio.transform.Crossfade
 import com.phonetts.core.audio.transform.LoudnessNormalize
 import com.phonetts.core.audio.transform.SilenceTrim
 import com.phonetts.core.audio.transform.TransformChain
+import com.phonetts.core.engine.Voice
 import com.phonetts.core.metrics.GenerationStats
 import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.WordCounter
@@ -55,6 +56,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val stats: GenerationStats? = null,
         // Chosen export encoder (WAV/AAC/Opus); the list is derived from AppGraph.exportFormats.
         val exportFormat: AudioEncoder,
+        // Favorited voice ids (spec §5.7). Sourced from graph.favoriteVoices, never invented here;
+        // the voice picker reads this to star/sort — the voices themselves still come from
+        // descriptor.voices (SSOT).
+        val favoriteVoiceIds: Set<String> = emptySet(),
     )
 
     /** The export encoders available on this device (WAV always; AAC always; Opus on API 29+). */
@@ -96,18 +101,41 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             current.copy(
                 models = models,
                 selected = selected,
-                voiceId = current.voiceId ?: selected?.defaultVoiceId,
+                voiceId = current.voiceId ?: selected?.let(::defaultVoiceIdFor),
                 speed = selected?.defaultSpeed ?: current.speed,
+                favoriteVoiceIds = graph.favoriteVoices.favoriteIds(),
             )
         }
     }
 
     fun selectModel(descriptor: ModelDescriptor) =
         mutableState.update {
-            it.copy(selected = descriptor, voiceId = descriptor.defaultVoiceId, speed = descriptor.defaultSpeed)
+            it.copy(selected = descriptor, voiceId = defaultVoiceIdFor(descriptor), speed = descriptor.defaultSpeed)
         }
 
-    fun setVoice(voiceId: String) = mutableState.update { it.copy(voiceId = voiceId) }
+    // Remembering the user's manual pick as the per-language default (favoriteVoices.setDefaultVoice)
+    // is what makes defaultVoiceIdFor's prefill useful next time this language comes up.
+    fun setVoice(voiceId: String) =
+        mutableState.update { current ->
+            current.selected?.voices?.firstOrNull { it.id == voiceId }?.let(graph.favoriteVoices::setDefaultVoice)
+            current.copy(voiceId = voiceId)
+        }
+
+    /** Flips [voice]'s favorite state; the voice picker re-sorts/stars off [UiState.favoriteVoiceIds]. */
+    fun toggleFavoriteVoice(voice: Voice) =
+        mutableState.update {
+            graph.favoriteVoices.toggleFavorite(voice)
+            it.copy(favoriteVoiceIds = graph.favoriteVoices.favoriteIds())
+        }
+
+    // Prefer the saved per-language default among THIS descriptor's own voices (SSOT — never a
+    // voice the descriptor didn't offer), falling back to the descriptor's own default voice id.
+    private fun defaultVoiceIdFor(descriptor: ModelDescriptor): String {
+        val fallbackId = descriptor.defaultVoiceId
+        val language = descriptor.voices.firstOrNull { it.id == fallbackId }?.language
+        val saved = language?.let { graph.favoriteVoices.defaultVoice(it, descriptor.voices) }
+        return saved?.id ?: fallbackId
+    }
 
     fun setSpeed(speed: Float) = mutableState.update { it.copy(speed = speed) }
 
