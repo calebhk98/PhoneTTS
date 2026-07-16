@@ -74,4 +74,23 @@ class EngineHelpersTest {
         assertEquals(0.2f, outputs.floatsOrError("audio", "X")[1])
         assertFailsWith<IllegalStateException> { outputs.floatsOrError("nope", "X") }
     }
+
+    @Test
+    fun singleFloatsOrErrorReadsTheSoleOutputRegardlessOfItsName() {
+        // Some ONNX exports auto-number their output (e.g. MeloTTS's acoustic graph), so no fixed
+        // key can be hardcoded — the sole entry must still be readable positionally.
+        val outputs = mapOf("14035" to Tensor.floats(floatArrayOf(0.1f, 0.2f)))
+        assertEquals(listOf(0.1f, 0.2f), outputs.singleFloatsOrError("X").toList())
+    }
+
+    @Test
+    fun singleFloatsOrErrorFailsClosedWhenThereIsNotExactlyOneOutput() {
+        assertFailsWith<IllegalStateException> { emptyMap<String, Tensor>().singleFloatsOrError("X") }
+        val twoOutputs =
+            mapOf(
+                "a" to Tensor.floats(floatArrayOf(0f)),
+                "b" to Tensor.floats(floatArrayOf(1f)),
+            )
+        assertFailsWith<IllegalStateException> { twoOutputs.singleFloatsOrError("X") }
+    }
 }
