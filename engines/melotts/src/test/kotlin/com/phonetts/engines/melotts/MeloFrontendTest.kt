@@ -1,143 +1,95 @@
 package com.phonetts.engines.melotts
 
-import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakePhonemizer
-import com.phonetts.core.testing.FakeSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
- * Proves MeloTTS's real frontend contract (docs/research/onnx-io.md): `x`/`tone`/`language` built
- * from the real [MeloSymbolTable] with VITS-style blank-interspersing (`commons.intersperse`
- * upstream), and the BERT session's output shaped into `bert` (always zeroed — real MeloTTS zeros
- * the zh tensor for English too) / `ja_bert` (the actual BERT run, resampled to the phoneme count).
+ * Proves MeloTTS's PROVEN frontend contract (`scripts/model-verify/run_melo2.py`): `x`/`tones`
+ * built from a real lexicon lookup (not an IPA approximation) with VITS `add_blank`
+ * interspersing, punctuation-as-symbol handling, and a fail-closed `UNK` fallback for OOV words.
  */
 class MeloFrontendTest {
-    private fun bertSessionReturning(
-        tokenCount: Int,
-        value: Float,
-    ): FakeSession {
-        val hidden = FloatArray(tokenCount * 768) { value }
-        return FakeSession(outputs = mapOf("1467" to Tensor.floats(hidden, intArrayOf(1, tokenCount, 768))))
-    }
-
-    @Test
-    fun `toModelInput runs the BERT session with matching input_ids, token_type_ids and attention_mask shapes`() {
-        val bert = bertSessionReturning(tokenCount = 3, value = 0f)
-        val frontend = MeloFrontend(bert, FakePhonemizer())
-
-        frontend.toModelInput("hello world", "EN")
-
-        assertEquals(1, bert.runs.size)
-        val run = bert.runs.single()
-        val inputIds = run.getValue("input_ids").asLongs()
-        // "hello world" -> BOS + 2 words + EOS = 4 tokens.
-        assertEquals(4, inputIds.size)
-        assertEquals(inputIds.size, run.getValue("token_type_ids").asLongs().size)
-        assertTrue(run.getValue("token_type_ids").asLongs().all { it == 0L })
-        assertEquals(inputIds.size, run.getValue("attention_mask").asLongs().size)
-        assertTrue(run.getValue("attention_mask").asLongs().all { it == 1L })
-    }
-
-    @Test
-    fun `toModelInput maps a consonant-vowel IPA string to real symbol ids, BOS-EOS padded and blank-interspersed`() {
-        val bert = bertSessionReturning(tokenCount = 1, value = 0f)
-        val frontend = MeloFrontend(bert, FakePhonemizer { "pi" })
-
-        val input = frontend.toModelInput("ignored", "EN")
-
-        val pad = MeloSymbolTable.PAD_ID.toLong()
-        val pId = MeloSymbolTable.idFor("p").toLong()
-        val iyId = MeloSymbolTable.idFor("iy").toLong()
-        // core = [_ , p, iy, _] (BOS/EOS pad framing) -> intersperse(0) -> length 2*4+1 = 9.
-        assertEquals(listOf(pad, 0L, pad, pId, 0L, iyId, 0L, pad, 0L), input.tokenIds.toList())
-
-        val consonantTone = (MeloSymbolTable.EN_TONE_OFFSET + 0).toLong()
-        val unstressedVowelTone = (MeloSymbolTable.EN_TONE_OFFSET + 1).toLong()
-        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONE) as LongArray
-        // core tones = [_ (0+offset), p (0+offset), iy (1+offset), _ (0+offset)], blank-interspersed with
-        // RAW 0 (not offset) at every even index — matches upstream `commons.intersperse(tones, 0)`.
-        assertEquals(
-            listOf(0L, consonantTone, 0L, consonantTone, 0L, unstressedVowelTone, 0L, consonantTone, 0L),
-            tones.toList(),
+    private val tokens =
+        mapOf(
+            "_" to 0,
+            "p" to 1,
+            "iy" to 2,
+            "SP" to 3,
+            "UNK" to 4,
+            "," to 5,
         )
 
-        val enLang = MeloSymbolTable.EN_LANGUAGE_ID.toLong()
-        val languages = input.extras.getValue(MeloFrontend.EXTRA_LANGUAGE) as LongArray
-        assertEquals(listOf(0L, enLang, 0L, enLang, 0L, enLang, 0L, enLang, 0L), languages.toList())
+    private val lexicon =
+        mapOf(
+            "hi" to MeloLexicon.Entry(listOf("p", "iy"), listOf(7, 8)),
+            "the" to MeloLexicon.Entry(listOf("p"), listOf(7)),
+        )
+
+    private fun frontend() = MeloFrontend(tokens, lexicon)
+
+    @Test
+    fun `toModelInput maps a lexicon word to its real phoneme and tone ids, add_blank-interspersed`() {
+        val input = frontend().toModelInput("hi", "en")
+
+        // "hi" -> lexicon phones [p, iy] -> ids [1, 2] -> intersperse_blank -> [0, 1, 0, 2, 0].
+        assertEquals(listOf(0L, 1L, 0L, 2L, 0L), input.tokenIds.toList())
+        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONES) as LongArray
+        // tones [7, 8] -> intersperse_blank -> [0, 7, 0, 8, 0].
+        assertEquals(listOf(0L, 7L, 0L, 8L, 0L), tones.toList())
     }
 
     @Test
-    fun `a primary stress mark raises the tone class of the vowel that follows it`() {
-        val bert = bertSessionReturning(tokenCount = 1, value = 0f)
-        val frontend = MeloFrontend(bert, FakePhonemizer { "pˈi" })
+    fun `toModelInput concatenates phonemes and tones across multiple lexicon words`() {
+        val input = frontend().toModelInput("the hi", "en")
 
-        val input = frontend.toModelInput("ignored", "EN")
-
-        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONE) as LongArray
-        val stressedVowelTone = (MeloSymbolTable.EN_TONE_OFFSET + 2).toLong()
-        // core tones = [_, p(unstressed cons), i(STRESSED), _] -> interspersed at odd indices 1,3,5,7.
-        assertEquals(stressedVowelTone, tones[5])
+        // "the"->[p](7), "hi"->[p,iy](7,8) => phones=[p,p,iy] ids=[1,1,2] -> intersperse length 7.
+        assertEquals(listOf(0L, 1L, 0L, 1L, 0L, 2L, 0L), input.tokenIds.toList())
     }
 
     @Test
-    fun `a whitespace word break maps to the SP symbol`() {
-        val bert = bertSessionReturning(tokenCount = 1, value = 0f)
-        val frontend = MeloFrontend(bert, FakePhonemizer { "p i" })
+    fun `a punctuation token that is itself a known symbol contributes tone 0`() {
+        val input = frontend().toModelInput("hi,", "en")
 
-        val input = frontend.toModelInput("ignored", "EN")
-
-        val spId = MeloSymbolTable.SP_ID.toLong()
-        // core = [_, p, SP, i, _] -> interspersed ids at odd indices 1,3,5,7,9.
-        assertEquals(spId, input.tokenIds[5])
+        // tokens: "hi" (lexicon) + "," (symbol table entry, tone 0).
+        val commaId = tokens.getValue(",").toLong()
+        assertEquals(commaId, input.tokenIds[5])
+        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONES) as LongArray
+        assertEquals(0L, tones[5])
     }
 
     @Test
-    fun `an unmapped IPA codepoint falls back to the UNK symbol instead of an invalid id`() {
-        val bert = bertSessionReturning(tokenCount = 1, value = 0f)
-        val frontend = MeloFrontend(bert, FakePhonemizer { "q" })
+    fun `an out-of-vocabulary word falls back to the UNK symbol instead of crashing`() {
+        val input = frontend().toModelInput("zzzznotaword", "en")
 
-        val input = frontend.toModelInput("ignored", "EN")
-
-        val unkId = MeloSymbolTable.UNK_ID.toLong()
-        // core = [_, UNK, _] -> interspersed ids at odd indices 1, 3.
-        assertEquals(unkId, input.tokenIds[3])
+        val unkId = tokens.getValue("UNK").toLong()
+        // core = [UNK] -> intersperse_blank -> [0, UNK, 0].
+        assertEquals(listOf(0L, unkId, 0L), input.tokenIds.toList())
+        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONES) as LongArray
+        assertEquals(listOf(0L, 0L, 0L), tones.toList())
     }
 
     @Test
-    fun `bert is always zero-filled at the acoustic model's 1024-dim shape, matching real MeloTTS's English path`() {
-        val bert = bertSessionReturning(tokenCount = 5, value = 9f)
-        val frontend = MeloFrontend(bert, FakePhonemizer { "pi" })
+    fun `an out-of-vocabulary word is skipped rather than crashing when the table has no UNK entry`() {
+        val noUnkTokens = tokens - "UNK"
+        val frontend = MeloFrontend(noUnkTokens, lexicon)
 
-        val input = frontend.toModelInput("ignored", "EN")
+        val input = frontend.toModelInput("zzzznotaword", "en")
 
-        val bertTensor = input.extras.getValue(MeloFrontend.EXTRA_BERT) as Tensor
-        val tokenCount = input.tokenIds.size
-        assertEquals(listOf(1, MeloFrontend.BERT_DIM, tokenCount), bertTensor.shape.toList())
-        assertTrue(bertTensor.asFloats().all { it == 0f })
+        // No phones produced at all -> intersperse_blank of an empty sequence -> just the pad.
+        assertEquals(listOf(0L), input.tokenIds.toList())
     }
 
     @Test
-    fun `ja_bert carries the real BERT session output resampled to the phoneme count, not zeros`() {
-        val bert = bertSessionReturning(tokenCount = 5, value = 9f)
-        val frontend = MeloFrontend(bert, FakePhonemizer { "pi" })
+    fun `text is lowercased before lexicon lookup`() {
+        val input = frontend().toModelInput("HI", "en")
 
-        val input = frontend.toModelInput("ignored", "EN")
-
-        val jaBert = input.extras.getValue(MeloFrontend.EXTRA_JA_BERT) as Tensor
-        val tokenCount = input.tokenIds.size
-        assertEquals(listOf(1, MeloFrontend.JA_BERT_DIM, tokenCount), jaBert.shape.toList())
-        assertTrue(jaBert.asFloats().all { it == 9f }, "a constant BERT output must resample to a constant ja_bert")
+        assertEquals(listOf(0L, 1L, 0L, 2L, 0L), input.tokenIds.toList())
     }
 
     @Test
-    fun `toModelInput produces stable ids for the same phonemizer output across calls`() {
-        val bert = bertSessionReturning(tokenCount = 1, value = 0f)
-        val frontend = MeloFrontend(bert, FakePhonemizer { "pi" })
-
-        val first = frontend.toModelInput("alpha beta", "EN")
-        val second = frontend.toModelInput("alpha beta", "EN")
+    fun `toModelInput produces stable ids for the same text across calls`() {
+        val first = frontend().toModelInput("the hi", "en")
+        val second = frontend().toModelInput("the hi", "en")
 
         assertEquals(first.tokenIds.toList(), second.tokenIds.toList())
     }

@@ -58,69 +58,54 @@ per-voice embeddings from `voices.npz`, key voices by the `.npy` names, and feed
 voice's `[1,256]` row to the `style` input. The `.onnx`-only companion assumption also changes:
 the real voice table is `voices.npz`, not a `voices.json` name array.
 
-## MeloTTS — `seasonstudio/melotts_zh_mix_en_onnx` (`tts_model.onnx` + `bert_lml_model.onnx`)
+## MeloTTS — `MiaoMint/MeloTTS-ONNX` (`onnx_exports/en_v2/model.onnx`) — RETARGETED, PROVEN
 
-Acoustic graph (`tts_model.onnx`):
+**The previous `seasonstudio/melotts_zh_mix_en_onnx` path is ABANDONED.** It ran shape-correctly
+against an 11-input dual-session (acoustic + BERT) contract but produced pure silence: that
+export's phoneme embedding has 112 rows while the engine's hardcoded 219-symbol table assumed a
+different vocabulary (SSOT violation — see `docs/MODEL-VERIFICATION.md`'s prior findings, kept
+below the fold for history). MeloTTS is now retargeted to the sherpa-onnx-style MiaoMint export,
+which `scripts/model-verify/run_melo2.py` PROVED produces real, non-silent English speech (10.54s,
+908 KB, peak 0.293) — see that script for the reference recipe this engine now follows exactly.
+
+The model ships FOUR files, all of which are the actual source of truth (no hardcoded table):
+
+- `model.onnx` — the single acoustic session (no separate BERT model at all).
+- `tokens.txt` — `"<symbol> <id>"` per line (219 entries) — read by `MeloTokens`.
+- `lexicon.txt` — `"<word> p1..pN t1..tN"` per line (~4.8 MB G2P dictionary) — read by `MeloLexicon`.
+- `metadata.json` — `{"model_type":"melo-vits","language_code":"en","add_blank":1,"n_speakers":5,
+  "sample_rate":44100,"speaker_id":0,"lang_id":2,"tone_start":7,...}` — read by `MeloMetadata`.
+
+Acoustic graph (`model.onnx`), the REAL 7-input contract — no `bert`, no `ja_bert`, no `language`
+input, no `sdp_ratio`:
 
 | direction | name             | dtype | shape                | notes |
 |-----------|------------------|-------|----------------------|-------|
-| input     | `x`              | int64 | `[1, len]`           | phoneme ids |
-| input     | `x_lengths`      | int64 | `[1]`                | |
-| input     | `sid`            | int64 | `[1]`                | speaker id |
-| input     | `tone`           | int64 | `[1, len]`           | per-phoneme tone id |
-| input     | `language`       | int64 | `[1, len]`           | per-phoneme language id |
-| input     | `bert`           | float | `[1, 1024, len]`     | zh BERT features |
-| input     | `ja_bert`        | float | `[1, 768, len]`      | ja BERT features |
-| input     | `noise_scale`    | float | scalar               | |
-| input     | `length_scale`   | float | scalar               | **the speed control (inverse: bigger = slower)** |
-| input     | `noise_scale_w`  | float | scalar               | |
-| input     | `sdp_ratio`      | float | scalar               | |
-| output    | (auto-numbered, e.g. `14035`) | float | `[T, 1, ...]` | **name is graph-generated — read `outputNames[0]`** |
+| input     | `x`              | int64 | `[1, L]`              | symbol ids, `add_blank`-interspersed |
+| input     | `x_lengths`      | int64 | `[1]`                 | `L` |
+| input     | `tones`          | int64 | `[1, L]`              | per-symbol tone id, same interspersing |
+| input     | `sid`            | int64 | `[1]`                 | speaker id |
+| input     | `noise_scale`    | float | scalar (fixed `0.6`)  | |
+| input     | `length_scale`   | float | scalar                | **the speed control (inverse: bigger = slower)** |
+| input     | `noise_scale_w`  | float | scalar (fixed `0.8`)  | |
+| output    | (auto-numbered)  | float | `[N, S, T]`            | **name is graph-generated — read positionally** |
 
-BERT graph (`bert_lml_model.onnx`): inputs `input_ids`, `token_type_ids`, `attention_mask` (all
-int64 `[1, len]`); output auto-numbered (e.g. `1467`) float `[1, len, 768]`.
+`MeloEngine.sessionInputs` builds all 7 named inputs and reads the acoustic output **positionally**
+(`Map<String, Tensor>.singleFloatsOrError`, `engines/common/TensorOutputs.kt`). Speed routes to
+`length_scale` **inversely** (`1f / speed`, guarded `speed > 0`), exactly like Piper's `scales[1]`.
 
-**Verdict: REWORKED against the real 11-input contract — runs the real graph shape-correctly, with
-one honestly-documented gap (BERT/prosody), not stubbed.** `MeloEngine.sessionInputs` now builds
-all 11 named inputs (`x`, `x_lengths`, `sid`, `tone`, `language`, `bert`, `ja_bert`, `noise_scale`,
-`length_scale`, `noise_scale_w`, `sdp_ratio`) and reads the acoustic output **positionally**
-(`Map<String, Tensor>.singleTensorOrError`, `engines/common/TensorOutputs.kt`) instead of by a
-hardcoded name — no `InferenceSession` interface change was needed for this, since `run()` already
-returns whatever key the runtime reports; taking the map's sole value works for a single-output
-graph without widening the seam. Speed routes to `length_scale` **inversely**
-(`1f / speed`, guarded `speed > 0`), exactly like Piper's `scales[1]`.
+`MeloFrontend`'s G2P mirrors `run_melo2.py` exactly: tokenize lowercased text with
+`[a-zA-Z']+|[.,!?;:]`; a word found in `lexicon.txt` contributes its phonemes+tones; a punctuation
+token that is itself a known symbol contributes itself with tone 0; anything else falls back to
+the `UNK` symbol (tone 0) rather than crashing (fail-closed OOV, spec rule 4). `add_blank`
+interspersing (`[0, v0, 0, v1, ..., vN, 0]`) is applied to both the symbol and tone sequences. No
+espeak/IPA approximation is involved anymore — pronunciation comes straight from the bundled
+lexicon.
 
-`MeloFrontend` (English only) now builds `x`/`tone`/`language` from MeloTTS's REAL, verbatim
-symbol/tone/language-id table (`MeloSymbolTable`, copied index-for-index from upstream
-`melo/text/symbols.py`, `language_id_map`, `language_tone_start_map` — myshell-ai/MeloTTS, checked
-2026-07), including the real VITS "blank"/`add_blank` interspersing (`commons.intersperse`
-upstream: `[0, v0, 0, v1, ..., vN, 0]`). What's approximated, and why:
-
-  - **G2P**: real MeloTTS uses `g2p_en` (CMUdict + neural fallback) emitting ARPAbet. This module
-    has neither in Kotlin, so per this ticket it routes through the shared espeak-ng
-    [`Phonemizer`](../../core/src/main/kotlin/com/phonetts/core/text/Phonemizer.kt) instead and
-    maps IPA codepoints to the closest English symbol one-at-a-time
-    (`MeloEnglishPhonemeMap`) — valid, in-vocabulary ids every time, not upstream-identical
-    pronunciation (diphthongs/affricates split into two phonemes; stress marks are honoured for
-    tone but only approximately, since ARPAbet-exact stress needs CMUdict).
-  - **`bert` (1024-dim) is fed ZEROS — this is NOT a shortcut, it is what real MeloTTS does.**
-    `melo/utils.py::get_text_for_tts_infer` zeros the 1024-dim `bert` tensor for every
-    non-Chinese language and puts the actual BERT hidden states in `ja_bert` (768-dim) instead —
-    confirmed straight from upstream source. So no 768→1024 "padding/projection" was ever needed;
-    the original ticket's premise about that was based on an incomplete read of the pipeline.
-  - **`ja_bert` (768-dim) IS real content** — the `bert_lml_model.onnx` session is run (with
-    `input_ids`/`token_type_ids`/`attention_mask`) and its `[1, L, 768]` output is
-    nearest-neighbour resampled along the sequence axis to the acoustic model's phoneme count `T`
-    (`MeloFrontend.resampleToPhoneCount`). Real MeloTTS instead does an EXACT `word2ph` (word ->
-    phoneme count) alignment from its own tokenizer; this frontend does not implement that, so
-    prosody conditioning is present but not word-aligned — a documented, not hidden, gap.
-  - **BERT tokenization** is still the placeholder hash-based tokenizer (real MeloTTS loads
-    `bert-base-uncased`'s WordPiece vocab, which ships with the model bundle, not this jar).
-
-Net effect: MeloTTS now runs end-to-end against the real graph and produces audio (perfect
-prosody remains out of scope, per this ticket's own bar). The auto-numbered output name is still
-the strongest argument for the load-time name-resolution follow-up below, for engines that DO have
-more than one output.
+`inspect()` fingerprints a bundle by: a `.onnx` file present, `tokens.txt` present, `lexicon.txt`
+present, and a `metadata.json` whose `model_type` is `"melo-vits"` (or whose `comment` mentions
+"melo") — fails closed otherwise. `n_speakers`/`sample_rate`/`speaker_id` in `metadata.json` build
+the descriptor's voice table and sample rate; nothing is hardcoded outside this engine (SSOT).
 
 ## CosyVoice2 — NOT single-file validatable
 

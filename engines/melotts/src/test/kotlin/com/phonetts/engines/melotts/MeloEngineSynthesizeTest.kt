@@ -4,7 +4,6 @@ import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakePhonemizer
 import com.phonetts.core.testing.FakeRuntime
 import com.phonetts.core.testing.FakeSession
 import com.phonetts.engines.common.testing.engineContext
@@ -17,16 +16,31 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 9.3/9.4 — synthesize() chunks via TextChunker, runs the frontend then the acoustic session for
- * each chunk, and assembles the REAL 11-input MeloTTS acoustic contract validated in
- * docs/research/onnx-io.md: `x`/`x_lengths`/`sid`/`tone`/`language`/`bert`/`ja_bert`/
- * `noise_scale`/`length_scale`/`noise_scale_w`/`sdp_ratio`. Speed routes INVERSELY into
- * `length_scale` (spec rule #2, never resampling audio), and the acoustic output — auto-numbered
- * by the real export — is read positionally rather than by a hardcoded name.
+ * 9.3/9.4 — synthesize() chunks via TextChunker and, for each chunk, runs the frontend (built
+ * from the injected [MeloEngine]'s `tokens.txt`/`lexicon.txt` reader seam) then the PROVEN
+ * 7-input acoustic contract (`scripts/model-verify/run_melo2.py`): `x`/`x_lengths`/`tones`/`sid`/
+ * `noise_scale`/`length_scale`/`noise_scale_w`. Speed routes INVERSELY into `length_scale` (spec
+ * rule 2), and the auto-numbered acoustic output is read positionally.
  */
 class MeloEngineSynthesizeTest {
-    private val bertPath = "/models/melo-en/bert_model.onnx"
     private val acousticPath = "/models/melo-en/model.onnx"
+    private val tokensPath = "/models/melo-en/tokens.txt"
+    private val lexiconPath = "/models/melo-en/lexicon.txt"
+
+    private val tokensText =
+        """
+        _ 0
+        p 1
+        iy 2
+        SP 3
+        UNK 4
+        , 5
+        """.trimIndent()
+
+    private val lexiconText =
+        """
+        hi p iy 7 8
+        """.trimIndent()
 
     private fun descriptor() =
         ModelDescriptor(
@@ -35,45 +49,39 @@ class MeloEngineSynthesizeTest {
             displayName = "MeloTTS",
             origin = Origin.BUILT_IN,
             sampleRate = 44_100,
-            voices = listOf(Voice("EN-US", "EN-US", "EN"), Voice("EN-BR", "EN-BR", "EN")),
+            voices = listOf(Voice("0", "Speaker 1", "en"), Voice("1", "Speaker 2", "en")),
             speedRange = 0.5f..2.0f,
-            defaultVoiceId = "EN-US",
+            defaultVoiceId = "0",
             defaultSpeed = 1.0f,
             assetPaths =
                 mapOf(
-                    MeloEngine.BERT_ASSET to bertPath,
                     MeloEngine.ACOUSTIC_ASSET to acousticPath,
+                    MeloEngine.TOKENS_ASSET to tokensPath,
+                    MeloEngine.LEXICON_ASSET to lexiconPath,
                 ),
         )
 
-    /**
-     * A BERT session handing back a plausible `[1, L, 768]` hidden-state tensor under an
-     * auto-numbered key (like the real `bert_lml_model.onnx` export) — proves MeloFrontend reads
-     * it positionally rather than by a fixed name.
-     */
-    private fun bertSession(): FakeSession =
-        FakeSession(
-            outputsFor = { inputs ->
-                val tokenCount = inputs.getValue("input_ids").asLongs().size
-                val hidden = FloatArray(tokenCount * MeloFrontend.JA_BERT_DIM) { 1f }
-                mapOf("1467" to Tensor.floats(hidden, intArrayOf(1, tokenCount, MeloFrontend.JA_BERT_DIM)))
-            },
-        )
-
     private fun buildEngine(acousticSession: FakeSession): Pair<MeloEngine, FakeRuntime> {
-        val runtime = onnxRuntime { path -> if (path == bertPath) bertSession() else acousticSession }
-        val engine = MeloEngine(engineContext(runtime, FakePhonemizer()))
+        val runtime = onnxRuntime { acousticSession }
+        val reader: (String) -> String = { path ->
+            when (path) {
+                tokensPath -> tokensText
+                lexiconPath -> lexiconText
+                else -> error("unexpected read of $path")
+            }
+        }
+        val engine = MeloEngine(engineContext(runtime), reader)
         return engine to runtime
     }
 
     @Test
-    fun `load creates a BERT session and an acoustic session from the descriptor asset paths`() =
+    fun `load creates exactly one acoustic session from the descriptor asset path`() =
         runTest {
             val (engine, runtime) = buildEngine(FakeSession())
 
             engine.load(descriptor())
 
-            assertEquals(listOf(bertPath, acousticPath), runtime.createdPaths)
+            assertEquals(listOf(acousticPath), runtime.createdPaths)
         }
 
     @Test
@@ -87,7 +95,7 @@ class MeloEngineSynthesizeTest {
             val (engine, _) = buildEngine(acousticSession)
             engine.load(descriptor())
 
-            val chunks = engine.synthesize("First sentence. Second sentence!", "EN-US", 1.0f).toList()
+            val chunks = engine.synthesize("Hi there. Hi again!", "0", 1.0f).toList()
 
             assertEquals(2, chunks.size)
             assertEquals(2, acousticSession.runs.size)
@@ -101,54 +109,47 @@ class MeloEngineSynthesizeTest {
             val (engine, _) = buildEngine(acousticSession)
             engine.load(descriptor())
 
-            engine.synthesize("Hello there.", "EN-US", 1.25f).toList()
+            engine.synthesize("Hi.", "0", 1.25f).toList()
 
             val run = acousticSession.runs.single()
             assertEquals(1f / 1.25f, run.getValue("length_scale").asFloats().single())
         }
 
     @Test
-    fun `synthesize assembles all 11 real acoustic inputs with matching phoneme-length shapes`() =
+    fun `synthesize assembles the real 7 acoustic inputs with matching phoneme-length shapes`() =
         runTest {
             val acousticSession = FakeSession(outputsFor = { mapOf("out" to Tensor.floats(floatArrayOf(0f))) })
             val (engine, _) = buildEngine(acousticSession)
             engine.load(descriptor())
 
-            engine.synthesize("Hi.", "EN-BR", 1.0f).toList()
+            engine.synthesize("Hi.", "1", 1.0f).toList()
 
             val run = acousticSession.runs.single()
             val expectedKeys =
-                setOf(
-                    "x", "x_lengths", "sid", "tone", "language",
-                    "bert", "ja_bert", "noise_scale", "length_scale", "noise_scale_w", "sdp_ratio",
-                )
+                setOf("x", "x_lengths", "tones", "sid", "noise_scale", "length_scale", "noise_scale_w")
             assertEquals(expectedKeys, run.keys)
 
             val tokenCount = run.getValue("x").asLongs().size
             assertEquals(tokenCount.toLong(), run.getValue("x_lengths").asLongs().single())
-            assertEquals(tokenCount, run.getValue("tone").asLongs().size)
-            assertEquals(tokenCount, run.getValue("language").asLongs().size)
-            // EN-BR is voice index 1 in the descriptor's voice list -> sid.
+            assertEquals(tokenCount, run.getValue("tones").asLongs().size)
+            // voice id "1" is index 1 in the descriptor's voice list -> sid.
             assertEquals(1L, run.getValue("sid").asLongs().single())
         }
 
     @Test
-    fun `synthesize zeroes the zh bert input and shapes ja_bert to the phoneme count`() =
+    fun `synthesize builds x from the lexicon with add_blank interspersing`() =
         runTest {
             val acousticSession = FakeSession(outputsFor = { mapOf("out" to Tensor.floats(floatArrayOf(0f))) })
             val (engine, _) = buildEngine(acousticSession)
             engine.load(descriptor())
 
-            engine.synthesize("Hi.", "EN-US", 1.0f).toList()
+            engine.synthesize("hi", "0", 1.0f).toList()
 
             val run = acousticSession.runs.single()
-            val tokenCount = run.getValue("x").asLongs().size
-            val bert = run.getValue("bert")
-            val jaBert = run.getValue("ja_bert")
-
-            assertEquals(listOf(1, MeloFrontend.BERT_DIM, tokenCount), bert.shape.toList())
-            assertTrue(bert.asFloats().all { it == 0f }, "bert (zh, 1024-dim) must stay zeroed for English")
-            assertEquals(listOf(1, MeloFrontend.JA_BERT_DIM, tokenCount), jaBert.shape.toList())
+            // "hi" -> lexicon phones [p, iy] -> ids [1, 2] -> interspersed [0, 1, 0, 2, 0].
+            assertEquals(listOf(0L, 1L, 0L, 2L, 0L), run.getValue("x").asLongs().toList())
+            // lexicon tones [7, 8] -> interspersed [0, 7, 0, 8, 0].
+            assertEquals(listOf(0L, 7L, 0L, 8L, 0L), run.getValue("tones").asLongs().toList())
         }
 
     @Test
@@ -156,12 +157,12 @@ class MeloEngineSynthesizeTest {
         val (engine, _) = buildEngine(FakeSession())
 
         assertFailsWith<IllegalStateException> {
-            engine.synthesize("Hello.", "EN-US", 1.0f)
+            engine.synthesize("Hello.", "0", 1.0f)
         }
     }
 
     @Test
-    fun `unload closes both sessions and clears the loaded voice list`() =
+    fun `unload closes the acoustic session and clears the loaded voice list`() =
         runTest {
             val acousticSession = FakeSession()
             val (engine, runtime) = buildEngine(acousticSession)

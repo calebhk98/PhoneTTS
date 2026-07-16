@@ -4,10 +4,6 @@ package com.phonetts.core.download.builtin
 // model immediately instead of having to search Hugging Face. Only models that are BOTH proven to
 // produce valid audio (docs/MODEL-VERIFICATION.md) AND handled end-to-end by an engine's
 // inspect()/load() belong here — a one-tap download must not land a model that then fails to load.
-//
-// MeloTTS is intentionally absent: it runs shape-correctly but doesn't yet produce real speech
-// (its symbol table is export-specific — see docs/MODEL-VERIFICATION.md), so a one-tap download
-// would land a silent model. It joins once it sings.
 object BuiltInCatalog {
     val PIPER_LESSAC =
         BuiltInModel(
@@ -66,6 +62,27 @@ object BuiltInCatalog {
             note = "Highest quality, 5 English voices. Larger download (fp32).",
         )
 
+    // MiaoMint/MeloTTS-ONNX's sherpa-onnx English export (onnx_exports/en_v2) — PROVEN to produce
+    // real, non-silent speech by scripts/model-verify/run_melo2.py (10.54s, 908KB, peak 0.293).
+    // Ships its own symbol table (tokens.txt) and G2P dictionary (lexicon.txt), which is what lets
+    // MeloEngine avoid a hardcoded phoneme map (SSOT). Replaces the abandoned seasonstudio export,
+    // which ran shape-correctly but produced silence (docs/MODEL-VERIFICATION.md).
+    val MELO_EN =
+        BuiltInModel(
+            id = "melotts-en-v2",
+            displayName = "MeloTTS — English v2",
+            repoId = "MiaoMint/MeloTTS-ONNX",
+            approxSizeMb = 175,
+            files =
+                listOf(
+                    BuiltInFile(repoPath = "onnx_exports/en_v2/model.onnx", localName = "model.onnx"),
+                    BuiltInFile(repoPath = "onnx_exports/en_v2/tokens.txt", localName = "tokens.txt"),
+                    BuiltInFile(repoPath = "onnx_exports/en_v2/lexicon.txt", localName = "lexicon.txt"),
+                    BuiltInFile(repoPath = "onnx_exports/en_v2/metadata.json", localName = "metadata.json"),
+                ),
+            note = "Multi-speaker English VITS model.",
+        )
+
     /** Every recommended model, in display order (smallest-first is friendlier, but quality-first here). */
-    val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M)
+    val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M, MELO_EN)
 }
