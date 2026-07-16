@@ -86,7 +86,9 @@ class ModelManager(
     private fun unloadIfCurrent(modelId: String): Boolean {
         val manager = engineManager ?: return false
         if (manager.currentDescriptor?.modelId != modelId) return false
-        manager.currentEngine?.unload()
+        // Use EngineManager's own unload so its currentEngine/currentDescriptor are cleared too —
+        // calling currentEngine.unload() directly would leave the manager reporting stale state.
+        manager.unloadCurrent()
         return true
     }
 

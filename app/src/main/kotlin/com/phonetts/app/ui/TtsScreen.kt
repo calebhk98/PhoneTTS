@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,6 +21,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
@@ -28,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -45,6 +48,7 @@ import com.phonetts.core.engine.Voice
 fun TtsScreen(
     viewModel: TtsViewModel,
     onBrowseModels: () -> Unit,
+    onManageModels: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
@@ -88,19 +92,67 @@ fun TtsScreen(
 
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = viewModel::play, enabled = state.selected != null && !state.playing) { Text("Play") }
+            // Pause the audio while generation keeps running; resume replays already-generated audio.
+            if (state.playing && !state.paused) {
+                OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
+            }
+            if (state.playing && state.paused) {
+                OutlinedButton(onClick = viewModel::resumePlayback) { Text("Resume") }
+            }
             OutlinedButton(onClick = viewModel::stop, enabled = state.playing) { Text("Stop") }
+            OutlinedButton(
+                onClick = viewModel::sampleVoice,
+                enabled = state.selected != null && !state.busy,
+            ) { Text("Sample voice") }
             OutlinedButton(
                 onClick = { exportLauncher.launch("speech.wav") },
                 enabled = state.selected != null && !state.busy,
             ) { Text("Export WAV") }
             OutlinedButton(onClick = { importLauncher.launch(IMPORT_MIME_TYPES) }) { Text("Import file") }
             OutlinedButton(onClick = onBrowseModels) { Text("Browse models") }
+            OutlinedButton(onClick = onManageModels) { Text("Manage models") }
             OutlinedButton(onClick = { sideloadLauncher.launch(null) }) { Text("Sideload folder") }
         }
 
+        TransformToggles(state, viewModel)
+
         if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        state.stats?.let { GenerationStatsView(it) }
         state.status?.let { Text(it) }
     }
+}
+
+/** Non-destructive post-processing toggles (spec: applied to export, raw audio never altered). */
+@Composable
+private fun TransformToggles(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    ToggleRow("Trim silence", state.trimSilence, viewModel::setTrimSilence)
+    ToggleRow("Normalize volume", state.normalizeVolume, viewModel::setNormalizeVolume)
+    ToggleRow("Crossfade joins", state.crossfadeJoins, viewModel::setCrossfadeJoins)
+}
+
+@Composable
+private fun ToggleRow(
+    label: String,
+    checked: Boolean,
+    onChecked: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Switch(checked = checked, onCheckedChange = onChecked)
+        Text(label)
+    }
+}
+
+/** Live, measured generation stats (spec: RTF is calculated, never guessed). */
+@Composable
+private fun GenerationStatsView(stats: com.phonetts.core.metrics.GenerationStats) {
+    val rtf = "%.2f".format(stats.realTimeFactor)
+    val audio = "%.1f".format(stats.audioSecondsProduced)
+    val eta = stats.estimatedRemainingSeconds?.let { " · ETA ${"%.0f".format(it)}s" } ?: ""
+    val wps = if (stats.wordsPerSecond > 0) " · ${"%.1f".format(stats.wordsPerSecond)} words/s" else ""
+    Text("Generated ${audio}s audio · ${rtf}x real-time$wps$eta")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

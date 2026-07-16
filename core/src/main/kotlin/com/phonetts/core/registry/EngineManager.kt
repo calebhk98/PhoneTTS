@@ -46,4 +46,16 @@ class EngineManager(private val registry: EngineRegistry) {
             currentDescriptor = descriptor
         }
     }
+
+    /**
+     * Unload the current engine (if any) and clear the loaded state, so nothing keeps pointing at
+     * torn-down weights. Used when a model is deleted while it happens to be the loaded one. Call
+     * from the UI thread; it is not serialized against [switchTo] because a delete and a switch
+     * are user actions that don't overlap in this single-user app.
+     */
+    fun unloadCurrent() {
+        currentEngine?.unload()
+        currentEngine = null
+        currentDescriptor = null
+    }
 }

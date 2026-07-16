@@ -13,6 +13,7 @@ import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
 import com.phonetts.core.registry.EngineRegistry
 import com.phonetts.core.registry.ModelCatalog
+import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.resolver.Resolver
 import com.phonetts.core.sideload.DirectoryBundleReader
@@ -52,6 +53,18 @@ class AppGraph(context: Context) {
     val sideloadCoordinator = SideloadCoordinator(appContext, importer)
     val hfCatalog = HfCatalog(HttpUrlConnectionClient())
     val hfDownloader = HfDownloader(appContext.filesDir, importer)
+
+    // Manage (list sizes / delete) downloaded models. File I/O is injected so :core stays pure;
+    // deleting the loaded model unloads it first and forgets its saved override (PrefsOverrideStore
+    // is clearable), keeping the catalog, memory, and override store consistent.
+    val modelManager =
+        ModelManager(
+            catalog = catalog,
+            dirSizeBytes = { modelId -> ModelStorage.sizeBytes(appContext.filesDir, modelId) },
+            deleteModelDir = { modelId -> ModelStorage.delete(appContext.filesDir, modelId) },
+            overrideStore = overrideStore,
+            engineManager = engineManager,
+        )
 
     /**
      * Re-import previously downloaded/sideloaded model folders so the catalog is repopulated on

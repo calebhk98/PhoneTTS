@@ -22,10 +22,12 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.phonetts.app.hf.HfBrowseScreen
 import com.phonetts.app.hf.HfBrowseViewModel
+import com.phonetts.app.manage.ModelManagementScreen
+import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
 
-private enum class Screen { MAIN, BROWSE }
+private enum class Screen { MAIN, BROWSE, MANAGE }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,20 +49,38 @@ private fun AppNav(graph: AppGraph) {
     val ttsViewModel: TtsViewModel = viewModel(factory = viewModelFactory { initializer { TtsViewModel(graph) } })
 
     when (screen) {
-        Screen.MAIN -> TtsScreen(viewModel = ttsViewModel, onBrowseModels = { screen = Screen.BROWSE })
+        Screen.MAIN ->
+            TtsScreen(
+                viewModel = ttsViewModel,
+                onBrowseModels = { screen = Screen.BROWSE },
+                onManageModels = { screen = Screen.MANAGE },
+            )
         Screen.BROWSE -> {
             val hfViewModel: HfBrowseViewModel =
                 viewModel(factory = viewModelFactory { initializer { HfBrowseViewModel(graph.hfCatalog, graph.hfDownloader) } })
-            Column(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        ttsViewModel.refreshModels() // pick up anything downloaded while browsing
-                        screen = Screen.MAIN
-                    },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                ) { Text("← Back") }
-                HfBrowseScreen(hfViewModel)
-            }
+            BackScaffold(onBack = {
+                ttsViewModel.refreshModels() // pick up anything downloaded while browsing
+                screen = Screen.MAIN
+            }) { HfBrowseScreen(hfViewModel) }
         }
+        Screen.MANAGE -> {
+            val manageViewModel: ModelManagementViewModel =
+                viewModel(factory = viewModelFactory { initializer { ModelManagementViewModel(graph.modelManager) } })
+            BackScaffold(onBack = {
+                ttsViewModel.refreshModels() // a delete removes it from the model dropdown too
+                screen = Screen.MAIN
+            }) { ModelManagementScreen(manageViewModel) }
+        }
+    }
+}
+
+@Composable
+private fun BackScaffold(
+    onBack: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
+        OutlinedButton(onClick = onBack, modifier = Modifier.padding(horizontal = 16.dp)) { Text("← Back") }
+        content()
     }
 }

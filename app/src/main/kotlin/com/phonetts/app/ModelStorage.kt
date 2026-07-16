@@ -15,4 +15,25 @@ object ModelStorage {
 
     /** The app-private directory a model with [name] is stored under, within [filesDir]. */
     fun modelDir(filesDir: File, name: String): File = File(filesDir, "$MODELS_DIR/${sanitize(name)}")
+
+    /**
+     * Total size in bytes of every file under the model directory for [name], or 0 if that
+     * directory doesn't exist. Used to show per-model storage usage (spec §1.1.6 "removable
+     * models" — you can't judge whether removal is worth it without seeing what it costs).
+     */
+    fun sizeBytes(filesDir: File, name: String): Long {
+        val dir = modelDir(filesDir, name)
+        if (!dir.isDirectory) return 0L
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    }
+
+    /**
+     * Recursively deletes the model directory for [name]. Returns true if it existed and was
+     * removed, false if there was nothing there to delete.
+     */
+    fun delete(filesDir: File, name: String): Boolean {
+        val dir = modelDir(filesDir, name)
+        if (!dir.exists()) return false
+        return dir.deleteRecursively()
+    }
 }
