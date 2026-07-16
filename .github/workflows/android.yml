@@ -1,0 +1,98 @@
+name: Android CI + APK release
+
+# Two jobs:
+#  - test:    every push / PR — the pure-JVM :core + engine seam tests (no Android SDK needed).
+#  - apk:     builds the debug APK; on a version tag (v*) it publishes the APK to a GitHub Release
+#             so users can download and install it straight from the Releases page.
+#
+# The debug APK is signed with the standard Android debug key, so it installs on any device with
+# "install unknown apps" enabled — no keystore secret needed. It bundles ONNX Runtime for the
+# Tier-A/B engines; the espeak-ng and CosyVoice native bridges are opt-in native builds
+# (-PwithEspeak / -PwithCosyVoice) and are NOT included in this baseline APK (see docs/COSYVOICE2.md
+# and docs/espeak-ng-integration.md).
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # the release job attaches the APK to a GitHub Release
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      # Core-only: the pure-JVM modules prove correctness with no Android SDK (spec §9).
+      - name: Run seam tests + lint (core-only)
+        run: ./gradlew -PskipApp=true :core:test ktlintCheck detekt --no-daemon
+
+  apk:
+    # Build/publish the APK on branch pushes, tags and manual runs — not on PRs (the push build
+    # already covers the branch).
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so app/build.gradle.kts can derive the version from commit count
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+      - name: Resolve release tag
+        id: rel
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "pre=false" >> "$GITHUB_OUTPUT"
+          else
+            # A manual (workflow_dispatch) run publishes the current auto-derived version as a
+            # prerelease. Keep these two constants in sync with app/build.gradle.kts.
+            base=64; major_minor="0.1"
+            count=$(git rev-list --count HEAD)
+            patch=$(( count - base )); [ "$patch" -lt 0 ] && patch=0
+            echo "tag=v${major_minor}.${patch}" >> "$GITHUB_OUTPUT"
+            echo "pre=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Name the APK
+        id: name
+        run: |
+          out="phonetts-${{ steps.rel.outputs.tag }}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$out"
+          echo "apk=$out" >> "$GITHUB_OUTPUT"
+      # Always keep the APK as a build artifact (downloadable from the Actions run page).
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phonetts-apk
+          path: ${{ steps.name.outputs.apk }}
+      # On a version tag OR a manual run, publish the APK to a GitHub Release for one-click download.
+      # (The Actions GITHUB_TOKEN creates the tag+release; a manual run marks it a prerelease.)
+      - name: Publish to Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          prerelease: ${{ steps.rel.outputs.pre }}
+          name: PhoneTTS ${{ steps.rel.outputs.tag }}
+          files: ${{ steps.name.outputs.apk }}
+          body: |
+            PhoneTTS ${{ steps.rel.outputs.tag }} — fully-offline on-device TTS.
+
+            **Install:** download the `.apk` below, enable "install unknown apps" for your browser/files app, and open it.
+
+            Debug-signed build (installs without a Play account). ONNX engines (Piper/Kokoro/Kitten/Melo)
+            are included; espeak phonemization and CosyVoice are opt-in native builds — see the README.

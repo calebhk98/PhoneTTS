@@ -1,0 +1,43 @@
+# Detekt config. Focused on the two rules the spec calls out (Section 8):
+#   - never-nesting  -> NestedBlockDepth
+#   - no-large-files -> LongMethod / LargeClass / LongParameterList
+# buildUponDefaultConfig=true in build.gradle keeps all other default rules active.
+
+complexity:
+  NestedBlockDepth:
+    active: true
+    threshold: 3
+  TooManyFunctions:
+    # An engine implements the 6-method VoiceEngine interface plus many small guard-clause
+    # helpers — and never-nesting deliberately produces MORE, smaller functions. 20 is the
+    # ceiling before a class is genuinely doing too much (also covers hand-rolled parsers).
+    # Test classes hold many @Test methods, so the size rules below exclude test sources;
+    # never-nesting (NestedBlockDepth) still applies everywhere.
+    active: true
+    thresholdInClasses: 20
+    thresholdInFiles: 25
+    thresholdInObjects: 20
+    excludes: ['**/test/**']
+  LongMethod:
+    active: true
+    threshold: 40
+    excludes: ['**/test/**']
+  LargeClass:
+    active: true
+    threshold: 300
+    excludes: ['**/test/**']
+  LongParameterList:
+    active: true
+    functionThreshold: 7
+    constructorThreshold: 12  # ModelDescriptor is a legitimately wide data class
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 12
+
+style:
+  ReturnCount:
+    active: true
+    max: 6  # guard clauses / early returns are encouraged (never-nesting)
+  MaxLineLength:
+    active: true
+    maxLineLength: 120
