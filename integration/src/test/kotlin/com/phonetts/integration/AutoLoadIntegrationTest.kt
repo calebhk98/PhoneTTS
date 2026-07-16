@@ -52,14 +52,16 @@ class AutoLoadIntegrationTest {
         val resolver = Resolver(registry.list(), InMemoryOverrideStore()) { error("should auto-detect, not ask") }
         val importer = ModelImporter(DirectoryBundleReader(), resolver, catalog)
 
-        // A KittenTTS-shaped bundle: an .onnx plus its config marker and speaker table.
+        // A KittenTTS-shaped bundle: an .onnx plus its config marker and its voices.npz style-
+        // embedding table (present by name — inspect() fingerprints it; the rows are decoded at
+        // load()). Contents are irrelevant to detection, so an empty placeholder file suffices.
         val folder =
             writeFolder(
                 "kitten-download",
                 mapOf(
                     "model.onnx" to "",
                     "config.json" to """{"model_type":"kitten_tts"}""",
-                    "voices.json" to """["Bella","Jasper"]""",
+                    "voices.npz" to "",
                 ),
             )
 
