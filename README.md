@@ -49,15 +49,45 @@ seen from different entry points. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Building
 
-Requires a JDK (17+). The `:core` module builds and tests with **no Android SDK**:
+Requires a JDK (17+). The pure-JVM modules build and test with **no Android SDK**:
 
 ```bash
-./gradlew :core:test          # run the seam tests
-./gradlew ktlintCheck detekt  # formatting + never-nesting / size rules
+./gradlew :core:test :integration:test   # the seam tests
+./gradlew ktlintCheck detekt             # formatting + never-nesting / size rules
 ```
 
-To build the Android app, install the Android SDK, uncomment `include(":app")` in
-`settings.gradle.kts`, then use the standard `./gradlew :app:assembleDebug`.
+The Android `:app` module needs the Android SDK; it's included in the build **automatically
+when an SDK is detected** (via `ANDROID_HOME`/`ANDROID_SDK_ROOT` or a `local.properties` with
+`sdk.dir`). With an SDK present, `./gradlew :app:assembleDebug` produces the APK. Full details,
+including installing just the SDK command-line tools, are in [`docs/BUILDING.md`](docs/BUILDING.md).
+
+## Installing on your phone
+
+> **Heads-up:** the app currently builds and installs but is still a **skeleton** — it opens to
+> a placeholder screen and does not synthesize audio yet (the on-device runtime wiring is Phase-2
+> work; see [`docs/BUILDING.md`](docs/BUILDING.md)). These steps are how you'll load it once the
+> app is functional (and how to try the current build).
+
+PhoneTTS is not on the Play Store (it's a personal/offline app). You install it by **sideloading
+an APK**:
+
+1. **Get an APK** — either build it yourself (`./gradlew :app:assembleDebug`; the APK lands at
+   `app/build/outputs/apk/debug/app-debug.apk`), or download a release APK if one is published.
+2. **Get it onto the phone** — the easy way, over USB with the Android platform-tools:
+   ```bash
+   adb install app/build/outputs/apk/debug/app-debug.apk
+   ```
+   Or copy the `.apk` to the phone (USB, cloud drive, email to yourself) and tap it in a file
+   manager.
+3. **Allow the install** — when tapping the APK, Android will ask to allow installing unknown
+   apps for that file manager/browser; grant it (Settings → Apps → Special access → Install
+   unknown apps). This is expected for any app installed outside the Play Store.
+4. **Open PhoneTTS**, then **download a voice model from inside the app** (models are never
+   bundled in the APK — you pick and download them on first use, and they're stored privately on
+   the device). You can also sideload a model folder you downloaded from Hugging Face, or import
+   a document (.txt/.md/.html/.docx/.pdf) to read aloud.
+
+Everything after the download runs **fully offline** — no network is used during speech.
 
 ### Pre-commit hook
 

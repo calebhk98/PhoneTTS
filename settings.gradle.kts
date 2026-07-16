@@ -33,7 +33,14 @@ include(":engines:kokoro")
 // Cross-module integration tests (pure JVM) — the one place all engines share a classpath.
 include(":integration")
 
-// :app is the Android application module (Compose UI, AudioTrack, ONNX engines).
-// It requires the Android SDK to configure/build, so it is intentionally left out of
-// the default build until the SDK is available. Uncomment locally / in CI to enable it:
-// include(":app")
+// :app is the Android application module (Compose UI, AudioTrack, ONNX engines). It requires the
+// Android SDK, so it is included ONLY when an SDK is present — the pure-JVM modules above still
+// build and test with no SDK (e.g. core-only CI), while a machine with the SDK gets the app too.
+// See docs/BUILDING.md. Force-disable with -PskipApp=true.
+val androidSdkAvailable =
+    System.getenv("ANDROID_HOME") != null ||
+        System.getenv("ANDROID_SDK_ROOT") != null ||
+        file("local.properties").let { it.exists() && it.readText().contains("sdk.dir") }
+if (androidSdkAvailable && !settings.providers.gradleProperty("skipApp").isPresent) {
+    include(":app")
+}
