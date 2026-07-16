@@ -53,6 +53,7 @@ fun TtsScreen(
     viewModel: TtsViewModel,
     onBrowseModels: () -> Unit,
     onManageModels: () -> Unit,
+    onHelp: () -> Unit,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
     val state by viewModel.state.collectAsState()
@@ -122,6 +123,7 @@ fun TtsScreen(
             OutlinedButton(onClick = { importLauncher.launch(IMPORT_MIME_TYPES) }) { Text("Import file") }
             OutlinedButton(onClick = onBrowseModels) { Text("Browse models") }
             OutlinedButton(onClick = onManageModels) { Text("Manage models") }
+            OutlinedButton(onClick = onHelp) { Text("Help") }
             OutlinedButton(onClick = { sideloadLauncher.launch(null) }) { Text("Sideload folder") }
         }
 

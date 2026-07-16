@@ -36,11 +36,12 @@ import com.phonetts.app.hf.HfBrowseScreen
 import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.manage.ModelManagementScreen
 import com.phonetts.app.manage.ModelManagementViewModel
+import com.phonetts.app.ui.HelpScreen
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
 
-private enum class Screen { MAIN, BROWSE, MANAGE }
+private enum class Screen { MAIN, BROWSE, MANAGE, HELP }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -150,6 +151,7 @@ private fun AppNav(
                 viewModel = ttsViewModel,
                 onBrowseModels = { screen = Screen.BROWSE },
                 onManageModels = { screen = Screen.MANAGE },
+                onHelp = { screen = Screen.HELP },
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
         Screen.BROWSE -> {
@@ -168,6 +170,7 @@ private fun AppNav(
                 screen = Screen.MAIN
             }) { ModelManagementScreen(manageViewModel) }
         }
+        Screen.HELP -> BackScaffold(onBack = { screen = Screen.MAIN }) { HelpScreen() }
     }
 }
 
