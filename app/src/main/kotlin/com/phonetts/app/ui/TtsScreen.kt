@@ -218,6 +218,7 @@ private fun VoicePicker(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SpeedControl(
     descriptor: ModelDescriptor,
@@ -230,7 +231,16 @@ private fun SpeedControl(
         onValueChange = onSpeed,
         valueRange = descriptor.speedRange, // bounds come straight from the descriptor (SSOT)
     )
+    // Preset shortcuts, clamped to the model's own range (still SSOT — no bound invented here).
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SPEED_PRESETS.forEach { preset ->
+            val clamped = preset.coerceIn(descriptor.speedRange)
+            OutlinedButton(onClick = { onSpeed(clamped) }) { Text("${"%.2fx".format(clamped)}") }
+        }
+    }
 }
+
+private val SPEED_PRESETS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
 private val IMPORT_MIME_TYPES =
     arrayOf(
