@@ -16,7 +16,7 @@ the models; need `python3`, `onnxruntime`, `numpy`, and `espeak-ng` on PATH for 
 | **Piper** (en_US-lessac-medium) | lessac | 390 | **9.68 s** | **417 KB** | 0.639 | none | ✅ PASS |
 | **Kokoro-82M** (fp32) | af_heart | 193 | **11.05 s** | **518 KB** | 0.519 | none | ✅ PASS |
 | **KittenTTS** (nano-0.1) | expr-voice-2-m | 194 | **10.25 s** | **480 KB** | 0.667 | none | ✅ PASS |
-| MeloTTS | — | — | — | — | — | — | ⏳ pending frontend rework (tone/lang/BERT) |
+| MeloTTS (zh_mix_en export) | EN | 162 | 8.73 s | 752 KB | **0.000** | none | ⚠️ RUNS but **silent** — see below |
 | CosyVoice2-0.5B | — | — | — | — | — | — | ⏸ deferred (LLM, ~1 GB, autoregressive) |
 
 Every passing model clears the > 1 KB / > 2 s bar with large margins, confirming the validated
@@ -35,6 +35,28 @@ Every passing model clears the > 1 KB / > 2 s bar with large margins, confirming
    before Kokoro is one-tap-ready in-app. Tracked as a follow-up.
 3. **Phonemization** here uses system `espeak-ng` (same engine the app's `EspeakPhonemizer` wraps via
    NDK), so these token sequences match what the app produces once the espeak native build is on.
+
+## MeloTTS — reworked to the right shape, but not yet audio-verified
+
+The engine was reworked to the real 11-input contract (`x`/`tone`/`language`/`bert`/`ja_bert`/four
+scale scalars, `length_scale = 1/speed`, positional output read) and its tests pass. But running the
+only ONNX export on hand (`seasonstudio/melotts_zh_mix_en_onnx`) end-to-end surfaced a real,
+**export-specific** problem that the same class as the tensor-name issue:
+
+- **Symbol table size differs by export.** That export's phoneme embedding has **112 rows**; the
+  engine's `MeloSymbolTable` is the **current 219-entry** upstream table. Feeding 219-table ids into
+  the 112-row export throws `Gather ... idx=117 out of range [-112,111]` — i.e. **the app's hardcoded
+  symbol table would crash on this export**, and vice-versa. MeloTTS symbol/tone/language ids must
+  come from the *specific bundled model's* config, not one hardcoded table (SSOT — same lesson as
+  tensor names).
+- With ids clamped into range, the model runs to the right length but returns **pure silence
+  (peak 0.0)** — expected, since clamped ids + English-IPA-that-falls-outside-this-export's-table +
+  zeroed BERT give the duration/flow stack nothing meaningful to voice.
+
+So MeloTTS is **shape-correct and test-green, but not proven to produce real speech.** Making it
+sing needs an English MeloTTS export whose symbol/tone/language tables match the frontend (or a
+config-driven table read at load time). It is therefore **not** in the one-tap `BuiltInCatalog`.
+Tracked with the Kokoro voice-loader gap as the remaining engine work.
 
 ## What "verified" means and doesn't
 
