@@ -1,5 +1,6 @@
 package com.phonetts.app.hf
 
+import com.phonetts.app.ModelStorage
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.model.ModelDescriptor
@@ -31,7 +32,7 @@ class HfDownloader(
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
     ): ModelDescriptor =
         withContext(Dispatchers.IO) {
-            val destination = File(filesDir, "$MODELS_DIR/${sanitize(modelId)}")
+            val destination = ModelStorage.modelDir(filesDir, modelId)
             destination.mkdirs()
             items.forEachIndexed { index, item ->
                 downloadFile(item.url, File(destination, item.relativePath))
@@ -53,10 +54,4 @@ class HfDownloader(
         }
     }
 
-    private fun sanitize(modelId: String): String = modelId.replace(UNSAFE_CHARS, "_")
-
-    companion object {
-        private const val MODELS_DIR = "models"
-        private val UNSAFE_CHARS = Regex("[^A-Za-z0-9._-]")
-    }
 }

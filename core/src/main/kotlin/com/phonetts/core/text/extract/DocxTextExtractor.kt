@@ -16,10 +16,7 @@ class DocxTextExtractor : TextExtractor {
     override fun supports(
         fileName: String,
         mimeType: String?,
-    ): Boolean {
-        if (fileExtension(fileName) == "docx") return true
-        return mimeType == DOCX_MIME
-    }
+    ): Boolean = matchesExtensionOrMime(fileName, mimeType, EXTENSIONS, DOCX_MIME)
 
     override fun extract(bytes: ByteArray): String {
         val documentXml =
@@ -60,6 +57,7 @@ class DocxTextExtractor : TextExtractor {
 
     companion object {
         const val DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        private val EXTENSIONS = setOf("docx")
         private const val DOCUMENT_ENTRY = "word/document.xml"
         private const val PARAGRAPH_END = "</w:p>"
         private val TEXT_OR_PARAGRAPH_END = Regex("""<w:t[^>]*>(.*?)</w:t>|</w:p>""", RegexOption.DOT_MATCHES_ALL)

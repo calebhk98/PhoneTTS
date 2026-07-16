@@ -10,6 +10,23 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TextExtractorsTest {
+    // --- matchesExtensionOrMime (the shared supports() helper) ---
+
+    @Test
+    fun matchesExtensionOrMimeClaimsByExtensionCaseInsensitively() {
+        assertTrue(matchesExtensionOrMime("notes.TXT", null, setOf("txt"), "text/plain"))
+    }
+
+    @Test
+    fun matchesExtensionOrMimeClaimsByMimeWhenExtensionUnknown() {
+        assertTrue(matchesExtensionOrMime("whatever", "text/plain", setOf("txt"), "text/plain"))
+    }
+
+    @Test
+    fun matchesExtensionOrMimeRejectsNeitherExtensionNorMime() {
+        assertFalse(matchesExtensionOrMime("doc.pdf", "application/pdf", setOf("txt"), "text/plain"))
+    }
+
     // --- plain text ---
 
     @Test

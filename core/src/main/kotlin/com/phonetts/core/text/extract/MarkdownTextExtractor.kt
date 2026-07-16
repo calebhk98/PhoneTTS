@@ -12,10 +12,7 @@ class MarkdownTextExtractor : TextExtractor {
     override fun supports(
         fileName: String,
         mimeType: String?,
-    ): Boolean {
-        if (fileExtension(fileName) in EXTENSIONS) return true
-        return mimeType == "text/markdown"
-    }
+    ): Boolean = matchesExtensionOrMime(fileName, mimeType, EXTENSIONS, "text/markdown")
 
     override fun extract(bytes: ByteArray): String = stripMarkdown(bytes.toString(Charsets.UTF_8))
 

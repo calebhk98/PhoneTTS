@@ -19,5 +19,23 @@ interface TextExtractor {
     fun extract(bytes: ByteArray): String
 }
 
+// Public (not internal): the :app module's PdfTextExtractor implements this same interface
+// outside :core and needs both helpers below to build its own supports() the same way.
+
 /** Lower-cased extension of [fileName] without the dot, or "" if it has none. */
-internal fun fileExtension(fileName: String): String = fileName.substringAfterLast('.', "").lowercase()
+fun fileExtension(fileName: String): String = fileName.substringAfterLast('.', "").lowercase()
+
+/**
+ * The `supports()` check every [TextExtractor] repeats: claim the file if its extension is one of
+ * [extensions], or otherwise if [mimeType] equals [mime]. Pulled out so each extractor states only
+ * its own extensions/MIME type, not the extension-or-MIME logic itself.
+ */
+fun matchesExtensionOrMime(
+    fileName: String,
+    mimeType: String?,
+    extensions: Set<String>,
+    mime: String,
+): Boolean {
+    if (fileExtension(fileName) in extensions) return true
+    return mimeType == mime
+}

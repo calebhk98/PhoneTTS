@@ -7,10 +7,7 @@ class PlainTextExtractor : TextExtractor {
     override fun supports(
         fileName: String,
         mimeType: String?,
-    ): Boolean {
-        if (fileExtension(fileName) in EXTENSIONS) return true
-        return mimeType == "text/plain"
-    }
+    ): Boolean = matchesExtensionOrMime(fileName, mimeType, EXTENSIONS, "text/plain")
 
     override fun extract(bytes: ByteArray): String = bytes.toString(Charsets.UTF_8)
 

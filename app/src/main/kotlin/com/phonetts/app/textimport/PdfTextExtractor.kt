@@ -1,7 +1,7 @@
 package com.phonetts.app.textimport
 
 import com.phonetts.core.text.extract.TextExtractor
-import com.phonetts.core.text.extract.fileExtension
+import com.phonetts.core.text.extract.matchesExtensionOrMime
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 
@@ -16,11 +16,14 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
 class PdfTextExtractor : TextExtractor {
     override val id: String = "pdf"
 
-    override fun supports(fileName: String, mimeType: String?): Boolean {
-        if (fileExtension(fileName) == "pdf") return true
-        return mimeType == "application/pdf"
-    }
+    override fun supports(fileName: String, mimeType: String?): Boolean =
+        matchesExtensionOrMime(fileName, mimeType, EXTENSIONS, "application/pdf")
 
     override fun extract(bytes: ByteArray): String =
         PDDocument.load(bytes).use { document -> PDFTextStripper().getText(document).trim() }
+
+    companion object {
+        val EXTENSIONS = setOf("pdf")
+    }
 }
+

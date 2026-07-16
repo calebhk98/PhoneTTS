@@ -12,10 +12,7 @@ class HtmlTextExtractor : TextExtractor {
     override fun supports(
         fileName: String,
         mimeType: String?,
-    ): Boolean {
-        if (fileExtension(fileName) in EXTENSIONS) return true
-        return mimeType == "text/html"
-    }
+    ): Boolean = matchesExtensionOrMime(fileName, mimeType, EXTENSIONS, "text/html")
 
     override fun extract(bytes: ByteArray): String {
         val withoutNoise = stripScriptsStylesAndComments(bytes.toString(Charsets.UTF_8))

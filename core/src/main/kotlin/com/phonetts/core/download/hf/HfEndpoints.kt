@@ -34,10 +34,11 @@ object HfEndpoints {
         path: String,
     ): String = "$RESOLVE_BASE/${encodePathSegments(modelId)}/resolve/$revision/${encodePathSegments(path)}"
 
-    private fun encodeQuery(value: String): String = URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
+    private fun encodeQuery(value: String): String = encodeUriComponent(value)
 
-    private fun encodePathSegments(path: String): String =
-        path.split('/').joinToString("/") { segment ->
-            URLEncoder.encode(segment, Charsets.UTF_8).replace("+", "%20")
-        }
+    private fun encodePathSegments(path: String): String = path.split('/').joinToString("/") { encodeUriComponent(it) }
+
+    // URLEncoder is form/query encoding (space -> "+"); URIs want "%20" instead, for a query value
+    // or a path segment alike.
+    private fun encodeUriComponent(value: String): String = URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
 }

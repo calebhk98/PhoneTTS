@@ -6,6 +6,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
+import com.phonetts.core.text.extract.DocxTextExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,5 +45,5 @@ private val ACCEPTED_MIME_TYPES =
     arrayOf(
         "text/*",
         "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        DocxTextExtractor.DOCX_MIME,
     )

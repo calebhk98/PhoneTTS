@@ -4,6 +4,8 @@ import com.phonetts.core.runtime.Tensor
 import com.phonetts.core.testing.FakeSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotSame
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
@@ -24,7 +26,7 @@ class MeloFrontendTest {
             )
         val frontend = MeloFrontend(bert)
 
-        val input = frontend.toModelInput("hello world", "EN")
+        frontend.toModelInput("hello world", "EN")
 
         assertEquals(1, bert.runs.size)
         val run = bert.runs.single()
@@ -37,18 +39,24 @@ class MeloFrontendTest {
     }
 
     @Test
-    fun `toModelInput carries the BERT session output forward as extras`() {
-        val expectedFeatures = Tensor.floats(floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f), intArrayOf(1, 4, 1))
-        val bert = FakeSession(outputs = mapOf("bert_features" to expectedFeatures))
-        val frontend = MeloFrontend(bert)
+    fun `toModelInput carries the exact BERT session output forward as extras`() {
+        // Two different BERT outputs must produce two different forwarded extras, and each must be
+        // the EXACT tensor the session returned (assertSame) — this rules out the frontend
+        // synthesizing its own tensor that happens to equal a fixture.
+        val featuresA = Tensor.floats(floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f), intArrayOf(1, 4, 1))
+        val featuresB = Tensor.floats(floatArrayOf(9.9f, 8.8f), intArrayOf(1, 2, 1))
 
-        val input = frontend.toModelInput("hi", "EN")
+        val inputA = MeloFrontend(FakeSession(outputs = mapOf("bert_features" to featuresA))).toModelInput("hi", "EN")
+        val inputB = MeloFrontend(FakeSession(outputs = mapOf("bert_features" to featuresB))).toModelInput("hi", "EN")
 
-        val extras = input.extras[MeloFrontend.EXTRA_BERT_FEATURES]
-        assertTrue(extras is Tensor)
-        assertEquals(expectedFeatures, extras)
+        assertSame(featuresA, inputA.extras[MeloFrontend.EXTRA_BERT_FEATURES])
+        assertSame(featuresB, inputB.extras[MeloFrontend.EXTRA_BERT_FEATURES])
+        assertNotSame(
+            inputA.extras[MeloFrontend.EXTRA_BERT_FEATURES],
+            inputB.extras[MeloFrontend.EXTRA_BERT_FEATURES],
+        )
         // BOS + 1 word + EOS = 3 tokens.
-        assertEquals(3, input.tokenIds.size)
+        assertEquals(3, inputA.tokenIds.size)
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.phonetts.app.sideload
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.phonetts.app.ModelStorage
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.sideload.ModelImporter
 import java.io.File
@@ -32,7 +33,7 @@ class SideloadCoordinator(
         val picked =
             DocumentFile.fromTreeUri(context, treeUri)
                 ?: error("could not open the selected folder")
-        val destination = File(context.filesDir, "$MODELS_DIR/${sanitize(picked.name)}")
+        val destination = ModelStorage.modelDir(context.filesDir, picked.name ?: "model")
         copyTree(picked, destination)
         return importer.import(destination.absolutePath)
     }
@@ -52,12 +53,5 @@ class SideloadCoordinator(
     private fun copyFile(source: Uri, target: File) {
         val input = context.contentResolver.openInputStream(source) ?: error("could not read $source")
         input.use { stream -> target.outputStream().use { out -> stream.copyTo(out) } }
-    }
-
-    private fun sanitize(name: String?): String = (name ?: "model").replace(UNSAFE_CHARS, "_")
-
-    companion object {
-        private const val MODELS_DIR = "models"
-        private val UNSAFE_CHARS = Regex("[^A-Za-z0-9._-]")
     }
 }
