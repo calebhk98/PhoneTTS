@@ -1,12 +1,9 @@
 package com.phonetts.engines.kittentts
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
-import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakePhonemizer
-import com.phonetts.core.testing.FakeRuntime
 import com.phonetts.core.testing.FakeSession
+import com.phonetts.engines.common.testing.onnxEngineContext
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -38,21 +35,13 @@ class KittenEngineSynthesizeTest {
             outputsFor = { mapOf(KittenEngine.WAVEFORM_KEY to Tensor.floats(floatArrayOf(0.1f, -0.2f))) },
         )
 
-    private fun buildEngine(runtime: FakeRuntime): KittenEngine {
-        val context =
-            EngineContext(
-                runtimes = RuntimeRegistry().apply { register(runtime) },
-                phonemizer = FakePhonemizer(),
-            )
-        return KittenEngine(context)
-    }
+    private fun buildEngine(session: FakeSession): KittenEngine = KittenEngine(onnxEngineContext(session))
 
     @Test
     fun `speed reaches the session's native speed input`() =
         runTest {
             val session = fakeSession()
-            val runtime = FakeRuntime(id = KittenEngine.RUNTIME_ID, sessionFactory = { session })
-            val engine = buildEngine(runtime)
+            val engine = buildEngine(session)
             val descriptor = engine.inspect(bundle)!!.descriptor
             engine.load(descriptor)
 
@@ -66,8 +55,7 @@ class KittenEngineSynthesizeTest {
     fun `selected voice reaches the session's speaker-id input`() =
         runTest {
             val session = fakeSession()
-            val runtime = FakeRuntime(id = KittenEngine.RUNTIME_ID, sessionFactory = { session })
-            val engine = buildEngine(runtime)
+            val engine = buildEngine(session)
             val descriptor = engine.inspect(bundle)!!.descriptor
             val luna = descriptor.voices.first { it.name == "Luna" } // index 2 in validVoices
 
@@ -82,8 +70,7 @@ class KittenEngineSynthesizeTest {
     fun `long text is chunked into sentences and each chunk is run through the session`() =
         runTest {
             val session = fakeSession()
-            val runtime = FakeRuntime(id = KittenEngine.RUNTIME_ID, sessionFactory = { session })
-            val engine = buildEngine(runtime)
+            val engine = buildEngine(session)
             val descriptor = engine.inspect(bundle)!!.descriptor
             engine.load(descriptor)
 
@@ -98,8 +85,7 @@ class KittenEngineSynthesizeTest {
     fun `unload closes the session`() =
         runTest {
             val session = fakeSession()
-            val runtime = FakeRuntime(id = KittenEngine.RUNTIME_ID, sessionFactory = { session })
-            val engine = buildEngine(runtime)
+            val engine = buildEngine(session)
             val descriptor = engine.inspect(bundle)!!.descriptor
             engine.load(descriptor)
 

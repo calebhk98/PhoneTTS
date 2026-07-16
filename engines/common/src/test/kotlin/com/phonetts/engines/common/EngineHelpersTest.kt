@@ -1,29 +1,21 @@
 package com.phonetts.engines.common
 
-import com.phonetts.core.engine.EngineContext
-import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakePhonemizer
 import com.phonetts.core.testing.FakeRuntime
 import com.phonetts.core.testing.FakeSession
 import com.phonetts.core.testing.testDescriptor
+import com.phonetts.engines.common.testing.engineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class EngineHelpersTest {
-    private fun context(runtime: FakeRuntime?) =
-        EngineContext(
-            runtimes = RuntimeRegistry().apply { runtime?.let(::register) },
-            phonemizer = FakePhonemizer(),
-        )
-
     @Test
     fun requireRuntimeReturnsRegisteredElseFails() {
         val runtime = FakeRuntime(id = "onnx")
-        assertEquals(runtime, requireRuntime(context(runtime), "onnx", "X"))
-        assertFailsWith<IllegalStateException> { requireRuntime(context(null), "onnx", "X") }
+        assertEquals(runtime, requireRuntime(engineContext(runtime), "onnx", "X"))
+        assertFailsWith<IllegalStateException> { requireRuntime(engineContext(), "onnx", "X") }
     }
 
     @Test

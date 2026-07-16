@@ -6,6 +6,7 @@ import com.phonetts.engines.common.json.asIntOrNull
 import com.phonetts.engines.common.json.asLongListOrEmpty
 import com.phonetts.engines.common.json.asObjectOrNull
 import com.phonetts.engines.common.json.asStringOrNull
+import com.phonetts.engines.common.json.parseStringArray
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -36,5 +37,19 @@ class MiniJsonTest {
     fun malformedInputReturnsNullNotThrow() {
         assertNull(MiniJson.parse("{ not json"))
         assertNull(MiniJson.parse(""))
+    }
+
+    @Test
+    fun parseStringArrayReadsAFlatArrayOfQuotedNames() {
+        val names = parseStringArray("""["Bella","Jasper","Luna"]""")
+
+        assertEquals(listOf("Bella", "Jasper", "Luna"), names)
+    }
+
+    @Test
+    fun parseStringArrayIsEmptyForMalformedOrNonArrayInput() {
+        assertTrue(parseStringArray("not json at all").isEmpty())
+        assertTrue(parseStringArray("""{"not": "an array"}""").isEmpty())
+        assertTrue(parseStringArray("[]").isEmpty())
     }
 }

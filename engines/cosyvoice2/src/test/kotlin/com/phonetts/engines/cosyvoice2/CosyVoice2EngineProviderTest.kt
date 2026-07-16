@@ -1,6 +1,7 @@
 package com.phonetts.engines.cosyvoice2
 
 import com.phonetts.core.registry.EngineLoader
+import com.phonetts.engines.common.testing.assertCreatesMatchingEngine
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -20,11 +21,7 @@ class CosyVoice2EngineProviderTest {
 
     @Test
     fun `provider engineId matches the engine it creates`() {
-        val provider = CosyVoice2EngineProvider()
-
-        val engine = provider.create(emptyContext())
-
-        assertEquals(provider.engineId, engine.id)
+        assertCreatesMatchingEngine(CosyVoice2EngineProvider(), emptyContext())
     }
 
     @Test

@@ -18,6 +18,7 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(testFixtures(project(":core")))
+    testImplementation(testFixtures(project(":engines:common")))
 }
 
 kotlin {

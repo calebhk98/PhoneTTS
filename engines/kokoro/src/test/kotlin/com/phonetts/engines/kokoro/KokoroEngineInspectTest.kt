@@ -1,15 +1,13 @@
 package com.phonetts.engines.kokoro
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.Origin
-import com.phonetts.core.registry.RuntimeRegistry
-import com.phonetts.core.testing.FakePhonemizer
+import com.phonetts.engines.common.testing.assertInspectRejects
+import com.phonetts.engines.common.testing.engineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private const val VALID_CONFIG =
@@ -32,7 +30,7 @@ private const val FOREIGN_CONFIG = """{"family": "piper", "sample_rate": 22050}"
  * a bare .onnx and for a foreign bundle that merely happens to share a file name.
  */
 class KokoroEngineInspectTest {
-    private fun engine() = KokoroEngine(EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer()))
+    private fun engine() = KokoroEngine(engineContext())
 
     @Test
     fun claimsAFullKokoroBundle() {
@@ -63,7 +61,7 @@ class KokoroEngineInspectTest {
     fun refusesABareOnnxFile() {
         val bundle = ModelBundle(id = "bare", fileNames = setOf("model.onnx"))
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
@@ -75,7 +73,7 @@ class KokoroEngineInspectTest {
                 sideFiles = mapOf("config.json" to VALID_CONFIG),
             )
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
@@ -87,7 +85,7 @@ class KokoroEngineInspectTest {
                 sideFiles = mapOf("config.json" to FOREIGN_CONFIG, "voices.json" to VALID_VOICES),
             )
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
@@ -99,7 +97,7 @@ class KokoroEngineInspectTest {
                 sideFiles = mapOf("config.json" to VALID_CONFIG, "voices.json" to "[]"),
             )
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test

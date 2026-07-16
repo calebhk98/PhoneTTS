@@ -14,6 +14,7 @@ import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
+import com.phonetts.engines.common.requireVoiceIndex
 
 /**
  * MeloTTS engine (spec Phase 2.2). Unlike the phoneme-only engines, MeloTTS's frontend needs a
@@ -95,8 +96,7 @@ internal class MeloEngine(
     ): FloatArray {
         val session = checkNotNull(acousticSession) { "$engineLabel.synthesizeSentence called before load()" }
         val activeFrontend = checkNotNull(frontend) { "$engineLabel.synthesizeSentence called before load()" }
-        val voiceIndex = voices().indexOfFirst { it.id == voiceId }
-        require(voiceIndex >= 0) { "unknown voice '$voiceId'" }
+        val voiceIndex = requireVoiceIndex(voices(), voiceId, engineLabel)
         val language = voices()[voiceIndex].language
 
         val input = activeFrontend.toModelInput(sentence, language)

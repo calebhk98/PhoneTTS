@@ -1,12 +1,11 @@
 package com.phonetts.engines.piper
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
-import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakePhonemizer
 import com.phonetts.core.testing.FakeRuntime
 import com.phonetts.core.testing.FakeSession
+import com.phonetts.engines.common.testing.engineContext
+import com.phonetts.engines.common.testing.onnxRuntime
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -39,12 +38,10 @@ class PiperEngineSynthesisTest {
         )
 
     private fun buildLoadedEngine(fakeSession: FakeSession): Pair<PiperEngine, FakeRuntime> {
-        val fakeRuntime = FakeRuntime(id = "onnx", sessionFactory = { fakeSession })
-        val registry = RuntimeRegistry().apply { register(fakeRuntime) }
-        val context = EngineContext(runtimes = registry, phonemizer = FakePhonemizer { text -> text })
+        val fakeRuntime = onnxRuntime(fakeSession)
         // sidecarReader injected so load() doesn't need a real file on disk (spec §9 keeps the
         // seam plain-JVM testable) — see PiperEngine's KDoc.
-        val engine = PiperEngine(context, sidecarReader = { sidecarJson })
+        val engine = PiperEngine(engineContext(fakeRuntime), sidecarReader = { sidecarJson })
         return engine to fakeRuntime
     }
 
@@ -94,21 +91,11 @@ class PiperEngineSynthesisTest {
                         mapOf("output" to Tensor.floats(floatArrayOf(0f)))
                     },
                 )
-            val slowRuntime = FakeRuntime(id = "onnx", sessionFactory = { slowSession })
-            val fastRuntime = FakeRuntime(id = "onnx", sessionFactory = { fastSession })
+            val slowRuntime = onnxRuntime(slowSession)
+            val fastRuntime = onnxRuntime(fastSession)
 
-            val slowContext =
-                EngineContext(
-                    runtimes = RuntimeRegistry().apply { register(slowRuntime) },
-                    phonemizer = FakePhonemizer { it },
-                )
-            val fastContext =
-                EngineContext(
-                    runtimes = RuntimeRegistry().apply { register(fastRuntime) },
-                    phonemizer = FakePhonemizer { it },
-                )
-            val slowEngine = PiperEngine(slowContext, sidecarReader = { sidecarJson })
-            val fastEngine = PiperEngine(fastContext, sidecarReader = { sidecarJson })
+            val slowEngine = PiperEngine(engineContext(slowRuntime), sidecarReader = { sidecarJson })
+            val fastEngine = PiperEngine(engineContext(fastRuntime), sidecarReader = { sidecarJson })
             val slowMatch = assertNotNull(slowEngine.inspect(bundle))
             val fastMatch = assertNotNull(fastEngine.inspect(bundle))
             slowEngine.load(slowMatch.descriptor)
@@ -140,7 +127,7 @@ class PiperEngineSynthesisTest {
             val match = assertNotNull(engine.inspect(bundle))
             engine.load(match.descriptor)
 
-            // FakePhonemizer is configured as identity above, so phonemizing "hi" yields "hi".
+            // engineContext()'s default phonemizer is identity, so phonemizing "hi" yields "hi".
             engine.synthesize("hi", voiceId = "voice", speed = 1.0f).toList()
 
             val ids = capturedInputs.single().getValue("input").asLongs().toList()
@@ -184,19 +171,8 @@ class PiperEngineSynthesisTest {
                     sideFiles = mapOf("alpha.onnx.json" to sidecarJson, "beta.onnx.json" to sidecarJson),
                     rootPath = "/models/voice-pack-2",
                 )
-            val runtime =
-                FakeRuntime(
-                    id = "onnx",
-                    sessionFactory = { path ->
-                        if (path.endsWith("alpha.onnx")) alphaSession else betaSession
-                    },
-                )
-            val context =
-                EngineContext(
-                    runtimes = RuntimeRegistry().apply { register(runtime) },
-                    phonemizer = FakePhonemizer { it },
-                )
-            val engine = PiperEngine(context, sidecarReader = { sidecarJson })
+            val runtime = onnxRuntime { path -> if (path.endsWith("alpha.onnx")) alphaSession else betaSession }
+            val engine = PiperEngine(engineContext(runtime), sidecarReader = { sidecarJson })
             val match = assertNotNull(engine.inspect(multiVoiceBundle))
             engine.load(match.descriptor)
 

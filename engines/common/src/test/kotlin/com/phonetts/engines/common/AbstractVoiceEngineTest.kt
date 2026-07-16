@@ -1,12 +1,10 @@
 package com.phonetts.engines.common
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
-import com.phonetts.core.registry.RuntimeRegistry
-import com.phonetts.core.testing.FakePhonemizer
+import com.phonetts.engines.common.testing.engineContext
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -14,9 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /** A trivial engine over the base, so the shared synthesize() shape can be tested in isolation. */
-private class StubEngine(loaded: Boolean) : AbstractVoiceEngine(
-    EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer()),
-) {
+private class StubEngine(loaded: Boolean) : AbstractVoiceEngine(engineContext()) {
     override val id: String = "stub"
     override val displayName: String = "Stub"
     override val engineLabel: String = "Stub"

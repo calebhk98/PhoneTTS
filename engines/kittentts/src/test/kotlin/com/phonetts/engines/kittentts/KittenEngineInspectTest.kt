@@ -1,15 +1,13 @@
 package com.phonetts.engines.kittentts
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.Origin
-import com.phonetts.core.registry.RuntimeRegistry
-import com.phonetts.core.testing.FakePhonemizer
+import com.phonetts.engines.common.testing.assertInspectRejects
+import com.phonetts.engines.common.testing.engineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -20,10 +18,7 @@ import kotlin.test.assertTrue
  * filling in family defaults (a single "Default" voice) when no real speaker table is present.
  */
 class KittenEngineInspectTest {
-    private val engine =
-        KittenEngine(
-            EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer()),
-        )
+    private val engine = KittenEngine(engineContext())
 
     private val validConfig = """{"model_type":"kitten_tts","sample_rate":24000}"""
     private val validVoices = """["Bella","Jasper","Luna","Bruno","Rosie","Hugo","Kiki","Leo"]"""
@@ -36,7 +31,7 @@ class KittenEngineInspectTest {
                 fileNames = setOf("weights.onnx"),
             )
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
@@ -52,7 +47,7 @@ class KittenEngineInspectTest {
                     ),
             )
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
@@ -64,7 +59,7 @@ class KittenEngineInspectTest {
                 sideFiles = mapOf(KittenEngine.CONFIG_FILE to validConfig),
             )
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test

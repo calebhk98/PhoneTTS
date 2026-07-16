@@ -2,11 +2,11 @@ package com.phonetts.engines.cosyvoice2
 
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.Origin
+import com.phonetts.engines.common.testing.assertInspectRejects
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 
 /**
  * Proves inspect() fails closed (spec §9.1): only a bundle with ALL three CosyVoice2 weight
@@ -45,28 +45,28 @@ class CosyVoice2InspectTest {
                 sideFiles = mapOf("cosyvoice2.yaml" to "model_type: cosyvoice2"),
             )
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
     fun `inspect fails closed when the config carries no CosyVoice2 signature`() {
         val bundle = validBundle(config = "model_type: some-other-model\n")
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
     fun `inspect fails closed when the config side file is absent entirely`() {
         val bundle = ModelBundle(id = "no-config", fileNames = setOf("llm.onnx", "flow.onnx", "hift.onnx"))
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
     fun `inspect never claims an unrelated bundle`() {
         val bundle = ModelBundle(id = "piper-voice", fileNames = setOf("en_US-voice.onnx", "en_US-voice.onnx.json"))
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test

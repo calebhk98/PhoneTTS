@@ -34,6 +34,16 @@ fun JsonValue.asFloatOrNull(): Float? = (this as? JsonValue.JsonNumber)?.value?.
 fun JsonValue.asLongListOrEmpty(): List<Long> =
     asArrayOrNull()?.mapNotNull { (it as? JsonValue.JsonNumber)?.value?.toLong() } ?: emptyList()
 
+/**
+ * Parses [text] as a flat JSON array of strings, e.g. `["Bella","Jasper"]` — the shape every
+ * engine's own "list of names" side file uses. Malformed input, a non-array document, or a
+ * non-string element all fall out as an empty list rather than throwing (fail-closed, matching
+ * [MiniJson.parse] itself) — this is the one shared reader for that shape, in place of each
+ * engine hand-rolling its own quoted-string regex.
+ */
+fun parseStringArray(text: String): List<String> =
+    MiniJson.parse(text)?.asArrayOrNull()?.mapNotNull { it.asStringOrNull() } ?: emptyList()
+
 object MiniJson {
     /** Parses [text] as JSON, or returns null on any malformed input (fail-closed, never throws). */
     fun parse(text: String): JsonValue? = runCatching { JsonParser(text).parseDocument() }.getOrNull()

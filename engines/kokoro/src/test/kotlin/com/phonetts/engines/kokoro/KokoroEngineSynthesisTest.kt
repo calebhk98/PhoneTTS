@@ -1,12 +1,9 @@
 package com.phonetts.engines.kokoro
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
-import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakePhonemizer
-import com.phonetts.core.testing.FakeRuntime
 import com.phonetts.core.testing.FakeSession
+import com.phonetts.engines.common.testing.onnxEngineContext
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -46,13 +43,9 @@ class KokoroEngineSynthesisTest {
 
     private class Fixture {
         val session = FakeSession(outputs = mapOf("audio" to Tensor.floats(floatArrayOf(0.1f, -0.2f))))
-        val runtime = FakeRuntime(id = "onnx", sessionFactory = { session })
         val engine =
             KokoroEngine(
-                EngineContext(
-                    runtimes = RuntimeRegistry().apply { register(runtime) },
-                    phonemizer = FakePhonemizer(),
-                ),
+                onnxEngineContext(session),
                 // The injected reader seam: load() gets the voices table without touching disk.
                 fileReader = { VOICES },
             )

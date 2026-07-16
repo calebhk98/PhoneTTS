@@ -1,13 +1,11 @@
 package com.phonetts.engines.melotts
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.Origin
-import com.phonetts.core.registry.RuntimeRegistry
-import com.phonetts.core.testing.FakePhonemizer
+import com.phonetts.engines.common.testing.assertInspectRejects
+import com.phonetts.engines.common.testing.engineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -16,7 +14,7 @@ import kotlin.test.assertTrue
  * a confident, fully-populated match when they are.
  */
 class MeloEngineInspectTest {
-    private fun engine() = MeloEngine(EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer()))
+    private fun engine() = MeloEngine(engineContext())
 
     private val validConfig =
         """{"data": {"spk2id": {"EN-US": 0, "EN-BR": 1}, "language": "EN"}}"""
@@ -49,49 +47,49 @@ class MeloEngineInspectTest {
     fun `inspect returns null when the BERT model file is missing`() {
         val bundle = validBundle().copy(fileNames = setOf("model.onnx", "tokenizer.json", "config.json"))
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
     fun `inspect returns null when the tokenizer file is missing`() {
         val bundle = validBundle().copy(fileNames = setOf("model.onnx", "bert_model.onnx", "config.json"))
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
     fun `inspect returns null when the acoustic model file is missing`() {
         val bundle = validBundle().copy(fileNames = setOf("bert_model.onnx", "tokenizer.json", "config.json"))
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
     fun `inspect returns null when the config side file is absent`() {
         val bundle = validBundle().copy(sideFiles = emptyMap())
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
     fun `inspect returns null when the config has no spk2id speaker table`() {
         val bundle = validBundle().copy(sideFiles = mapOf("config.json" to """{"data": {"language": "EN"}}"""))
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
     fun `inspect returns null when the bundle has no root path to build asset paths from`() {
         val bundle = validBundle().copy(rootPath = null)
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
     fun `inspect returns null for a completely unrelated bundle`() {
         val bundle = ModelBundle(id = "mystery", fileNames = setOf("mystery.bin"))
 
-        assertNull(engine().inspect(bundle))
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test

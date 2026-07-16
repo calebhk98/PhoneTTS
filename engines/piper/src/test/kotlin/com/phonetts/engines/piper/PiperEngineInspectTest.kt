@@ -1,15 +1,13 @@
 package com.phonetts.engines.piper
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.Origin
-import com.phonetts.core.registry.RuntimeRegistry
-import com.phonetts.core.testing.FakePhonemizer
+import com.phonetts.engines.common.testing.assertInspectRejects
+import com.phonetts.engines.common.testing.engineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 
 /**
  * §9.1 fail-closed coverage for [PiperEngine.inspect]: a Piper bundle is only ever a `*.onnx`
@@ -18,7 +16,7 @@ import kotlin.test.assertNull
  * all come back null so the resolver falls through to the user-pick fallback — never a guess.
  */
 class PiperEngineInspectTest {
-    private val engine = PiperEngine(EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer()))
+    private val engine = PiperEngine(engineContext())
 
     private val validSidecar =
         """
@@ -57,7 +55,7 @@ class PiperEngineInspectTest {
     fun `returns null for a bare onnx with no sidecar at all`() {
         val bundle = ModelBundle(id = "bare", fileNames = setOf("voice.onnx"))
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
@@ -69,7 +67,7 @@ class PiperEngineInspectTest {
                 sideFiles = mapOf("voice.onnx.json" to """{"totally_unrelated": true}"""),
             )
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
@@ -81,7 +79,7 @@ class PiperEngineInspectTest {
                 sideFiles = mapOf("config.json" to """{"family": "not-piper"}"""),
             )
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test
@@ -93,7 +91,7 @@ class PiperEngineInspectTest {
                 sideFiles = mapOf("voice.onnx.json" to "{not valid json"),
             )
 
-        assertNull(engine.inspect(bundle))
+        assertInspectRejects(engine, bundle)
     }
 
     @Test

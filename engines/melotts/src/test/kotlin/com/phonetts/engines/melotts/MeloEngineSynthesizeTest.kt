@@ -1,14 +1,13 @@
 package com.phonetts.engines.melotts
 
-import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
-import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.testing.FakePhonemizer
 import com.phonetts.core.testing.FakeRuntime
 import com.phonetts.core.testing.FakeSession
+import com.phonetts.engines.common.testing.engineContext
+import com.phonetts.engines.common.testing.onnxRuntime
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -45,12 +44,8 @@ class MeloEngineSynthesizeTest {
 
     private fun buildEngine(acousticSession: FakeSession): Pair<MeloEngine, FakeRuntime> {
         val bertSession = FakeSession(outputs = mapOf("bert_features" to Tensor.floats(FloatArray(0))))
-        val runtime =
-            FakeRuntime(id = "onnx") { path ->
-                if (path == bertOutputPath) bertSession else acousticSession
-            }
-        val registry = RuntimeRegistry().apply { register(runtime) }
-        val engine = MeloEngine(EngineContext(runtimes = registry, phonemizer = FakePhonemizer()))
+        val runtime = onnxRuntime { path -> if (path == bertOutputPath) bertSession else acousticSession }
+        val engine = MeloEngine(engineContext(runtime))
         return engine to runtime
     }
 

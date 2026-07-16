@@ -1,12 +1,17 @@
 package com.phonetts.engines.kokoro
 
+import com.phonetts.engines.common.json.MiniJson
+import com.phonetts.engines.common.json.asFloatOrNull
+import com.phonetts.engines.common.json.asIntOrNull
+import com.phonetts.engines.common.json.asObjectOrNull
+import com.phonetts.engines.common.json.asStringOrNull
+
 /**
  * Parses Kokoro's `config.json` companion file — one of the two side files [KokoroEngine.inspect]
- * fingerprints a bundle by (the other being [KokoroVoiceTable]'s `voices.json`). This is a
- * minimal hand-rolled parser for our own fixed, flat manifest shape (a JSON object with a small,
- * known set of string/number fields) — NOT a general-purpose JSON parser. Pulling in a JSON
- * library was avoided on purpose to keep this module's dependency surface at just `:core` +
- * coroutines, per its build file.
+ * fingerprints a bundle by (the other being [KokoroVoiceTable]'s `voices.json`). Reads it through
+ * the shared, dependency-free `com.phonetts.engines.common.json.MiniJson` reader every engine
+ * module already links against for exactly this kind of small companion file, rather than a
+ * second hand-rolled parser private to this engine.
  *
  * Expected shape (all fields optional except where noted by [KokoroEngine]):
  * ```
@@ -30,23 +35,22 @@ object KokoroConfig {
         val defaultSpeed: Float?,
     )
 
-    fun parse(text: String): Parsed =
-        Parsed(
-            family = stringField(text, "family"),
-            sampleRate = numberField(text, "sample_rate")?.toInt(),
-            speedMin = numberField(text, "speed_min"),
-            speedMax = numberField(text, "speed_max"),
-            defaultVoiceId = stringField(text, "default_voice"),
-            defaultSpeed = numberField(text, "default_speed"),
+    fun parse(text: String): Parsed {
+        val root = MiniJson.parse(text)?.asObjectOrNull()
+        return Parsed(
+            family = root?.get(KEY_FAMILY)?.asStringOrNull(),
+            sampleRate = root?.get(KEY_SAMPLE_RATE)?.asIntOrNull(),
+            speedMin = root?.get(KEY_SPEED_MIN)?.asFloatOrNull(),
+            speedMax = root?.get(KEY_SPEED_MAX)?.asFloatOrNull(),
+            defaultVoiceId = root?.get(KEY_DEFAULT_VOICE)?.asStringOrNull(),
+            defaultSpeed = root?.get(KEY_DEFAULT_SPEED)?.asFloatOrNull(),
         )
+    }
 
-    private fun stringField(
-        text: String,
-        key: String,
-    ): String? = Regex("\"$key\"\\s*:\\s*\"([^\"]*)\"").find(text)?.groupValues?.get(1)
-
-    private fun numberField(
-        text: String,
-        key: String,
-    ): Float? = Regex("\"$key\"\\s*:\\s*(-?[0-9.]+)").find(text)?.groupValues?.get(1)?.toFloatOrNull()
+    private const val KEY_FAMILY = "family"
+    private const val KEY_SAMPLE_RATE = "sample_rate"
+    private const val KEY_SPEED_MIN = "speed_min"
+    private const val KEY_SPEED_MAX = "speed_max"
+    private const val KEY_DEFAULT_VOICE = "default_voice"
+    private const val KEY_DEFAULT_SPEED = "default_speed"
 }

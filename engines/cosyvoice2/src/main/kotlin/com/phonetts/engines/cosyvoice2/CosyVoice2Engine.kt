@@ -14,6 +14,7 @@ import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
+import com.phonetts.engines.common.sideFileContainsAnyMarker
 import com.phonetts.engines.common.tensorOrError
 
 /**
@@ -151,8 +152,7 @@ internal class CosyVoice2Engine(
      */
     private fun looksLikeCosyVoice2(bundle: ModelBundle): Boolean {
         if (!REQUIRED_WEIGHT_FILES.all(bundle::hasFile)) return false
-        val config = bundle.sideFile(CONFIG_FILE_NAME) ?: return false
-        return SIGNATURE_MARKERS.any { marker -> config.contains(marker, ignoreCase = true) }
+        return bundle.sideFileContainsAnyMarker(CONFIG_FILE_NAME, SIGNATURE_MARKERS)
     }
 
     private fun buildDescriptor(

@@ -12,8 +12,11 @@ import com.phonetts.engines.common.AbstractVoiceEngine
 import com.phonetts.engines.common.closeAllQuietly
 import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.json.parseStringArray
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
+import com.phonetts.engines.common.requireVoiceIndex
+import com.phonetts.engines.common.sideFileContainsMarker
 
 /**
  * KittenTTS (KittenML/KittenTTS) engine: a single ONNX graph with ~8 built-in speakers, no
@@ -24,12 +27,13 @@ import com.phonetts.engines.common.requireRuntime
  * Companion-file fingerprint used by [inspect] (spec §6.2 / §9.1 — fail closed):
  *  - a `.onnx` weights file,
  *  - a [CONFIG_FILE] side file whose contents mention [CONFIG_MARKER] (ASSUMPTION: real
- *    KittenTTS config.json carries a "model_type"/"architecture" field identifying the
- *    family; we key off a substring match rather than a full JSON parse, since this module
- *    pulls in no JSON library),
+ *    KittenTTS config.json carries a "model_type"/"architecture" field identifying the family;
+ *    we key off a substring match via the shared `sideFileContainsMarker` primitive rather than
+ *    a full field-by-field JSON parse),
  *  - a [VOICES_FILE] side file: ASSUMED to be a flat JSON array of speaker-name strings, e.g.
  *    `["Bella","Jasper","Luna","Bruno","Rosie","Hugo","Kiki","Leo"]` (the 8 names KittenTTS
- *    ships per model-facts.md). A bare `.onnx` with none of these companions, or a bundle
+ *    ships per model-facts.md), read via the shared `com.phonetts.engines.common.json.MiniJson`
+ *    reader's `parseStringArray`. A bare `.onnx` with none of these companions, or a bundle
  *    whose config doesn't carry the marker, is refused — never guessed.
  */
 internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(context) {
@@ -45,11 +49,10 @@ internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(contex
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         val modelFile = bundle.fileNames.firstOrNull { it.endsWith(MODEL_SUFFIX) } ?: return null
-        val config = bundle.sideFile(CONFIG_FILE)
-        if (config == null || !config.contains(CONFIG_MARKER, ignoreCase = true)) return null
+        if (!bundle.sideFileContainsMarker(CONFIG_FILE, CONFIG_MARKER)) return null
 
         val voicesRaw = bundle.sideFile(VOICES_FILE) ?: return null
-        val speakerNames = parseSpeakerNames(voicesRaw)
+        val speakerNames = parseStringArray(voicesRaw)
         if (speakerNames.isEmpty()) return null
 
         return EngineMatch(id, buildDescriptor(bundle, modelFile, speakerNames, Origin.BUILT_IN))
@@ -65,7 +68,7 @@ internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(contex
         // family default of a single generic voice so the dropdowns have something to render
         // (spec §6.2 — "the chosen engine supplies its family defaults").
         val speakerNames =
-            bundle.sideFile(VOICES_FILE)?.let(::parseSpeakerNames)?.takeIf { it.isNotEmpty() }
+            bundle.sideFile(VOICES_FILE)?.let(::parseStringArray)?.takeIf { it.isNotEmpty() }
                 ?: DEFAULT_FAMILY_VOICES
 
         return EngineMatch(id, buildDescriptor(bundle, modelFile, speakerNames, Origin.SIDELOADED))
@@ -95,7 +98,7 @@ internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(contex
     ): FloatArray {
         val activeSession = checkNotNull(session) { "$engineLabel.synthesizeSentence called before load()" }
         val descriptor = checkNotNull(loadedDescriptor) { "$engineLabel.synthesizeSentence called before load()" }
-        val speakerIndex = resolveSpeakerIndex(descriptor, voiceId)
+        val speakerIndex = requireVoiceIndex(descriptor.voices, voiceId, engineLabel).toLong()
 
         val modelInput = frontend.toModelInput(sentence, LANGUAGE)
         // ASSUMED real ONNX graph input/output names (no confirmed export available in this
@@ -109,15 +112,6 @@ internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(contex
             )
         val outputs = activeSession.run(inputs)
         return outputs.floatsOrError(WAVEFORM_KEY, engineLabel)
-    }
-
-    private fun resolveSpeakerIndex(
-        descriptor: ModelDescriptor,
-        voiceId: String,
-    ): Long {
-        val index = descriptor.voices.indexOfFirst { it.id == voiceId }
-        require(index >= 0) { "voice '$voiceId' is not among ${descriptor.modelId}'s voices" }
-        return index.toLong()
     }
 
     private fun buildDescriptor(
@@ -148,15 +142,6 @@ internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(contex
                 ),
         )
     }
-
-    /**
-     * Minimal parser for the ASSUMED [VOICES_FILE] format: a flat JSON array of quoted speaker
-     * name strings, e.g. `["Bella","Jasper"]`. Deliberately not a general JSON parser (this
-     * module takes no JSON dependency) — it only ever needs to pull quoted strings out of a
-     * top-level array, never an object with keys of its own.
-     */
-    private fun parseSpeakerNames(raw: String): List<String> =
-        QUOTED_STRING.findAll(raw).map { it.groupValues[1] }.toList()
 
     companion object {
         const val ENGINE_ID = "kittentts"
@@ -192,7 +177,5 @@ internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(contex
 
         /** Family default used by [forcedMatch] when no real speaker table is present. */
         private val DEFAULT_FAMILY_VOICES = listOf("Default")
-
-        private val QUOTED_STRING = Regex("\"([^\"]*)\"")
     }
 }
