@@ -17,7 +17,7 @@ the models; need `python3`, `onnxruntime`, `numpy`, and `espeak-ng` on PATH for 
 | **Kokoro-82M** (fp32) | af_heart | 193 | **11.05 s** | **518 KB** | 0.519 | none | ✅ PASS (now one-tap) |
 | **KittenTTS** (nano-0.1) | expr-voice-2-m | 194 | **10.25 s** | **480 KB** | 0.667 | none | ✅ PASS |
 | MeloTTS (MiaoMint en_v2) | speaker 0 | — | **10.54 s** | **908 KB** | 0.293 | none | ✅ PASS (now one-tap) |
-| CosyVoice2-0.5B | — | — | — | — | — | — | ⏸ deferred (LLM, ~1 GB, autoregressive) |
+| **CosyVoice3-0.5B** (native ggml) | fleurs-en | 147 | **5.88 s** | **276 KB** | 0.829 | none | ✅ PASS (on-device path) |
 
 Every passing model clears the > 1 KB / > 2 s bar with large margins, confirming the validated
 `input`/`input_lengths`/`scales`→`output` (Piper) and `input_ids`/`style`/`speed`→`waveform`
@@ -57,9 +57,34 @@ to this exact 7-input contract (`x`/`x_lengths`/`tones`/`sid`/`noise_scale`/`len
 `noise_scale_w` — no BERT session, no language input, no `sdp_ratio`), and MeloTTS now has a
 one-tap `BuiltInCatalog` entry (`MELO_EN`, repo `MiaoMint/MeloTTS-ONNX`).
 
+## CosyVoice — two independent proofs (PyTorch, then native ggml)
+
+CosyVoice is the Tier-C autoregressive LLM model, and it does **not** fit the single-ONNX contract
+the other four validate through — its LLM stage samples token-by-token and has no fixed ONNX graph.
+It was proven in **two** stages instead:
+
+1. **PyTorch reference** (`scripts/model-verify/run_cosy.py`, docs/COSYVOICE2.md): the upstream
+   `FunAudioLLM/CosyVoice` stack running **CosyVoice2-0.5B** produced clean audio in **6.24 s**. This
+   proved the *model* is real and worth shipping — but PyTorch is not an on-device runtime.
+2. **Native ggml** (`scripts/model-verify/run_cosy_native.sh` + `cv3_native_driver.cpp`): the ACTUAL
+   on-device code path. CrispStrobe/CrispASR's `cosyvoice3_tts` is a self-contained C++/ggml
+   implementation of the whole pipeline — Qwen2-0.5B LLM + DiT-CFM flow + HiFi-GAN/iSTFT HiFT + BPE
+   tokenizer — with a clean C ABI (`cosyvoice3_tts_synth(text, voice) → 24 kHz PCM`). Run against the
+   Apache-2.0 GGUF stack (`cstr/cosyvoice3-0.5b-2512-GGUF`, minimal 745 MB combo = Q4_K LLM + Q8_0
+   flow + F16 HiFT + voices), it synthesized **"Hello, this is a test of on device text to speech."**
+   into **147 speech tokens → 5.88 s of 24 kHz audio, peak 0.829, rms 0.111, no NaNs — PASS**, and a
+   second sentence ("the quick brown fox…") into 87 tokens → 3.48 s, peak 0.891. **No PyTorch, no
+   ONNX** — this is the same `cosyvoice3_tts.cpp` the app vendors for its `-PwithCosyVoice` native
+   build. The on-device engine is therefore **CosyVoice3-0.5B** (Apache-2.0, GGUF-native), the
+   deployable sibling of the CosyVoice2 model proven in PyTorch.
+
+Greedy decode (`temperature 0`) falls into CV3's documented "silent_tokens" loop; the RAS sampler
+needs `temperature > 0` (0.8, seed 42 here) to produce well-formed speech — the driver and the app
+runtime both set this.
+
 ## What "verified" means and doesn't
 
-- It verifies the **models + tensor contracts** produce valid audio off-device. It does **not** run
-  the Android app itself (no emulator here) — on-device playback still depends on the espeak NDK
-  build (`-PwithEspeak=true`) and onnxruntime-android.
-- CosyVoice2 is the deferred Tier-C LLM, not yet single-file validatable the same way.
+- It verifies the **models + tensor contracts** (and, for CosyVoice3, the **native ggml runtime**)
+  produce valid audio off-device. It does **not** run the Android app itself (no emulator here) —
+  on-device playback still depends on the espeak NDK build (`-PwithEspeak=true`), onnxruntime-android,
+  and (for CosyVoice3) the `-PwithCosyVoice=true` ggml native build.
