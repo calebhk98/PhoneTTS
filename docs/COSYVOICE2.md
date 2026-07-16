@@ -7,11 +7,13 @@ records what I found when trying to get it producing real audio, and what an on-
 implementation actually requires. **UPDATE: it is now PROVEN to produce real speech in PyTorch —
 see "PyTorch proof" below.** The remaining question is purely the on-device path.
 
-> **UPDATE (2026-07-16): the on-device pipeline is now BUILT and WIRED (compiles, seam-tested),
-> gated behind `-PwithCosyVoice=true`, but the native GGUF decode is NOT yet verified on a phone.**
-> See [On-device implementation (in progress)](#on-device-implementation-in-progress) at the bottom
-> for the architecture that landed, the real flow/HiFT tensor names, what compiles vs. what is a
-> documented native TODO, and an honest statement of what remains.
+> **UPDATE (2026-07-16): the on-device path is now PROVEN in native ggml and wired into the app.**
+> CrispASR's `cosyvoice3_tts` (the whole pipeline in C++/ggml) synthesizes real 24 kHz audio on
+> desktop — the same code the app vendors behind `-PwithCosyVoice=true`. See
+> [On-device implementation](#on-device-implementation--proven-native-ggml-wired-into-the-app) at the
+> bottom for the proof, the architecture that landed, and the one remaining step (the NDK link). The
+> "four ONNX components / missing LLM" analysis below is the *earlier* investigation — the native
+> ggml port made the ONNX-flow/HiFT hybrid unnecessary.
 
 ## Architecture (why it's not one ONNX graph)
 
@@ -108,120 +110,112 @@ Setup notes (for reproducing): the environment's Debian-patched setuptools break
 (the text frontend — it downloads its EN normalization FSTs from ModelScope at first run).
 
 So the model is real and produces good audio. What it does NOT change: **it ran on a desktop CPU via
-PyTorch**, which is not the app's runtime. Getting this into PhoneTTS still requires the on-device
-path below — and the mobile research (`docs/research/cosyvoice2-mobile.md`) concludes that path is
-**GGUF + llama.cpp/ggml** (there is an Apache-2.0 GGUF port that runs the same recipe on ARM at
-745MB with an 8-voice pre-baked bank), a **Large** second-runtime effort, file-export-oriented, with
-no streaming-realtime promise on a 4GB phone.
+PyTorch**, which is not the app's runtime. Getting this into PhoneTTS needs the on-device path
+below — now **also proven**, on the actual ggml code the app ships.
 
-## On-device implementation (in progress)
+## On-device implementation — PROVEN native ggml, wired into the app
 
-The full app-side structure for the GGUF/llama.cpp path is now built, wired, and seam-tested. It
-**compiles** end-to-end (`:core`, `:engines:cosyvoice2`, and `:app:compileDebugKotlin`), and its
-plumbing is proven with fakes. It is **not** a working "it speaks on a phone" claim: the native
-speech-token decode is opt-in and unverified (see [What remains](#what-remains-before-it-runs-on-a-phone)).
+The mobile research (`docs/research/cosyvoice2-mobile.md`) pointed at a GGUF/ggml port as the only
+real on-device path. That path turned out to be much cleaner than a llama.cpp-LLM + ONNX-flow/HiFT
+hybrid: **CrispStrobe/CrispASR** (a whisper.cpp fork, MIT) contains a self-contained C++/ggml
+implementation of the *entire* CosyVoice3 pipeline — Qwen2-0.5B LLM (speech-token head) → DiT-CFM
+flow → HiFi-GAN/iSTFT HiFT, **plus a native Qwen2 BPE tokenizer and a baked voice bank** — behind one
+C ABI. The deployable model is **CosyVoice3-0.5B-2512** (Apache-2.0, GGUF-native — the sibling of the
+CosyVoice2 model proven in PyTorch above).
 
-### The architecture that landed (text → audio)
+### The ggml proof (done — real audio, native code path)
+
+`scripts/model-verify/run_cosy_native.sh` (+ `cv3_native_driver.cpp`) builds CrispASR's
+`cosyvoice3_tts` static lib and runs it against the Apache-2.0 GGUF stack
+(`cstr/cosyvoice3-0.5b-2512-GGUF`, minimal 745 MB combo = Q4_K LLM + Q8_0 flow + F16 HiFT + voices):
+
+> **Result: PASS.** "Hello, this is a test of on device text to speech." → **147 speech tokens →
+> 5.88 s of 24 kHz audio, peak 0.829, rms 0.111, no NaNs.** A second sentence → 87 tokens → 3.48 s,
+> peak 0.891. **No PyTorch, no ONNX** — this is the same `cosyvoice3_tts.cpp` the app vendors for its
+> `-PwithCosyVoice` build. (Greedy decode loops on CV3's documented "silent_tokens"; the RAS sampler
+> needs `temperature > 0` — 0.8, seed 42 — which the driver and the app runtime both set.)
+
+### The architecture that landed (text → audio, one native call)
 
 ```
-text ──(CosyVoice2Frontend)──▶ Qwen2 BPE token ids
-     ──(SpeechTokenRuntime: GGUF Qwen2-0.5B AR loop, id "cosyvoice-llm", NOT ONNX)──▶ speech token ids
-     ──(flow.onnx via the ONNX Runtime, id "onnx")──▶ mel
-     ──(hift.onnx via the ONNX Runtime)──▶ 24 kHz waveform
+text ──(NativeTtsRuntime / cosyvoice3_tts, id "cosyvoice", NOT ONNX)──▶ 24 kHz waveform
+        │  inside the native lib: Qwen2 BPE tokenize → Qwen2-0.5B AR speech-token loop (RAS)
+        │  → DiT-CFM flow ODE → HiFi-GAN/iSTFT HiFT
+        └─ voice = one of the baked voices in the voices GGUF (zero_shot, fleurs-en/de/…)
 ```
 
-Speaker prompt = a bundled **pre-baked voice** (`SpeakerPrompt`: CAMPPlus embedding + prompt speech
-tokens + prompt mel), *no reference wav in v1*. Speed routes to the LLM's native **token-rate**
-parameter (`SpeechTokenRequest.speed`) and is never used to resample output audio (CLAUDE.md rule 2).
+Because the native lib does everything, there is **no** Kotlin `TextFrontend`, speech-token stage, or
+ONNX flow/HiFT graph for this engine — the earlier skeleton's `CosyVoice2Frontend` (a fabricated
+`char.code % vocab` placeholder), `CosyVoice2Graphs` (ONNX flow/HiFT) and `CosyVoice2SpeakerPrompt`
+are **deleted**. Speed: the CrispASR synth C ABI exposes no speed knob, and CLAUDE.md rule 2 forbids
+resampling to fake one (it shifts pitch), so the descriptor advertises a **locked speed of 1.0**
+(honest-closed) until the native synth routes a native token-rate parameter.
 
 ### The new seam (`:core`)
 
-`com.phonetts.core.runtime.SpeechTokenRuntime` (+ `SpeechTokenSession`, `SpeechTokenRequest`) is the
+`com.phonetts.core.runtime.NativeTtsRuntime` (+ `NativeTtsSession`, `NativeTtsRequest`) is the
 "pluggable second runtime" the spec priced in (§5.3). It is a `Runtime` (so it registers in the same
 `RuntimeRegistry` alongside `OnnxRuntime` and an engine looks it up by id the same way), but its
-`openSpeechSession(...)` returns a `SpeechTokenSession` whose `generate(request): LongArray` runs the
-**entire** autoregressive decode and returns speech token ids — it is emphatically **not** the
+`openTtsSession(modelDir)` returns a `NativeTtsSession` whose `synthesize(request): FloatArray` runs
+the **entire** text→audio pipeline and returns finished PCM — it is emphatically **not** the
 tensor-in/tensor-out ONNX `InferenceSession`. Its inherited `createSession()` fails closed to make
-that boundary explicit. This directly fixes the first skeleton's bug (it *wrongly* drove the LLM as
-an ONNX `InferenceSession` in a per-token `run()` loop). Seam-tested purely on the JVM with a
-`FakeSpeechTokenRuntime`/`FakeSpeechTokenSession` (`core/.../runtime/SpeechTokenRuntimeTest.kt`).
+that boundary explicit. `voiceNames`/`sampleRate` are read from the loaded model (SSOT). Seam-tested
+purely on the JVM with a `FakeNativeTtsRuntime`/`FakeNativeTtsSession`
+(`core/.../runtime/NativeTtsRuntimeTest.kt`).
 
-### Real flow/HiFT ONNX tensor names (inspected, not guessed)
+### The engine (`:engines:cosyvoice2`)
 
-Read with `python3` + `onnx.load(...).graph` over the published exports on 2026-07-16 (the model
-files are **not** committed — CLAUDE.md). Encoded as constants in `CosyVoice2Graphs`:
-
-- **Flow-matching decoder** — `Lourdle/CosyVoice2-0.5B_ONNX/flow_fp32.onnx` (tokens → mel):
-  - inputs: `token` INT64[B,L], `prompt_token` INT32[B,PL], `prompt_feat` FLOAT[B,ML,80],
-    `embedding` FLOAT[B,E]
-  - output: `tts_mel` FLOAT[B,80,mel_len]
-- **HiFT vocoder** — `Lourdle/CosyVoice2-0.5B_ONNX/hift.onnx` (mel → waveform):
-  - input: `speech_feat` FLOAT[1,80,L]
-  - output: `generated_speech` FLOAT[1,N]
-- The same repo's `flow_hift_combined_fp32.onnx` fuses both and adds a scalar `speed` FLOAT[] input —
-  independent evidence that speed is a native flow-side token-rate knob (razesystems'
-  `flow.decoder.estimator.fp16.onnx` is only the inner DiT ODE-step estimator: `x`,`mask`,`mu`,`t`,
-  `spks`,`cond` → `dphi_dt`, i.e. one Euler step, not the whole tokens→mel graph — so this engine
-  uses the Lourdle full-flow export, not that estimator).
+`CosyVoice2Engine` is now a thin delegate over the native session:
+- **`inspect()`** fingerprints the four-GGUF cstr stack by name — `cosyvoice3-{llm,flow,hift,voices}-*.gguf`.
+  That four-file set is the whole signature; anything less returns null (fail-closed, spec §9.1).
+- **`load()`** opens one `NativeTtsSession` over the model directory; the native runtime discovers the
+  four siblings itself.
+- **`voices()`** are the baked voice names the native session read from the voices GGUF (SSOT — the
+  engine hardcodes no voice list).
+- **`synthesizeSentence()`** calls the native synth; one `FloatArray` chunk per sentence (spec §8).
+- Display name is **CosyVoice3-0.5B**; the internal engine/package id stays `cosyvoice2` (the spec's
+  build-order name for this Tier-C slot).
 
 ### The `-PwithCosyVoice` flag (`:app`)
 
-`LlamaCppSpeechTokenRuntime` implements the `:core` seam via JNI (`LlamaCppNative`) to llama.cpp,
-registered in `AppGraph`'s `RuntimeRegistry` **alongside** `OnnxRuntime`. The native build mirrors
-the espeak-ng pattern exactly:
+`NativeCosyVoiceRuntime` implements the `:core` seam via JNI (`CosyVoiceNative`) over CrispASR's
+`cosyvoice3_tts` C ABI, registered in `AppGraph`'s `RuntimeRegistry` **alongside** `OnnxRuntime`. The
+native build mirrors the espeak-ng pattern exactly:
 
 - Opt in with `-PwithCosyVoice=true` (adds `buildCosyVoice` in `app/build.gradle.kts`, passes
-  `-DPHONETTS_BUILD_COSYVOICE=ON` to CMake). `app/src/main/cpp/cosyvoice/CMakeLists.txt` builds
-  llama.cpp (git-clone-at-build via `scripts/fetch-cosyvoice-llama.sh`), and — like the espeak stub —
-  **still configures and links a fail-closed stub `.so` if the checkout is absent**, so the app
-  always assembles even without the NDK.
-- **When off:** `libphonetts_cosyvoice.so` isn't built, `LlamaCppNative.isLibraryLoaded` is false,
-  `LlamaCppSpeechTokenRuntime.isAvailable()` returns false, and the engine's `load()` fails with a
-  clear "build with `-PwithCosyVoice=true`" message — so CosyVoice2 simply isn't offered. Registration
-  itself is unconditional and harmless.
+  `-DPHONETTS_BUILD_COSYVOICE=ON` to CMake). `app/src/main/cpp/cosyvoice/CMakeLists.txt`
+  `add_subdirectory`s the CrispASR checkout (fetched by `scripts/fetch-cosyvoice-ggml.sh`) and links
+  its `cosyvoice3_tts` + `chatterbox` (campplus) + `ggml` targets — the *exact* targets
+  `run_cosy_native.sh` built and ran. Like the espeak stub, it **still configures and links a
+  fail-closed stub `.so` if the checkout is absent**, so the app always assembles even without the NDK.
+- **When off:** `libphonetts_cosyvoice.so` isn't built, `CosyVoiceNative.isLibraryLoaded` is false,
+  `NativeCosyVoiceRuntime.isAvailable()` returns false, and the engine's `load()` fails with a clear
+  "build with `-PwithCosyVoice=true`" message — so CosyVoice simply isn't offered. Registration itself
+  is unconditional and harmless.
 
-### What compiles vs. what is a documented native TODO
+### What is proven vs. what remains
 
-**Compiles & is seam-tested (green):** the `:core` seam + its fake; `CosyVoice2Frontend`/`Engine`/
-`Graphs`/`SpeakerPrompt` reworked to the real three-stage pipeline (tokens flow LLM→flow→hift, one
-`FloatArray` chunk per sentence, fail-closed `inspect()`, speed→native param, baked-voice parse +
-fail-closed reader); the `:app` Kotlin/JNI declarations; the CMake + gradle gating; `AppGraph` wiring.
+**Proven & green:** the native `cosyvoice3_tts` code path produces real 24 kHz audio on desktop
+(`run_cosy_native.sh`); the `:core` seam + engine + `:app` Kotlin/JNI compile, and the seam/engine
+tests pass on the JVM (`test ktlintCheck detekt` all green). The `cosyvoice_jni.cpp` bridge is a
+**real** implementation over the proven C ABI (discovers the four GGUFs, inits all stages, `synth →
+jfloatArray`), not a stub.
 
-**Native TODO (opt-in, unverified — honest stub today):**
-- `app/src/main/cpp/cosyvoice/cosyvoice_jni.cpp` currently returns "not built"/`0`/`null`. Integrating
-  the actual ggml **speech-token decode + the sliding-window repeat-aware (RAS) sampler** from the
-  CrispStrobe/`cstr` recipe is still to do (naive greedy decode falls into a documented silent-token
-  loop; `docs/research/cosyvoice2-mobile.md` §Q2).
-- **Obtaining/converting the GGUF:** the Qwen2-0.5B speech LLM with the CosyVoice-specific
-  `cosyvoice3.speech_embd` / `cosyvoice3.speech_lm_head` tensors (Q4_K ≈ 384 MB) — download into
-  app-private storage, never bundle in the APK (rule 7).
-- **The voice bank:** an offline baking script must produce `voices.bin` in the layout
-  `CosyVoice2SpeakerPrompt` reads (embedding + prompt tokens + prompt mel). Not committed (weights are
-  never committed).
-- **INT32 gap:** the flow graph's `prompt_token` is INT32, but the app's `Tensor`/`OnnxRuntime` seam
-  only carries INT64/FLOAT; it's fed as INT64 today. Feeding the real graph correctly needs an INT32
-  path in `OnnxRuntime` — invisible to the current fake-session plumbing tests.
-- The llama.cpp tag in `scripts/fetch-cosyvoice-llama.sh` and `cosyvoice/CMakeLists.txt` is a
-  **placeholder** pin, to be confirmed against a real on-device build.
+**Remaining (opt-in, behind `-PwithCosyVoice`):**
+- The **NDK cross-compile + final on-device link** of `cosyvoice3_tts` + ggml for arm64 — the same
+  targets build on desktop x86-64; the Android toolchain link is untested here (no NDK in this dev
+  env), exactly like the espeak bridge. Pin `scripts/fetch-cosyvoice-ggml.sh` to a known-good CrispASR
+  revision once that build resolves one.
+- **On-device RTF** on the A16: a 0.5B AR decoder + flow ODE + vocoder on a 4 GB phone CPU is
+  file-export-first, not guaranteed streaming (`docs/research/cosyvoice2-mobile.md` §Q3).
 
 ### Why there is no `BuiltInCatalog` entry yet
 
-`BuiltInCatalog` is deliberately "only models proven to produce valid audio AND handled end-to-end
-by inspect()/load()". CosyVoice2 is neither yet: (1) the native decode is unverified, and (2) no
-single upstream repo/manifest yields a bundle matching this engine's `inspect()` fingerprint — the
-LLM GGUF (`cstr/…`) and the flow/HiFT ONNX (`Lourdle/…`) live in **different** repos, and both the
-`cosyvoice2.yaml` signature file and the baked `voices.bin` are **PhoneTTS's own** artifacts that an
-offline packaging step must produce. A one-tap download must not land a model that then fails to
-load, so adding a catalog entry waits until the native path is verified and a single packaged bundle
-exists. Until then CosyVoice2 is reachable only by sideloading such a bundle (fail-closed `inspect()`,
-or an explicit user `forcedMatch`).
-
-### What remains before it runs on a phone
-
-In priority order: (1) implement + verify the ggml speech-token decode & RAS sampler in the JNI
-bridge against a real GGUF; (2) obtain/convert the Q4_K LLM GGUF and bake a `voices.bin`; (3) add the
-INT32 `prompt_token` path to `OnnxRuntime`; (4) package a single `inspect()`-recognizable bundle
-(gguf + `flow.onnx` + `hift.onnx` + `voices.bin` + signed `cosyvoice2.yaml`) and measure RTF on the
-A16 (expect file-export-first, not guaranteed streaming — `docs/research/cosyvoice2-mobile.md` §Q3).
-None of (1)–(4) touches the seams proven here; they are native/packaging work behind the
-`-PwithCosyVoice` flag.
+`BuiltInCatalog` is deliberately "only models proven to produce valid audio AND handled end-to-end by
+inspect()/load() **on-device**". CosyVoice3's audio + code path are proven, but the one-tap entry
+waits on the on-device NDK build being verified — a one-tap download must not land a model that then
+can't load because the native lib wasn't built into that APK. The `inspect()` fingerprint already
+matches the `cstr/cosyvoice3-0.5b-2512-GGUF` stack as-is (drop its four GGUFs in a folder and sideload
+it), so no PhoneTTS-specific packaging step is needed — only the `-PwithCosyVoice` build. Until that
+build is verified on a device, CosyVoice3 is reachable by sideloading the GGUF folder (fail-closed
+`inspect()`, or an explicit user `forcedMatch`) into a `-PwithCosyVoice` APK.

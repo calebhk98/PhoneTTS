@@ -55,10 +55,13 @@ identify with confidence isn't guessed at — it asks you which engine to use, a
 - **Notes:** **use this "sherpa-onnx"-style export, not the raw `myshell-ai/MeloTTS` repo** — that
   one has no ONNX + its symbol table is version-specific and produced silence in testing.
 
-### CosyVoice2-0.5B — not usable on-device yet
-The model is real and excellent (proven in PyTorch), but running it on a phone needs a separate
-GGUF/llama.cpp runtime that isn't finished. See [`COSYVOICE2.md`](COSYVOICE2.md). It is **not** in
-the one-tap list and won't auto-load yet.
+### CosyVoice3-0.5B — proven, opt-in native build
+The model is real and excellent, and its **on-device native ggml path is now proven** (real 24 kHz
+audio from the same C++/ggml code the app ships — `scripts/model-verify/run_cosy_native.sh`). It runs
+via a separate native library that is **opt-in at build time** (`-PwithCosyVoice=true`); a standard
+APK doesn't include it, so CosyVoice3 isn't in the one-tap list and won't auto-load in a normal build.
+With that build, drop the four `cosyvoice3-*.gguf` files (from `cstr/cosyvoice3-0.5b-2512-GGUF`) in a
+folder and sideload it. See [`COSYVOICE2.md`](COSYVOICE2.md).
 
 ## The one thing to install for Piper/Kitten/Kokoro: espeak
 
