@@ -57,6 +57,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.documentfile) // Storage Access Framework tree access for sideloading
+    implementation(libs.pdfbox.android) // PDF text extraction (the one file type that needs a library)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
