@@ -5,6 +5,12 @@
          browse/download flow (Hugging Face). No network is touched during synthesis. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Background playback (issue #19): PlaybackService keeps synthesis/playback alive with the
+         screen off, behind an ongoing notification with Play/Pause/Stop + lock-screen controls. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".PhoneTtsApplication"
         android:allowBackup="false"
@@ -20,6 +26,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground service driving background playback + the lock-screen media session
+             (com.phonetts.app.playback.PlaybackService). Not exported: only this app binds to
+             it. -->
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
 </manifest>

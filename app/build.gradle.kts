@@ -113,6 +113,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.documentfile) // Storage Access Framework tree access for sideloading
+    // MediaSessionCompat + AudioFocusRequestCompat/MediaStyle notifications for background
+    // playback + lock-screen controls (PlaybackService); androidx.media3 isn't on the classpath
+    // yet, so this lighter media-compat artifact is the pick per the ticket's guidance.
+    implementation(libs.androidx.media)
     implementation(libs.pdfbox.android) // PDF text extraction (the one file type that needs a library)
 
     implementation(platform(libs.compose.bom))
