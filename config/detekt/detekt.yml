@@ -8,18 +8,24 @@ complexity:
     active: true
     threshold: 3
   TooManyFunctions:
-    # An engine implements the 6-method VoiceEngine interface plus a few private helpers;
-    # ~14 is a realistic ceiling before a class is genuinely doing too much.
+    # An engine implements the 6-method VoiceEngine interface plus many small guard-clause
+    # helpers — and never-nesting deliberately produces MORE, smaller functions. 20 is the
+    # ceiling before a class is genuinely doing too much (also covers hand-rolled parsers).
+    # Test classes hold many @Test methods, so the size rules below exclude test sources;
+    # never-nesting (NestedBlockDepth) still applies everywhere.
     active: true
-    thresholdInClasses: 15
-    thresholdInFiles: 20
-    thresholdInObjects: 15
+    thresholdInClasses: 20
+    thresholdInFiles: 25
+    thresholdInObjects: 20
+    excludes: ['**/test/**']
   LongMethod:
     active: true
     threshold: 40
+    excludes: ['**/test/**']
   LargeClass:
     active: true
     threshold: 300
+    excludes: ['**/test/**']
   LongParameterList:
     active: true
     functionThreshold: 7

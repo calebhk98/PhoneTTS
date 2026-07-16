@@ -1,0 +1,164 @@
+package com.phonetts.engines.piper
+
+import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.model.ModelBundle
+import com.phonetts.core.registry.RuntimeRegistry
+import com.phonetts.core.runtime.Tensor
+import com.phonetts.core.testing.FakePhonemizer
+import com.phonetts.core.testing.FakeRuntime
+import com.phonetts.core.testing.FakeSession
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+/**
+ * §9.4 speed-routing coverage plus phoneme->id mapping through the full [PiperEngine.synthesize]
+ * path. The engine must feed the session a `length_scale` that is the INVERSE of the requested
+ * speed (larger length_scale = slower audio) and must never resample output to change speed.
+ */
+class PiperEngineSynthesisTest {
+    private val sidecarJson =
+        """
+        {
+          "audio": {"sample_rate": 22050},
+          "espeak": {"voice": "en-us"},
+          "phoneme_id_map": {"^": [1], "$": [2], "_": [0], "h": [10], "i": [11]},
+          "inference": {"noise_scale": 0.667, "length_scale": 1.0, "noise_w": 0.8}
+        }
+        """.trimIndent()
+
+    private val bundle =
+        ModelBundle(
+            id = "voice-pack",
+            fileNames = setOf("voice.onnx", "voice.onnx.json"),
+            sideFiles = mapOf("voice.onnx.json" to sidecarJson),
+            rootPath = "/models/voice-pack",
+        )
+
+    private fun buildLoadedEngine(fakeSession: FakeSession): Pair<PiperEngine, FakeRuntime> {
+        val fakeRuntime = FakeRuntime(id = "onnx", sessionFactory = { fakeSession })
+        val registry = RuntimeRegistry().apply { register(fakeRuntime) }
+        val context = EngineContext(runtimes = registry, phonemizer = FakePhonemizer { text -> text })
+        // sidecarReader injected so load() doesn't need a real file on disk (spec §9 keeps the
+        // seam plain-JVM testable) — see PiperEngine's KDoc.
+        val engine = PiperEngine(context, sidecarReader = { sidecarJson })
+        return engine to fakeRuntime
+    }
+
+    @Test
+    fun `feeds the requested speed as the inverse of the config default length_scale`() =
+        runTest {
+            val capturedInputs = mutableListOf<Map<String, Tensor>>()
+            val fakeSession =
+                FakeSession(
+                    outputsFor = { inputs ->
+                        capturedInputs.add(inputs)
+                        mapOf("output" to Tensor.floats(floatArrayOf(0.1f, 0.2f, 0.3f)))
+                    },
+                )
+            val (engine, _) = buildLoadedEngine(fakeSession)
+            val match = assertNotNull(engine.inspect(bundle))
+            engine.load(match.descriptor)
+
+            val speed = 2.0f
+            val emitted = engine.synthesize("hi", voiceId = "voice", speed = speed).toList()
+
+            assertEquals(1, emitted.size)
+            assertEquals(1, capturedInputs.size)
+            val scales = capturedInputs.single().getValue("scales").asFloats()
+            // config default length_scale (1.0) / speed(2.0) => 0.5: half the length_scale, so
+            // faster speech, with NO resampling of the emitted audio (rule 2).
+            val expectedLengthScale = 1.0f / speed
+            assertEquals(expectedLengthScale, scales[1], 1e-6f)
+        }
+
+    @Test
+    fun `a slower speed produces a larger length_scale than a faster one`() =
+        runTest {
+            val slowRuns = mutableListOf<Map<String, Tensor>>()
+            val fastRuns = mutableListOf<Map<String, Tensor>>()
+            val slowSession =
+                FakeSession(
+                    outputsFor = { inputs ->
+                        slowRuns.add(inputs)
+                        mapOf("output" to Tensor.floats(floatArrayOf(0f)))
+                    },
+                )
+            val fastSession =
+                FakeSession(
+                    outputsFor = { inputs ->
+                        fastRuns.add(inputs)
+                        mapOf("output" to Tensor.floats(floatArrayOf(0f)))
+                    },
+                )
+            val slowRuntime = FakeRuntime(id = "onnx", sessionFactory = { slowSession })
+            val fastRuntime = FakeRuntime(id = "onnx", sessionFactory = { fastSession })
+
+            val slowContext =
+                EngineContext(
+                    runtimes = RuntimeRegistry().apply { register(slowRuntime) },
+                    phonemizer = FakePhonemizer { it },
+                )
+            val fastContext =
+                EngineContext(
+                    runtimes = RuntimeRegistry().apply { register(fastRuntime) },
+                    phonemizer = FakePhonemizer { it },
+                )
+            val slowEngine = PiperEngine(slowContext, sidecarReader = { sidecarJson })
+            val fastEngine = PiperEngine(fastContext, sidecarReader = { sidecarJson })
+            val slowMatch = assertNotNull(slowEngine.inspect(bundle))
+            val fastMatch = assertNotNull(fastEngine.inspect(bundle))
+            slowEngine.load(slowMatch.descriptor)
+            fastEngine.load(fastMatch.descriptor)
+
+            slowEngine.synthesize("hi", "voice", speed = 0.5f).toList()
+            fastEngine.synthesize("hi", "voice", speed = 1.5f).toList()
+
+            val slowLengthScale = slowRuns.single().getValue("scales").asFloats()[1]
+            val fastLengthScale = fastRuns.single().getValue("scales").asFloats()[1]
+            assertTrue(
+                slowLengthScale > fastLengthScale,
+                "expected slower speed to yield a larger length_scale: slow=$slowLengthScale fast=$fastLengthScale",
+            )
+        }
+
+    @Test
+    fun `maps phonemes to ids via the voice's phoneme_id_map with BOS-PAD-EOS framing`() =
+        runTest {
+            val capturedInputs = mutableListOf<Map<String, Tensor>>()
+            val fakeSession =
+                FakeSession(
+                    outputsFor = { inputs ->
+                        capturedInputs.add(inputs)
+                        mapOf("output" to Tensor.floats(floatArrayOf(0f)))
+                    },
+                )
+            val (engine, _) = buildLoadedEngine(fakeSession)
+            val match = assertNotNull(engine.inspect(bundle))
+            engine.load(match.descriptor)
+
+            // FakePhonemizer is configured as identity above, so phonemizing "hi" yields "hi".
+            engine.synthesize("hi", voiceId = "voice", speed = 1.0f).toList()
+
+            val ids = capturedInputs.single().getValue("input").asLongs().toList()
+            // BOS(1), h(10), pad(0), i(11), pad(0), EOS(2) per phoneme_id_map above.
+            assertEquals(listOf(1L, 10L, 0L, 11L, 0L, 2L), ids)
+        }
+
+    @Test
+    fun `unload closes every loaded voice session`() =
+        runTest {
+            val fakeSession = FakeSession(outputs = mapOf("output" to Tensor.floats(floatArrayOf(0f))))
+            val (engine, _) = buildLoadedEngine(fakeSession)
+            val match = assertNotNull(engine.inspect(bundle))
+            engine.load(match.descriptor)
+
+            engine.unload()
+
+            assertTrue(fakeSession.closed, "expected the loaded voice's session to be closed on unload()")
+            assertEquals(emptyList(), engine.voices())
+        }
+}
