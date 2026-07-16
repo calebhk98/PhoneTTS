@@ -53,6 +53,7 @@ object BuiltInCatalog {
                 listOf(
                     BuiltInFile("onnx/model.onnx", "model.onnx"),
                     BuiltInFile("config.json", "config.json"),
+                    BuiltInFile("tokenizer.json", "tokenizer.json"),
                     BuiltInFile("voices/af_heart.bin", "voices/af_heart.bin"),
                     BuiltInFile("voices/af_bella.bin", "voices/af_bella.bin"),
                     BuiltInFile("voices/am_michael.bin", "voices/am_michael.bin"),

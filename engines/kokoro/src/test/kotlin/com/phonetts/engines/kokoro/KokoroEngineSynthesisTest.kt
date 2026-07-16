@@ -16,6 +16,11 @@ private const val CONFIG =
     """{"family": "kokoro", "sample_rate": 24000, "speed_min": 0.5, "speed_max": 2.0, """ +
         """"default_voice": "af_heart", "default_speed": 1.0}"""
 
+// A tiny stand-in for the model's tokenizer.json: the default (identity) FakePhonemizer returns the
+// input text verbatim, so this vocab just needs the letters the test sentences use.
+private const val TOKENIZER =
+    """{"model": {"vocab": {"h": 1, "e": 2, "l": 3, "o": 4, "i": 5, "w": 6, "r": 7, "d": 8}}}"""
+
 /**
  * synthesize()-side plumbing against the REAL Kokoro voice format (VALIDATED via
  * `scripts/model-verify/run_kokoro.py`): speed routes to the model's native "speed" parameter
@@ -31,7 +36,8 @@ class KokoroEngineSynthesisTest {
     private fun inMemoryBundle(): ModelBundle =
         ModelBundle(
             id = "kokoro-synth-test",
-            fileNames = setOf("model.onnx", "config.json", "voices/af_heart.bin", "voices/bf_emma.bin"),
+            fileNames =
+                setOf("model.onnx", "config.json", "tokenizer.json", "voices/af_heart.bin", "voices/bf_emma.bin"),
             sideFiles = mapOf("config.json" to CONFIG),
             rootPath = "/virtual/kokoro",
         )
@@ -51,6 +57,8 @@ class KokoroEngineSynthesisTest {
                 // The injected reader seam: load() gets each voice's raw bytes without touching
                 // disk, keyed by the "<dir>/<voiceId>.bin" path the engine itself constructs.
                 fileReader = { path -> voiceBytes.getValue(path.substringAfterLast('/').removeSuffix(".bin")) },
+                // The text reader seam: load() reads tokenizer.json (the phoneme vocab) as text.
+                textFileReader = { TOKENIZER },
             )
     }
 
@@ -107,10 +115,10 @@ class KokoroEngineSynthesisTest {
     @Test
     fun synthesizeSelectsTheStyleRowIndexedByTheSentencesTokenCount() =
         runTest {
-            // "hello" is 5 plain-ASCII lowercase letters -> KokoroFrontend's misaki stand-in
-            // accepts it whole and emits exactly 5 tokens, so the VALIDATED recipe's
-            // `row = min(tokenCount, 509)` (scripts/model-verify/run_kokoro.py line 23) selects
-            // row 5 -- distinguishable here because tableWithRowMarkers() makes row r's value r.
+            // The identity FakePhonemizer returns "hello" verbatim; its 5 letters all map through
+            // TOKENIZER's vocab (h,e,l,l,o) and the frontend wraps them with a pad at each end, so
+            // modelInput.tokenIds has 7 entries. styleRow selects `row = min(tokenCount, 509)` = 7
+            // -- distinguishable here because tableWithRowMarkers() makes row r's value r.
             val fixture =
                 Fixture(
                     voiceTables =
@@ -125,7 +133,7 @@ class KokoroEngineSynthesisTest {
             fixture.engine.synthesize("hello", "af_heart", 1.0f).toList()
 
             val run = fixture.session.runs.single()
-            assertContentEquals(FloatArray(256) { 5f }, run.getValue("style").asFloats())
+            assertContentEquals(FloatArray(256) { 7f }, run.getValue("style").asFloats())
         }
 
     @Test

@@ -4,56 +4,57 @@ import com.phonetts.core.testing.FakePhonemizer
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
- * [KokoroFrontend]: misaki g2p handles the text it's confident about (plain ASCII
- * letters/whitespace here, standing in for misaki's lexicon-backed coverage) without touching
- * the injected [com.phonetts.core.text.Phonemizer]; anything else falls back to it, exactly as
- * Kokoro's reference pipeline falls back to espeak-ng (docs/research/model-facts.md).
+ * [KokoroFrontend] against the PROVEN recipe (`scripts/model-verify/run_kokoro.py`): all text is
+ * phonemized through the injected [com.phonetts.core.text.Phonemizer] (espeak-ng in `:app`), each
+ * IPA character is mapped through the model's own `tokenizer.json` vocab (dropping characters the
+ * vocab doesn't contain), and the result is wrapped with the pad id `0` at both ends.
  */
 class KokoroFrontendTest {
+    // A tiny stand-in for the model's tokenizer.json vocab — real ids for a handful of IPA chars.
+    private val vocab = mapOf("h" to 50L, "ə" to 60L, "l" to 55L, "o" to 45L)
+
     @Test
-    fun asciiTextIsHandledByMisakiWithoutFallingBackToEspeak() {
-        val phonemizer = FakePhonemizer()
-        val frontend = KokoroFrontend(phonemizer)
+    fun mapsPhonemeCharactersThroughTheVocabAndWrapsWithPadIds() {
+        val phonemizer = FakePhonemizer(mapping = { "hələ" })
+        val frontend = KokoroFrontend(vocab, phonemizer)
 
-        // VOCAB = " abc...z" -> 'a' is index 1, 'b' is index 2.
-        val input = frontend.toModelInput("ab", "en-us")
+        val input = frontend.toModelInput("hello", "en-us")
 
-        assertContentEquals(longArrayOf(1L, 2L), input.tokenIds)
-        assertTrue(phonemizer.calls.isEmpty())
+        // "hələ" -> [50, 60, 55, 60], then wrapped: [0, ..., 0].
+        assertContentEquals(longArrayOf(0L, 50L, 60L, 55L, 60L, 0L), input.tokenIds)
+        assertEquals(listOf("hello" to "en-us"), phonemizer.calls)
     }
 
     @Test
-    fun nonLatinTextFallsBackToTheInjectedPhonemizer() {
-        val phonemizer = FakePhonemizer(mapping = { "ab" })
-        val frontend = KokoroFrontend(phonemizer)
+    fun dropsCharactersThatAreNotInTheVocab() {
+        // 'x' and the space are absent from the vocab, so they are dropped, not mapped to an id.
+        val phonemizer = FakePhonemizer(mapping = { "h x o" })
+        val frontend = KokoroFrontend(vocab, phonemizer)
 
-        val input = frontend.toModelInput("こんにちは", "ja")
+        val input = frontend.toModelInput("ho", "en-us")
 
-        assertContentEquals(longArrayOf(1L, 2L), input.tokenIds)
-        assertEquals(listOf("こんにちは" to "ja"), phonemizer.calls)
+        assertContentEquals(longArrayOf(0L, 50L, 45L, 0L), input.tokenIds)
     }
 
     @Test
-    fun digitsAlsoFallBackToTheInjectedPhonemizer() {
-        val phonemizer = FakePhonemizer(mapping = { "a" })
-        val frontend = KokoroFrontend(phonemizer)
+    fun anEmptyPhonemizationStillEmitsTheTwoPadIds() {
+        val phonemizer = FakePhonemizer(mapping = { "" })
+        val frontend = KokoroFrontend(vocab, phonemizer)
 
-        frontend.toModelInput("2026", "en-us")
+        val input = frontend.toModelInput("", "en-us")
 
-        assertEquals(listOf("2026" to "en-us"), phonemizer.calls)
+        assertContentEquals(longArrayOf(0L, 0L), input.tokenIds)
     }
 
     @Test
-    fun charactersOutsideThePlaceholderVocabMapToTheUnknownToken() {
-        val phonemizer = FakePhonemizer(mapping = { "əz" })
-        val frontend = KokoroFrontend(phonemizer)
+    fun allTextRoutesThroughTheInjectedPhonemizer() {
+        val phonemizer = FakePhonemizer(mapping = { "o" })
+        val frontend = KokoroFrontend(vocab, phonemizer)
 
-        val input = frontend.toModelInput("2026", "en-us")
+        frontend.toModelInput("plain ascii", "en-us")
 
-        // 'z' is in VOCAB (index 26); 'ə' is not, so it maps to the unknown-token id (0).
-        assertContentEquals(longArrayOf(0L, 26L), input.tokenIds)
+        assertEquals(listOf("plain ascii" to "en-us"), phonemizer.calls)
     }
 }

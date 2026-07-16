@@ -42,12 +42,17 @@ internal class KokoroEngine(
     // KittenEngine's fileReader seam) -- here reading BYTES rather than text, since voices/*.bin
     // are binary, raw little-endian float32 files with no numpy header.
     private val fileReader: (path: String) -> ByteArray = { File(it).readBytes() },
+    // A second, TEXT reader for tokenizer.json (the phoneme vocabulary) -- read as UTF-8 text at
+    // load() and parsed by KokoroVocab, mirroring how MeloEngine reads its tokens.txt/lexicon.txt.
+    private val textFileReader: (path: String) -> String = { File(it).readText() },
 ) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
     override val engineLabel: String = ENGINE_ID
 
-    private val frontend: TextFrontend = KokoroFrontend(context.phonemizer)
+    // Set at load() once the bundle's tokenizer.json vocabulary is known (like Melo/Kitten), never
+    // a final field: the phoneme table lives in the model bundle, not this jar.
+    private var frontend: TextFrontend? = null
 
     private var session: InferenceSession? = null
     private var voiceTables: Map<String, FloatArray> = emptyMap()
@@ -94,6 +99,10 @@ internal class KokoroEngine(
         val configText = bundle.sideFile(CONFIG_FILE) ?: return null
         val config = KokoroConfig.parse(configText)
         if (config.family !in FAMILY_MARKERS) return null
+        // A real Kokoro bundle ALWAYS ships tokenizer.json (the phoneme vocabulary); without it the
+        // frontend can't turn IPA into token ids, so refuse rather than load a model that would only
+        // synthesize garbage (fail closed, spec §9.1 / rule 4).
+        if (!bundle.hasFile(TOKENIZER_FILE)) return null
 
         val voiceIds = voiceIdsIn(bundle)
         if (voiceIds.isEmpty()) return null
@@ -119,12 +128,24 @@ internal class KokoroEngine(
         session?.close()
         session = runtime.createSession(weightsPath)
 
+        frontend = KokoroFrontend(loadVocab(descriptor), context.phonemizer)
         loadVoiceTable(descriptor)
+    }
+
+    /**
+     * Reads+parses the bundle's `tokenizer.json` phoneme vocabulary (via [textFileReader]). A
+     * sideloaded/forced-match bundle that shipped no tokenizer file has no [TOKENIZER_ASSET] path;
+     * that yields an empty vocab (the frontend then emits pad-only input) rather than crashing load.
+     */
+    private fun loadVocab(descriptor: ModelDescriptor): Map<String, Long> {
+        val tokenizerPath = descriptor.assetPaths[TOKENIZER_ASSET] ?: return emptyMap()
+        return KokoroVocab.parse(textFileReader(tokenizerPath))
     }
 
     override fun unload() {
         closeAllQuietly(session)
         session = null
+        frontend = null
         voiceTables = emptyMap()
         voiceLanguages = emptyMap()
         loadedVoices = emptyList()
@@ -138,10 +159,11 @@ internal class KokoroEngine(
         speed: Float,
     ): FloatArray {
         val activeSession = session ?: error("$engineLabel.synthesizeSentence called before load()")
+        val activeFrontend = frontend ?: error("$engineLabel.synthesizeSentence called before load()")
         val table = voiceTables[voiceId] ?: error("Unknown Kokoro voice id '$voiceId'")
         val language = voiceLanguages[voiceId] ?: KokoroVoiceTable.DEFAULT_LANGUAGE
 
-        val modelInput = frontend.toModelInput(sentence, language)
+        val modelInput = activeFrontend.toModelInput(sentence, language)
         // VALIDATED against onnx-community/Kokoro-82M-v1.0-ONNX (scripts/model-verify/run_kokoro.py,
         // 11s of clean audio): the graph's inputs are "input_ids" int64 [1, T], "style" float32
         // [1, 256] (ONE row selected from the active voice's [510, 256] table, indexed by token
@@ -215,6 +237,7 @@ internal class KokoroEngine(
                 mapOf(
                     WEIGHTS_ASSET to joinAssetPath(bundle, weightsFile),
                     VOICES_DIR_ASSET to joinAssetPath(bundle, VOICES_DIR),
+                    TOKENIZER_ASSET to joinAssetPath(bundle, TOKENIZER_FILE),
                 ),
         )
     }
@@ -246,6 +269,10 @@ internal class KokoroEngine(
         private const val CONFIG_FILE = "config.json"
         private const val WEIGHTS_SUFFIX = ".onnx"
 
+        // The phoneme vocabulary file every real Kokoro bundle ships (onnx-community/
+        // Kokoro-82M-v1.0-ONNX). Required by inspect() and read as text at load() into KokoroVocab.
+        private const val TOKENIZER_FILE = "tokenizer.json"
+
         // Either our own curated "family": "kokoro" or the real onnx-community export's
         // "model_type": "style_text_to_speech_2" (StyleTTS2) identifies a Kokoro bundle.
         private val FAMILY_MARKERS = setOf("kokoro", "style_text_to_speech_2")
@@ -259,6 +286,7 @@ internal class KokoroEngine(
         // Logical asset-path keys populated into ModelDescriptor.assetPaths.
         private const val WEIGHTS_ASSET = "weights"
         const val VOICES_DIR_ASSET = "voicesDir"
+        const val TOKENIZER_ASSET = "tokenizer"
 
         private const val RUNTIME_ID = "onnx"
 

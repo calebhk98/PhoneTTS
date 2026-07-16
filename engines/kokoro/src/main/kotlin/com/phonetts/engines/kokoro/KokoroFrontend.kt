@@ -5,48 +5,48 @@ import com.phonetts.core.engine.TextFrontend
 import com.phonetts.core.text.Phonemizer
 
 /**
- * Kokoro's own text frontend (spec §5.2). The reference implementation phonemizes with
- * **misaki** — a rule-based, lexicon-backed G2P — and falls back to **espeak-ng** for text/
- * languages misaki can't confidently handle (docs/research/model-facts.md: "Primary: misaki ...
- * Fallback: espeak-ng").
+ * Kokoro's own text frontend (spec §5.2), implementing the PROVEN recipe from
+ * `scripts/model-verify/run_kokoro.py`:
  *
- * This module carries no misaki lexicon data (that ships with the model bundle, not this jar),
- * so [misakiPhonemize] models only the deterministic, lexicon-free slice of misaki — plain ASCII
- * letters/whitespace — and returns null (== "not confident") for anything else, which sends the
- * text to [phonemizer] (real espeak-ng in `:app`; `FakePhonemizer` in tests) exactly as the real
- * pipeline falls back for text misaki can't resolve from its lexicon.
+ *  1. Phonemize the text to a single IPA string via the injected [phonemizer] (real espeak-ng in
+ *     `:app`, `FakePhonemizer` in tests) — exactly the `espeak-ng --ipa -v en-us` step the
+ *     reference used.
+ *  2. Map each IPA character through the model's own [vocab] (from its `tokenizer.json`,
+ *     [KokoroVocab]), DROPPING characters the vocab doesn't contain
+ *     (`[vocab[c] for c in ipa if c in vocab]`).
+ *  3. Wrap the result with the pad id ([PAD_ID], `0`) at both ends (`[0, *tokens, 0]`).
+ *
+ * That wrapped sequence is exactly what [KokoroEngine] feeds the model's `input_ids` tensor. The
+ * vocabulary is injected, never hardcoded (SSOT, spec rule 1): it is read from the bundle's
+ * `tokenizer.json` at [KokoroEngine.load] time, so this frontend carries no phoneme table of its
+ * own to desync from the weights.
  */
 class KokoroFrontend(
+    private val vocab: Map<String, Long>,
     private val phonemizer: Phonemizer,
 ) : TextFrontend {
     override fun toModelInput(
         text: String,
         language: String,
     ): ModelInput {
-        val phonemes = misakiPhonemize(text) ?: phonemizer.phonemize(text, language)
-        val tokenIds = phonemes.map { charToTokenId(it) }.toLongArray()
-        return ModelInput(tokenIds)
+        val ipa = phonemizer.phonemize(text, language)
+        val tokens = ipa.mapNotNull { char -> vocab[char.toString()] }
+        return ModelInput(wrapWithPad(tokens))
     }
 
-    /** Null == "misaki isn't confident here" -> caller falls back to [phonemizer]. */
-    private fun misakiPhonemize(text: String): String? {
-        if (text.isEmpty()) return null
-        val supported = text.all { it.isWhitespace() || it in 'a'..'z' || it in 'A'..'Z' }
-        if (!supported) return null
-        return text.lowercase()
-    }
-
-    private fun charToTokenId(ch: Char): Long {
-        val index = VOCAB.indexOf(ch)
-        return if (index >= 0) index.toLong() else UNKNOWN_TOKEN_ID
+    /** `[0, *tokens, 0]`: the LongArray starts pad-filled, so only the middle needs writing. */
+    private fun wrapWithPad(tokens: List<Long>): LongArray {
+        val wrapped = LongArray(tokens.size + PAD_COUNT) { PAD_ID }
+        for (index in tokens.indices) {
+            wrapped[index + 1] = tokens[index]
+        }
+        return wrapped
     }
 
     private companion object {
-        // Placeholder phoneme/character vocabulary for the seam. Kokoro's real vocabulary is the
-        // ~178-symbol IPA set misaki emits, shipped in the model's tokenizer config — not
-        // embedded in this module. Swap this table for the real one alongside real weights;
-        // nothing outside this file depends on its contents.
-        const val VOCAB = " abcdefghijklmnopqrstuvwxyz"
-        const val UNKNOWN_TOKEN_ID = 0L
+        // Kokoro's pad id is 0 (tokenizer.json `vocab["$"] == 0`); the wrapped sequence carries one
+        // pad at each end.
+        const val PAD_ID = 0L
+        const val PAD_COUNT = 2
     }
 }

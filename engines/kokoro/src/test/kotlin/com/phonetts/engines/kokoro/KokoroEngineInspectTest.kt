@@ -23,11 +23,15 @@ private const val FOREIGN_CONFIG = """{"family": "piper", "sample_rate": 22050}"
 // voice list without reading any bytes.
 private val VOICE_FILE_NAMES = setOf("voices/af_heart.bin", "voices/bf_emma.bin")
 
+// tokenizer.json (the phoneme vocabulary) is now a required fingerprint signal — every real Kokoro
+// bundle ships it, and without it the frontend can't turn IPA into token ids.
+private const val TOKENIZER_FILE = "tokenizer.json"
+
 /**
- * inspect() must fail closed (spec §9.1): a confident claim only when BOTH companion signals are
- * present -- a config.json naming the "kokoro" family, AND at least one voices/<name>.bin file
- * present by name -- null for a bare .onnx and for a foreign bundle that merely happens to share a
- * file name.
+ * inspect() must fail closed (spec §9.1): a confident claim only when ALL companion signals are
+ * present -- a config.json naming the "kokoro" family, a tokenizer.json, AND at least one
+ * voices/<name>.bin file present by name -- null for a bare .onnx and for a foreign bundle that
+ * merely happens to share a file name.
  */
 class KokoroEngineInspectTest {
     private fun engine() = KokoroEngine(engineContext())
@@ -37,7 +41,7 @@ class KokoroEngineInspectTest {
         val bundle =
             ModelBundle(
                 id = "kokoro-test",
-                fileNames = setOf("model.onnx", "config.json") + VOICE_FILE_NAMES,
+                fileNames = setOf("model.onnx", "config.json", TOKENIZER_FILE) + VOICE_FILE_NAMES,
                 sideFiles = mapOf("config.json" to VALID_CONFIG),
                 rootPath = "/models/kokoro-test",
             )
@@ -55,6 +59,19 @@ class KokoroEngineInspectTest {
         assertEquals(2.0f, descriptor.speedRange.endInclusive)
         assertEquals("/models/kokoro-test/model.onnx", descriptor.assetPaths["weights"])
         assertEquals("/models/kokoro-test/voices", descriptor.assetPaths[KokoroEngine.VOICES_DIR_ASSET])
+        assertEquals("/models/kokoro-test/tokenizer.json", descriptor.assetPaths[KokoroEngine.TOKENIZER_ASSET])
+    }
+
+    @Test
+    fun refusesABundleMissingTokenizerJsonEvenWithConfigAndVoices() {
+        val bundle =
+            ModelBundle(
+                id = "no-tokenizer",
+                fileNames = setOf("model.onnx", "config.json") + VOICE_FILE_NAMES,
+                sideFiles = mapOf("config.json" to VALID_CONFIG),
+            )
+
+        assertInspectRejects(engine(), bundle)
     }
 
     @Test
@@ -69,7 +86,7 @@ class KokoroEngineInspectTest {
         val bundle =
             ModelBundle(
                 id = "no-voices",
-                fileNames = setOf("model.onnx", "config.json"),
+                fileNames = setOf("model.onnx", "config.json", TOKENIZER_FILE),
                 sideFiles = mapOf("config.json" to VALID_CONFIG),
             )
 
@@ -114,7 +131,7 @@ class KokoroEngineInspectTest {
         val bundle =
             ModelBundle(
                 id = "sideloaded-with-manifest",
-                fileNames = setOf("model.onnx", "config.json") + VOICE_FILE_NAMES,
+                fileNames = setOf("model.onnx", "config.json", TOKENIZER_FILE) + VOICE_FILE_NAMES,
                 sideFiles = mapOf("config.json" to VALID_CONFIG),
             )
 

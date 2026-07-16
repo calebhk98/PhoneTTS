@@ -119,6 +119,64 @@ class RealModelAutoLoadTest {
             )
         }
 
+    // Kokoro (also StyleTTS2, and its own repo layout: fp32 onnx/, tokenizer.json vocab, voices/*.bin).
+    // Proves the fix that gave KokoroFrontend the real tokenizer.json vocab yields audio end-to-end.
+    @Test
+    fun downloadingARandomKokoroModelAutoLoadsAndActuallySpeaks() =
+        runTest(timeout = 8.minutes) {
+            assumeTrue(System.getProperty("runRealModel") == "true", "opt-in: set -DrunRealModel=true")
+
+            val repo = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main"
+            val dir = Files.createTempDirectory("random-kokoro").toFile()
+            File(dir, "voices").mkdirs()
+            download("$repo/onnx/model.onnx", File(dir, "model.onnx")) // fp32 (q8f16 segfaults ORT)
+            download("$repo/config.json", File(dir, "config.json"))
+            download("$repo/tokenizer.json", File(dir, "tokenizer.json"))
+            download("$repo/voices/af_bella.bin", File(dir, "voices/af_bella.bin"))
+
+            val descriptor = importReal(dir)
+            assertEquals("kokoro", descriptor.engineId, "a Kokoro bundle must auto-detect as Kokoro")
+            assertTrue(descriptor.voices.isNotEmpty())
+
+            val (samples, durationSeconds, finite) = synthesize(descriptor)
+            assertTrue(samples > 0, "synthesize produced no audio")
+            assertTrue(durationSeconds > 2.0, "expected > 2s, got ${"%.2f".format(durationSeconds)}s")
+            assertTrue(finite, "audio must be finite and bounded")
+            println(
+                "REAL AUTO-LOAD: engine=${descriptor.engineId} voice=${descriptor.defaultVoiceId} " +
+                    "sr=${descriptor.sampleRate} samples=$samples duration=${"%.2f".format(durationSeconds)}s",
+            )
+        }
+
+    // MeloTTS — a different G2P path entirely (bundled lexicon.txt dictionary, no espeak), and a
+    // non-curated export (curated ships en_v2; this uses en_newest). Proves the self-describing
+    // tokens.txt/lexicon.txt pipeline works end-to-end on a model we never wired.
+    @Test
+    fun downloadingARandomMeloModelAutoLoadsAndActuallySpeaks() =
+        runTest(timeout = 8.minutes) {
+            assumeTrue(System.getProperty("runRealModel") == "true", "opt-in: set -DrunRealModel=true")
+
+            val repo = "https://huggingface.co/MiaoMint/MeloTTS-ONNX/resolve/main/onnx_exports/en_newest"
+            val dir = Files.createTempDirectory("random-melo").toFile()
+            download("$repo/model.onnx", File(dir, "model.onnx"))
+            download("$repo/tokens.txt", File(dir, "tokens.txt"))
+            download("$repo/lexicon.txt", File(dir, "lexicon.txt"))
+            download("$repo/metadata.json", File(dir, "metadata.json"))
+
+            val descriptor = importReal(dir)
+            assertEquals("melotts", descriptor.engineId, "a MeloTTS bundle must auto-detect as MeloTTS")
+            assertTrue(descriptor.voices.isNotEmpty())
+
+            val (samples, durationSeconds, finite) = synthesize(descriptor)
+            assertTrue(samples > 0, "synthesize produced no audio")
+            assertTrue(durationSeconds > 2.0, "expected > 2s, got ${"%.2f".format(durationSeconds)}s")
+            assertTrue(finite, "audio must be finite and bounded")
+            println(
+                "REAL AUTO-LOAD: engine=${descriptor.engineId} voice=${descriptor.defaultVoiceId} " +
+                    "sr=${descriptor.sampleRate} samples=$samples duration=${"%.2f".format(durationSeconds)}s",
+            )
+        }
+
     // The app's real wiring, shared by the per-engine cases above. Returns the auto-resolved descriptor.
     private fun importReal(dir: File): com.phonetts.core.model.ModelDescriptor {
         val runtimes = RuntimeRegistry().apply { register(JvmOnnxRuntime()) }
