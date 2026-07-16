@@ -27,6 +27,13 @@ object HfEndpoints {
         revision: String,
     ): String = "$API_BASE/models/${encodePathSegments(modelId)}/tree/$revision?recursive=true"
 
+    /**
+     * A repo's current info, including the commit sha of its default revision (the `sha` field
+     * in the body). Used by the update-check flow to detect that an installed model's stored
+     * revision is stale against the Hub.
+     */
+    fun modelInfoUrl(modelId: String): String = "$API_BASE/models/${encodePathSegments(modelId)}"
+
     /** The download URL for one file. Owner/name and the file path keep their '/'; each segment is encoded. */
     fun resolveUrl(
         modelId: String,

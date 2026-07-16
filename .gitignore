@@ -21,3 +21,6 @@ local.properties
 *.onnx
 *.bin
 models/
+
+# Claude Code local settings and agent worktrees
+.claude/

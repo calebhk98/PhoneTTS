@@ -4,20 +4,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Serves canned bodies keyed by a substring of the requested URL. */
-private class FakeHttpClient(private val routes: List<Pair<String, String>>) : HttpClient {
-    val requested = mutableListOf<String>()
-
-    override fun getText(
-        url: String,
-        headers: Map<String, String>,
-    ): String {
-        requested.add(url)
-        return routes.firstOrNull { url.contains(it.first) }?.second
-            ?: error("no fake route for $url")
-    }
-}
-
 class HfCatalogTest {
     private val modelsJson =
         """
