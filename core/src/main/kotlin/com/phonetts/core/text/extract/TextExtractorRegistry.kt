@@ -34,8 +34,15 @@ class TextExtractorRegistry(extractors: List<TextExtractor> = emptyList()) {
     }
 
     companion object {
-        /** A registry seeded with the pure-JVM built-in extractors (plain text, Markdown, .docx). */
+        /** A registry seeded with the pure-JVM built-in extractors (plain text, Markdown, HTML, .docx). */
         fun withDefaults(): TextExtractorRegistry =
-            TextExtractorRegistry(listOf(PlainTextExtractor(), MarkdownTextExtractor(), DocxTextExtractor()))
+            TextExtractorRegistry(
+                listOf(
+                    PlainTextExtractor(),
+                    MarkdownTextExtractor(),
+                    HtmlTextExtractor(),
+                    DocxTextExtractor(),
+                ),
+            )
     }
 }
