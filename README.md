@@ -8,9 +8,11 @@ audio file.
 Built to run on budget hardware (developed against a Samsung Galaxy A16, ~4 GB RAM, no NPU),
 but designed to run unmodified on better and worse phones.
 
-> **Status: early development (Phase 1 — skeleton).** The architecture and the deterministic
-> "seams" are being built and tested first; no model produces audio yet. See
-> [build order](#build-order) below and the full [engineering spec](docs/SPEC.md).
+> **Status: in development.** Phase 1 (the deterministic "seams") and Phase 2 (all five engine
+> modules) are implemented and unit-tested on the JVM — 122 tests green. Real audio is the
+> remaining on-device work: enabling `:app`, the concrete ONNX/LLM runtimes, the espeak-ng
+> frontend, and model weights (none of which can run without the Android SDK + a device). See
+> [build order](#build-order) and the full [engineering spec](docs/SPEC.md).
 
 ## Highlights
 
