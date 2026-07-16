@@ -4,7 +4,8 @@ This is the spec's **Tier-C** model (§3.1): LLM-based, **autoregressive**, mult
 and explicitly flagged as the one that "may be too slow to be pleasant on the A16 — that's fine, it
 goes to file export. Its real job here is to prove the runtime layer is pluggable." This document
 records what I found when trying to get it producing real audio, and what an on-device
-implementation actually requires. **No audio was produced yet** — see the honest blocker below.
+implementation actually requires. **UPDATE: it is now PROVEN to produce real speech in PyTorch —
+see "PyTorch proof" below.** The remaining question is purely the on-device path.
 
 ## Architecture (why it's not one ONNX graph)
 
@@ -80,3 +81,29 @@ non-ONNX runtime can be added, and there's a `CosyVoice2Engine` skeleton). The m
 - **To proceed with a proof now**, someone needs to authorize running the official CosyVoice
   PyTorch stack (third-party code) in a sandbox to produce a reference wav and validate the
   flow→hift ONNX path against it. That's the next concrete step if CosyVoice2 is a priority.
+
+## PyTorch proof (done — it works)
+
+Ran CosyVoice2-0.5B end-to-end via the official FunAudioLLM/CosyVoice PyTorch stack (user-authorized),
+CPU-only, on 4 cores. Zero-shot mode with the repo's bundled `asset/zero_shot_prompt.wav` as the
+voice prompt, synthesizing an English sentence ("Text to speech turns written words into natural
+sounding audio.").
+
+**Result: PASS.** `samples=149760, sr=24000, duration=6.24s, size=293KB, peak=0.527, no NaNs.` Real,
+non-silent speech — the model genuinely works. Script: `scripts/model-verify/run_cosy.py` (requires
+the CosyVoice repo checkout + the ~4GB `FunAudioLLM/CosyVoice2-0.5B` model, unlike the other verify
+scripts which self-download a single ONNX file).
+
+Setup notes (for reproducing): the environment's Debian-patched setuptools breaks source builds
+(`AttributeError: install_layout`); fixed by force-installing a clean `setuptools==75.8.0` to
+`/usr/local` so it takes precedence, then `--no-build-isolation` for `antlr4-python3-runtime`,
+`openai-whisper`, `wget`. Also needed (dropped from the CUDA/server-heavy requirements): torch-cpu
+2.3.1, transformers 4.51.3, diffusers, conformer, HyperPyYAML, librosa, pyworld, pyarrow, wetext
+(the text frontend — it downloads its EN normalization FSTs from ModelScope at first run).
+
+So the model is real and produces good audio. What it does NOT change: **it ran on a desktop CPU via
+PyTorch**, which is not the app's runtime. Getting this into PhoneTTS still requires the on-device
+path below — and the mobile research (`docs/research/cosyvoice2-mobile.md`) concludes that path is
+**GGUF + llama.cpp/ggml** (there is an Apache-2.0 GGUF port that runs the same recipe on ARM at
+745MB with an 8-voice pre-baked bank), a **Large** second-runtime effort, file-export-oriented, with
+no streaming-realtime promise on a 4GB phone.
