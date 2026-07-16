@@ -27,7 +27,11 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    // Forward the opt-in flag for the network+espeak RealModelAutoLoadTest into the test JVM
+    // Forward the opt-in flags for the network+native RealModel*AutoLoadTests into the test JVM
     // (gradle does not propagate -D system properties to forked test workers by default).
     System.getProperty("runRealModel")?.let { systemProperty("runRealModel", it) }
+    // CosyVoice's real-model test binds a desktop build of cosyvoice3_tts (scripts/model-verify/
+    // build_jvm_cosyvoice.sh) and can reuse a pre-downloaded GGUF stack to skip the 745 MB fetch.
+    System.getProperty("cosyvoice.nativeLib")?.let { systemProperty("cosyvoice.nativeLib", it) }
+    System.getProperty("cosyvoice.modelDir")?.let { systemProperty("cosyvoice.modelDir", it) }
 }

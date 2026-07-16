@@ -201,11 +201,18 @@ tests pass on the JVM (`test ktlintCheck detekt` all green). The `cosyvoice_jni.
 **real** implementation over the proven C ABI (discovers the four GGUFs, inits all stages, `synth →
 jfloatArray`), not a stub.
 
+**Also proven — the arm64 (Android) native build:** with the Android NDK (r27c), CrispASR's
+`cosyvoice3_tts` + `chatterbox` + `ggml` cross-compile for `arm64-v8a` (verified ELF `ARM aarch64`),
+and the app's own `cosyvoice_jni.cpp` links against them into a real
+`libphonetts_cosyvoice.so` (`arm64-v8a`, ~3.9 MB) that exports all five JNI entry points
+(`Java_com_phonetts_app_runtime_CosyVoiceNative_native{Init,SampleRate,VoiceNames,Synthesize,Free}`).
+So the native bridge compiles and links for Android, not just desktop — same sources, same C ABI.
+
 **Remaining (opt-in, behind `-PwithCosyVoice`):**
-- The **NDK cross-compile + final on-device link** of `cosyvoice3_tts` + ggml for arm64 — the same
-  targets build on desktop x86-64; the Android toolchain link is untested here (no NDK in this dev
-  env), exactly like the espeak bridge. Pin `scripts/fetch-cosyvoice-ggml.sh` to a known-good CrispASR
-  revision once that build resolves one.
+- **Assembling the full `:app` APK** (AGP + SDK) with `-PwithCosyVoice=true` and running on a device.
+  The native `.so` is proven to link for arm64 (above); packaging it into the APK via the app's
+  `externalNativeBuild` + measuring real behaviour on-device is the last step. Pin
+  `scripts/fetch-cosyvoice-ggml.sh` to a known-good CrispASR revision when that build resolves one.
 - **On-device RTF** on the A16: a 0.5B AR decoder + flow ODE + vocoder on a 4 GB phone CPU is
   file-export-first, not guaranteed streaming (`docs/research/cosyvoice2-mobile.md` §Q3).
 
