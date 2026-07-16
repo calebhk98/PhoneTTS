@@ -116,9 +116,9 @@ class KokoroEngineSynthesisTest {
     fun synthesizeSelectsTheStyleRowIndexedByTheSentencesTokenCount() =
         runTest {
             // The identity FakePhonemizer returns "hello" verbatim; its 5 letters all map through
-            // TOKENIZER's vocab (h,e,l,l,o) and the frontend wraps them with a pad at each end, so
-            // modelInput.tokenIds has 7 entries. styleRow selects `row = min(tokenCount, 509)` = 7
-            // -- distinguishable here because tableWithRowMarkers() makes row r's value r.
+            // TOKENIZER's vocab (h,e,l,l,o). The reference indexes the style table by the INNER token
+            // count (`style[min(len(tokens), 509)]`, run_kokoro.py line 23) -- 5 here, NOT the
+            // pad-wrapped length of 7 -- distinguishable because tableWithRowMarkers() makes row r's value r.
             val fixture =
                 Fixture(
                     voiceTables =
@@ -133,7 +133,7 @@ class KokoroEngineSynthesisTest {
             fixture.engine.synthesize("hello", "af_heart", 1.0f).toList()
 
             val run = fixture.session.runs.single()
-            assertContentEquals(FloatArray(256) { 7f }, run.getValue("style").asFloats())
+            assertContentEquals(FloatArray(256) { 5f }, run.getValue("style").asFloats())
         }
 
     @Test

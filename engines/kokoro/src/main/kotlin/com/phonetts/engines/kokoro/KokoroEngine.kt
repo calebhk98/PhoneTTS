@@ -169,7 +169,10 @@ internal class KokoroEngine(
         // [1, 256] (ONE row selected from the active voice's [510, 256] table, indexed by token
         // count — KokoroVoiceBinReader.styleRow), "speed" float32 [1]; the single output is
         // "waveform" float32 [1, N].
-        val style = KokoroVoiceBinReader.styleRow(table, modelInput.tokenIds.size)
+        // Index by the INNER token count (`len(tokens)` in run_kokoro.py line 23), not the pad-wrapped
+        // length: modelInput.tokenIds is `[0, *inner, 0]`, so subtract the two pads styleRow must not see.
+        val innerTokenCount = (modelInput.tokenIds.size - KokoroFrontend.PAD_COUNT).coerceAtLeast(0)
+        val style = KokoroVoiceBinReader.styleRow(table, innerTokenCount)
         val inputs =
             mapOf(
                 TOKENS_INPUT to Tensor.longs(modelInput.tokenIds, intArrayOf(1, modelInput.tokenIds.size)),

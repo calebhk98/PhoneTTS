@@ -30,7 +30,9 @@ class KokoroFrontend(
         language: String,
     ): ModelInput {
         val ipa = phonemizer.phonemize(text, language)
-        val tokens = ipa.mapNotNull { char -> vocab[char.toString()] }
+        // `[vocab[c] for c in ipa if c in vocab]`, then `tokens[:508]` — the reference caps the inner
+        // sequence so the pad-wrapped result stays within the model's 512-token max context.
+        val tokens = ipa.mapNotNull { char -> vocab[char.toString()] }.take(MAX_INNER_TOKENS)
         return ModelInput(wrapWithPad(tokens))
     }
 
@@ -43,10 +45,19 @@ class KokoroFrontend(
         return wrapped
     }
 
-    private companion object {
+    companion object {
         // Kokoro's pad id is 0 (tokenizer.json `vocab["$"] == 0`); the wrapped sequence carries one
         // pad at each end.
-        const val PAD_ID = 0L
+        private const val PAD_ID = 0L
+
+        /**
+         * How many pad ids [wrapWithPad] adds (one at each end). Public so [KokoroEngine] can recover
+         * the INNER token count from the wrapped sequence: the validated style-row index is
+         * `min(len(inner_tokens), 509)` (`run_kokoro.py` line 23), NOT the padded length.
+         */
         const val PAD_COUNT = 2
+
+        /** `tokens[:508]` from the reference: inner cap so the padded sequence fits the 512 context. */
+        const val MAX_INNER_TOKENS = 508
     }
 }
