@@ -61,23 +61,29 @@ These come straight from the spec and are the whole point of the design:
   resolver, descriptors, WAV encoder, streaming driver, manifest/SHA-256. **No Android
   dependencies**, so its unit tests (the seam tests, spec §9) run on any JVM with no SDK.
   This is where correctness is proven.
-- **`:app`** — the Android application (Compose UI, `AudioTrack` sink, ONNX/LLM runtimes,
+- **`:app`** — the Android application (Compose UI, `AudioTrack` sink, ONNX/native runtimes,
   concrete engines, SharedPreferences-backed override store, downloader). Requires the
-  Android SDK. It is **commented out in `settings.gradle.kts`** until the SDK is available;
-  uncomment `include(":app")` to enable it locally / in CI.
+  Android SDK. `settings.gradle.kts` includes it **automatically when an SDK is present**
+  (`ANDROID_HOME`/`ANDROID_SDK_ROOT`, or `sdk.dir` in `local.properties`); on a core-only
+  machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`.
 
 Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,
 registry,resolver,audio}`.
 
 ## Build & test
 
-This environment has **no Android SDK**, so work against `:core`:
+The pure-JVM modules are where correctness is proven — work against `:core` first:
 
 ```bash
 ./gradlew :core:test          # run the seam tests (this is the important one)
 ./gradlew :core:compileKotlin  # compile the main sources
 ./gradlew ktlintCheck detekt   # style + never-nesting / size rules
 ```
+
+When an Android SDK is present, `:app` also builds/compiles (`gradle :app:compileDebugKotlin`);
+on a core-only machine it is skipped. Don't assume the SDK/NDK is absent — check
+(`local.properties` `sdk.dir`, `$ANDROID_HOME`) before claiming the app can't be built. The NDK
+native bridges (espeak, CosyVoice) cross-compile for arm64 with the NDK; see docs/COSYVOICE2.md.
 
 (If the wrapper can't fetch its distribution behind a proxy, a system Gradle 8.14.3 also
 works: `gradle :core:test`.)
