@@ -42,7 +42,7 @@ class KokoroEngineSynthesisTest {
         )
 
     private class Fixture {
-        val session = FakeSession(outputs = mapOf("audio" to Tensor.floats(floatArrayOf(0.1f, -0.2f))))
+        val session = FakeSession(outputs = mapOf("waveform" to Tensor.floats(floatArrayOf(0.1f, -0.2f))))
         val engine =
             KokoroEngine(
                 onnxEngineContext(session),

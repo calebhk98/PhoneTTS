@@ -119,10 +119,10 @@ internal class KokoroEngine(
         val language = voiceLanguages[voiceId] ?: DEFAULT_LANGUAGE
 
         val modelInput = frontend.toModelInput(sentence, language)
-        // Assumed ONNX graph IO names, mirroring common community Kokoro ONNX exports (e.g.
-        // onnx-community/Kokoro-82M-ONNX): "tokens" int64 [1, T], "style" float32 [1, D] (the
-        // selected voice's embedding row), "speed" float32 scalar; output "audio" float32 [N]
-        // waveform. Adjust to the real bundled graph's names when wiring actual weights.
+        // VALIDATED against onnx-community/Kokoro-82M-v1.0-ONNX (inspected 2026-07): the graph's
+        // inputs are "input_ids" int64 [1, T], "style" float32 [1, 256] (the selected voice's
+        // embedding row), "speed" float32 [1]; the single output is "waveform" float32 [1, N].
+        // See docs/research/onnx-io.md for the raw inspection.
         val inputs =
             mapOf(
                 TOKENS_INPUT to Tensor.longs(modelInput.tokenIds, intArrayOf(1, modelInput.tokenIds.size)),
@@ -233,9 +233,10 @@ internal class KokoroEngine(
         private const val FALLBACK_VOICE_NAME = "Default"
         private const val FALLBACK_EMBEDDING_SIZE = 1
 
-        private const val TOKENS_INPUT = "tokens"
+        // Validated ONNX graph tensor names (onnx-community/Kokoro-82M-v1.0-ONNX, inspected 2026-07).
+        private const val TOKENS_INPUT = "input_ids"
         private const val STYLE_INPUT = "style"
         private const val SPEED_INPUT = "speed"
-        private const val AUDIO_OUTPUT = "audio"
+        private const val AUDIO_OUTPUT = "waveform"
     }
 }

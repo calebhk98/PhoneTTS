@@ -194,6 +194,12 @@ internal class MeloEngine(
         private const val TOKENIZER_FILE = "tokenizer.json"
         private const val CONFIG_FILE = "config.json"
 
+        // ASSUMED acoustic tensor names, VALIDATED-AS-WRONG against a real MeloTTS ONNX export
+        // (seasonstudio/melotts_zh_mix_en_onnx — see docs/research/onnx-io.md). The real graph uses
+        // x / sid / length_scale (inverse speed) and an auto-numbered output, and additionally
+        // requires x_lengths, tone, language, ja_bert, noise_scale, noise_scale_w, sdp_ratio which
+        // this engine does not yet supply. Name-patching alone will not run it; the full rework is
+        // tracked separately. These constants are kept so the current seam tests stay meaningful.
         private const val ACOUSTIC_INPUT_TOKENS = "token_ids"
         private const val ACOUSTIC_INPUT_BERT = "bert_features"
         private const val ACOUSTIC_INPUT_SPEAKER = "speaker_id"
