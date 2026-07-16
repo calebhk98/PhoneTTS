@@ -3,6 +3,9 @@ package com.phonetts.core.testing
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Runtime
 import com.phonetts.core.runtime.RuntimeOptions
+import com.phonetts.core.runtime.SpeechTokenRequest
+import com.phonetts.core.runtime.SpeechTokenRuntime
+import com.phonetts.core.runtime.SpeechTokenSession
 import com.phonetts.core.runtime.Tensor
 import com.phonetts.core.text.Phonemizer
 
@@ -47,6 +50,54 @@ class FakeRuntime(
         modelPath: String,
         options: RuntimeOptions,
     ): InferenceSession {
+        createdPaths.add(modelPath)
+        val session = sessionFactory(modelPath)
+        sessions.add(session)
+        return session
+    }
+}
+
+/**
+ * Records every [SpeechTokenRequest] it decodes (so a test can assert the engine routed the right
+ * native speed/embedding, spec §9.4) and returns tokens from [tokensFor] — configure these to the
+ * speech token ids the engine under test then feeds to its flow-matching graph.
+ */
+class FakeSpeechTokenSession(
+    private val tokensFor: (SpeechTokenRequest) -> LongArray = { longArrayOf(0L) },
+) : SpeechTokenSession {
+    val requests = mutableListOf<SpeechTokenRequest>()
+    var closed = false
+        private set
+
+    override fun generate(request: SpeechTokenRequest): LongArray {
+        requests.add(request)
+        return tokensFor(request)
+    }
+
+    override fun close() {
+        closed = true
+    }
+}
+
+/**
+ * A [SpeechTokenRuntime] (the non-ONNX, LLM-style seam) that hands out [FakeSpeechTokenSession]s
+ * and records the model paths it was asked to load. [available] lets a test simulate the native
+ * GGUF backend being absent (the `-PwithCosyVoice` off case).
+ */
+class FakeSpeechTokenRuntime(
+    override val id: String = "fake-llm",
+    private val available: Boolean = true,
+    private val sessionFactory: (String) -> FakeSpeechTokenSession = { FakeSpeechTokenSession() },
+) : SpeechTokenRuntime {
+    val createdPaths = mutableListOf<String>()
+    val sessions = mutableListOf<FakeSpeechTokenSession>()
+
+    override fun isAvailable(): Boolean = available
+
+    override fun openSpeechSession(
+        modelPath: String,
+        options: RuntimeOptions,
+    ): SpeechTokenSession {
         createdPaths.add(modelPath)
         val session = sessionFactory(modelPath)
         sessions.add(session)

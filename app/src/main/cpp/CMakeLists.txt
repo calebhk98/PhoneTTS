@@ -1,6 +1,15 @@
-# CMake build for the espeak-ng phonemization JNI bridge (Blocker 1 — the shared text frontend
-# for Piper/KittenTTS/Kokoro, spec §5.2). See docs/espeak-ng-integration.md for the full story;
-# this file only carries the build logic.
+# Top-level CMake for PhoneTTS's native JNI bridges. There are two independent, opt-in bridges,
+# each built only when Gradle passes the matching define (see app/build.gradle.kts):
+#
+#   -DPHONETTS_BUILD_ESPEAK=ON     (from -PwithEspeak=true)     -> the espeak-ng phonemizer, below
+#   -DPHONETTS_BUILD_COSYVOICE=ON  (from -PwithCosyVoice=true)  -> the llama.cpp CosyVoice2 LLM
+#                                                                  bridge, in cosyvoice/CMakeLists.txt
+#
+# Neither native tree is vendored in git; each is fetched, pinned, by its own helper script and each
+# builds a fail-closed STUB .so when its source is absent, so the app always assembles.
+#
+# --- espeak-ng phonemization JNI bridge (Blocker 1 — the shared text frontend for
+#     Piper/KittenTTS/Kokoro, spec §5.2). See docs/espeak-ng-integration.md for the full story.
 #
 # espeak-ng's own source (GPLv3) is NOT vendored in this repo — it's a multi-hundred-MB tree with
 # generated data files, and shipping it in git would fight the "weights/generated artifacts are
@@ -20,13 +29,14 @@
 # instead of failing the Gradle/CMake configure step (spec: fail closed, never a build break —
 # rule 4's spirit applied to the build system, not just inspect()).
 cmake_minimum_required(VERSION 3.22.1)
-project(phonetts_espeak_jni CXX)
+project(phonetts_native_jni CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(ESPEAK_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/espeak-ng")
 
+if(PHONETTS_BUILD_ESPEAK)
 add_library(phonetts_espeak SHARED espeak_jni.cpp)
 target_link_libraries(phonetts_espeak PRIVATE log)
 
@@ -58,4 +68,11 @@ else()
         "phonetts: espeak-ng source NOT found at ${ESPEAK_SRC_DIR} -- building a STUB. "
         "Real phonemization will be unavailable at runtime; EspeakPhonemizer falls back to "
         "PassthroughPhonemizer and logs a warning. Run scripts/fetch-espeak-ng.sh to fix this.")
+endif()
+endif() # PHONETTS_BUILD_ESPEAK
+
+# --- CosyVoice2 speech-token LLM JNI bridge (spec §5.3 second, LLM-style runtime). Its own
+#     CMakeLists builds llama.cpp (or a fail-closed stub). See docs/COSYVOICE2.md.
+if(PHONETTS_BUILD_COSYVOICE)
+    add_subdirectory(cosyvoice)
 endif()

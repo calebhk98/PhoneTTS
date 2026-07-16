@@ -7,35 +7,42 @@ import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
-import com.phonetts.core.runtime.Tensor
+import com.phonetts.core.runtime.Runtime
+import com.phonetts.core.runtime.SpeechTokenRequest
+import com.phonetts.core.runtime.SpeechTokenRuntime
+import com.phonetts.core.runtime.SpeechTokenSession
 import com.phonetts.engines.common.AbstractVoiceEngine
 import com.phonetts.engines.common.closeAllQuietly
-import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
-import com.phonetts.engines.common.openWithRollback
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
 import com.phonetts.engines.common.sideFileContainsAnyMarker
-import com.phonetts.engines.common.tensorOrError
+import java.io.File
 
 /**
- * CosyVoice2-0.5B — the hardest model in the registry (see CLAUDE.md build order). It exists
- * to prove two things about the seams: (1) [com.phonetts.core.runtime.Runtime] is genuinely
- * pluggable — this engine asks [EngineContext.runtimes] for an LLM-style backend by id, never
- * the ONNX one every other engine uses, and (2) an autoregressive, multi-component pipeline
- * (Qwen2LM backbone -> flow-matching decoder -> HiFiGAN vocoder, "hift" in upstream CosyVoice2)
- * still fits the single `Flow<FloatArray>` generation path: each AR step is one
- * [InferenceSession.run] call in a loop, and each finished sentence is one emission.
+ * CosyVoice2-0.5B — the hardest model in the registry (see CLAUDE.md build order). It exists to
+ * prove the seams are right, and its REAL pipeline is three genuinely different stages:
  *
- * Verified facts (docs/research/model-facts.md): sample rate 24000 Hz, Apache-2.0, native
- * speed control in the ~0.5-1.5 range (prompt-token interpolation/downsampling) — routed to
- * [LLM_INPUT_SPEED] below, never used to resample output audio (CLAUDE.md rule 2).
+ *  1. text -> Qwen2 BPE token ids ([CosyVoice2Frontend]);
+ *  2. token ids -> speech token ids via an autoregressive LLM — the non-ONNX
+ *     [SpeechTokenRuntime] (a llama.cpp / ggml GGUF loop on-device, id [LLM_RUNTIME_ID]). This is
+ *     the "pluggable second runtime" the spec priced in, distinct from every other engine's ONNX;
+ *  3. speech tokens -> mel -> waveform via the deterministic ONNX flow + HiFT graphs
+ *     ([CosyVoice2Graphs], id [ONNX_RUNTIME_ID]).
  *
- * Real tensor names are not yet known (the real runtime lands later); the ones used here are
- * documented assumptions, called out at each call site.
+ * The speaker is a bundled pre-baked voice ([SpeakerPrompt]) — no reference wav in v1
+ * (docs/research/cosyvoice2-mobile.md §Q5). Speed routes to the LLM's native token-rate parameter
+ * ([SpeechTokenRequest.speed]) and is NEVER used to resample output audio (CLAUDE.md rule 2).
+ *
+ * Verified facts (docs/research/model-facts.md): 24000 Hz, Apache-2.0, native speed control.
+ * The three-stage pipeline still fits the one `Flow<FloatArray>` generation path: each sentence
+ * is one generate -> flow -> vocode pass, emitted as one chunk (spec §8).
  */
 internal class CosyVoice2Engine(
     context: EngineContext,
+    // Injected so load() stays plain-JVM testable without a real voices.bin on disk (parity with
+    // KokoroEngine's fileReader seam) -- the baked voice is a binary little-endian blob.
+    private val fileReader: (path: String) -> ByteArray = { File(it).readBytes() },
 ) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
@@ -52,33 +59,61 @@ internal class CosyVoice2Engine(
     }
 
     override fun forcedMatch(bundle: ModelBundle): EngineMatch {
-        require(REQUIRED_WEIGHT_FILES.any(bundle::hasFile)) {
-            "bundle '${bundle.id}' has none of CosyVoice2's weight files ($REQUIRED_WEIGHT_FILES)" +
+        require(hasAnyComponent(bundle)) {
+            "bundle '${bundle.id}' has none of CosyVoice2's components (a .gguf LLM, $FLOW_FILE, $HIFT_FILE)" +
                 " — cannot force-assign it to the CosyVoice2 engine"
         }
         return EngineMatch(id, buildDescriptor(bundle, Origin.SIDELOADED))
     }
 
     override suspend fun load(descriptor: ModelDescriptor) {
-        val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
-        val llmPath = requireAssetPath(descriptor, LLM_ASSET_KEY, engineLabel)
-        val flowPath = requireAssetPath(descriptor, FLOW_ASSET_KEY, engineLabel)
-        val hiftPath = requireAssetPath(descriptor, HIFT_ASSET_KEY, engineLabel)
+        val llmRuntime = requireSpeechTokenRuntime()
+        val onnxRuntime = requireRuntime(context, ONNX_RUNTIME_ID, engineLabel)
+        check(llmRuntime.isAvailable()) {
+            "$engineLabel needs the native CosyVoice2 LLM backend (build the app with -PwithCosyVoice=true);" +
+                " it is not available on this device, so CosyVoice2 cannot load"
+        }
+        val llmPath = requireAssetPath(descriptor, LLM_ASSET, engineLabel)
+        val flowPath = requireAssetPath(descriptor, FLOW_ASSET, engineLabel)
+        val hiftPath = requireAssetPath(descriptor, HIFT_ASSET, engineLabel)
+        val prompt = loadSpeakerPrompt(descriptor)
 
         unload()
-        state =
-            openWithRollback { opened ->
-                LoadedState(
-                    descriptor = descriptor,
-                    llmSession = runtime.createSession(llmPath).also(opened::add),
-                    flowSession = runtime.createSession(flowPath).also(opened::add),
-                    hiftSession = runtime.createSession(hiftPath).also(opened::add),
-                )
-            }
+        state = openState(descriptor, llmRuntime, onnxRuntime, llmPath, flowPath, hiftPath, prompt)
+    }
+
+    // Rolls the partial load back on ANY failure so a half-open pipeline never leaks native
+    // sessions on a 4 GB phone -- the same rationale as engines.common.openWithRollback, but here
+    // over a mix of a SpeechTokenSession and two InferenceSessions.
+    @Suppress("TooGenericExceptionCaught", "LongParameterList")
+    private fun openState(
+        descriptor: ModelDescriptor,
+        llmRuntime: SpeechTokenRuntime,
+        onnxRuntime: Runtime,
+        llmPath: String,
+        flowPath: String,
+        hiftPath: String,
+        prompt: SpeakerPrompt,
+    ): LoadedState {
+        var llm: SpeechTokenSession? = null
+        var flow: InferenceSession? = null
+        try {
+            llm = llmRuntime.openSpeechSession(llmPath)
+            flow = onnxRuntime.createSession(flowPath)
+            val hift = onnxRuntime.createSession(hiftPath)
+            return LoadedState(descriptor, llm, flow, hift, prompt)
+        } catch (failure: Throwable) {
+            closeAllQuietly(flow)
+            runCatching { llm?.close() }
+            throw failure
+        }
     }
 
     override fun unload() {
-        state?.let { closeAllQuietly(it.llmSession, it.flowSession, it.hiftSession) }
+        state?.let {
+            closeAllQuietly(it.flowSession, it.hiftSession)
+            runCatching { it.llmSession.close() }
+        }
         state = null
     }
 
@@ -90,73 +125,48 @@ internal class CosyVoice2Engine(
         speed: Float,
     ): FloatArray {
         val loaded = checkNotNull(state) { "$engineLabel.synthesizeSentence called before load()" }
-        val language = loaded.descriptor.voices.firstOrNull { it.id == voiceId }?.language ?: DEFAULT_LANGUAGE
-        val input = frontend.toModelInput(sentence, language)
-        val tokens = generateTokens(loaded.llmSession, input.tokenIds, speed)
-        val mel = runFlowDecoder(loaded.flowSession, tokens)
-        return runVocoder(loaded.hiftSession, mel)
+        val voice = loaded.descriptor.voices.firstOrNull { it.id == voiceId } ?: loaded.descriptor.voices.first()
+        val input = frontend.toModelInput(sentence, voice.language)
+        val speechTokens =
+            loaded.llmSession.generate(
+                SpeechTokenRequest(
+                    textTokenIds = input.tokenIds,
+                    speakerEmbedding = loaded.prompt.embedding,
+                    speed = speed,
+                    promptSpeechTokens = loaded.prompt.promptTokens,
+                ),
+            )
+        val mel = CosyVoice2Graphs.decodeFlow(loaded.flowSession, speechTokens, loaded.prompt, engineLabel)
+        return CosyVoice2Graphs.vocode(loaded.hiftSession, mel, engineLabel)
+    }
+
+    private fun requireSpeechTokenRuntime(): SpeechTokenRuntime {
+        val runtime = requireRuntime(context, LLM_RUNTIME_ID, engineLabel)
+        return runtime as? SpeechTokenRuntime
+            ?: error("$engineLabel: runtime '$LLM_RUNTIME_ID' is registered but is not a SpeechTokenRuntime")
+    }
+
+    private fun loadSpeakerPrompt(descriptor: ModelDescriptor): SpeakerPrompt {
+        val path = descriptor.assetPaths[VOICES_ASSET] ?: return CosyVoice2SpeakerPrompt.fallback()
+        val bytes = runCatching { fileReader(path) }.getOrNull() ?: return CosyVoice2SpeakerPrompt.fallback()
+        return CosyVoice2SpeakerPrompt.parse(bytes) ?: CosyVoice2SpeakerPrompt.fallback()
     }
 
     /**
-     * Autoregression: call the LLM backbone in a loop, one token per [InferenceSession.run]
-     * call, feeding the growing sequence back in each step (assumed input [LLM_INPUT_TOKENS])
-     * along with the native speed knob (assumed input [LLM_INPUT_SPEED], per model-facts
-     * "dynamic speed control via prompt token interpolation" — sent every step since we don't
-     * know yet whether the real graph is speed-conditioned once or per-step). Stops on the
-     * model's own EOS signal (assumed output [LLM_OUTPUT_STOP]) or [MAX_AR_STEPS] as a safety
-     * bound against a runaway loop if a real graph never signals stop.
-     */
-    private fun generateTokens(
-        session: InferenceSession,
-        promptTokens: LongArray,
-        speed: Float,
-    ): LongArray {
-        val generated = mutableListOf<Long>()
-        var sequence = promptTokens
-        repeat(MAX_AR_STEPS) {
-            val outputs =
-                session.run(
-                    mapOf(
-                        LLM_INPUT_TOKENS to Tensor.longs(sequence),
-                        LLM_INPUT_SPEED to Tensor.scalarFloat(speed),
-                    ),
-                )
-            val nextToken = outputs.getValue(LLM_OUTPUT_NEXT_TOKEN).asLongs().first()
-            generated.add(nextToken)
-            sequence = sequence + nextToken
-            val stop = outputs[LLM_OUTPUT_STOP]?.asFloats()?.firstOrNull() ?: 0f
-            if (stop >= STOP_THRESHOLD) return generated.toLongArray()
-        }
-        return generated.toLongArray()
-    }
-
-    /** Flow-matching decoder: speech tokens -> mel/latent (assumed I/O names, single shot, non-AR). */
-    private fun runFlowDecoder(
-        session: InferenceSession,
-        tokens: LongArray,
-    ): Tensor {
-        val outputs = session.run(mapOf(FLOW_INPUT_TOKENS to Tensor.longs(tokens)))
-        return outputs.tensorOrError(FLOW_OUTPUT_MEL, engineLabel)
-    }
-
-    /** HiFiGAN vocoder ("hift" upstream): mel -> raw waveform @ 24000 Hz (assumed I/O names). */
-    private fun runVocoder(
-        session: InferenceSession,
-        mel: Tensor,
-    ): FloatArray {
-        val outputs = session.run(mapOf(VOCODER_INPUT_MEL to mel))
-        return outputs.floatsOrError(VOCODER_OUTPUT_AUDIO, engineLabel)
-    }
-
-    /**
-     * Fail-closed recognition (spec §9.1): confident only when ALL three weight components are
-     * present AND the config side file carries a CosyVoice2 signature. Any single component
-     * missing, or an unrecognized config, returns false so [inspect] refuses to guess.
+     * Fail-closed recognition (spec §9.1): confident only when ALL three pipeline components are
+     * present (a `.gguf` LLM, the flow ONNX and the HiFT ONNX) AND the config side file carries a
+     * CosyVoice2 signature. Anything less returns false so [inspect] refuses to guess.
      */
     private fun looksLikeCosyVoice2(bundle: ModelBundle): Boolean {
-        if (!REQUIRED_WEIGHT_FILES.all(bundle::hasFile)) return false
-        return bundle.sideFileContainsAnyMarker(CONFIG_FILE_NAME, SIGNATURE_MARKERS)
+        if (llmFileIn(bundle) == null) return false
+        if (!bundle.hasFile(FLOW_FILE) || !bundle.hasFile(HIFT_FILE)) return false
+        return bundle.sideFileContainsAnyMarker(CONFIG_FILE, SIGNATURE_MARKERS)
     }
+
+    private fun hasAnyComponent(bundle: ModelBundle): Boolean =
+        llmFileIn(bundle) != null || bundle.hasFile(FLOW_FILE) || bundle.hasFile(HIFT_FILE)
+
+    private fun llmFileIn(bundle: ModelBundle): String? = bundle.fileNames.firstOrNull { it.endsWith(LLM_SUFFIX) }
 
     private fun buildDescriptor(
         bundle: ModelBundle,
@@ -177,30 +187,41 @@ internal class CosyVoice2Engine(
 
     private fun buildAssetPaths(bundle: ModelBundle): Map<String, String> {
         val paths = mutableMapOf<String, String>()
-        for (fileName in REQUIRED_WEIGHT_FILES) {
-            if (!bundle.hasFile(fileName)) continue
-            paths[fileName.substringBefore(".")] = joinAssetPath(bundle, fileName)
-        }
-        if (bundle.hasFile(CONFIG_FILE_NAME)) {
-            paths[CONFIG_ASSET_KEY] = joinAssetPath(bundle, CONFIG_FILE_NAME)
-        }
+        llmFileIn(bundle)?.let { paths[LLM_ASSET] = joinAssetPath(bundle, it) }
+        putIfPresent(paths, bundle, FLOW_FILE, FLOW_ASSET)
+        putIfPresent(paths, bundle, HIFT_FILE, HIFT_ASSET)
+        putIfPresent(paths, bundle, VOICES_FILE, VOICES_ASSET)
+        putIfPresent(paths, bundle, CONFIG_FILE, CONFIG_ASSET)
         return paths
+    }
+
+    private fun putIfPresent(
+        paths: MutableMap<String, String>,
+        bundle: ModelBundle,
+        fileName: String,
+        assetKey: String,
+    ) {
+        if (bundle.hasFile(fileName)) paths[assetKey] = joinAssetPath(bundle, fileName)
     }
 
     /** Everything the loaded engine needs to synthesize; null while unloaded (spec §5.5). */
     private class LoadedState(
         val descriptor: ModelDescriptor,
-        val llmSession: InferenceSession,
+        val llmSession: SpeechTokenSession,
         val flowSession: InferenceSession,
         val hiftSession: InferenceSession,
+        val prompt: SpeakerPrompt,
     )
 
     companion object {
         const val ENGINE_ID = "cosyvoice2"
         private const val DISPLAY_NAME = "CosyVoice2-0.5B"
 
-        /** The id this engine looks up in [EngineContext.runtimes] — a second, LLM-style backend. */
-        const val RUNTIME_ID = "cosyvoice-llm"
+        /** The non-ONNX, LLM-style backend this engine looks up in [EngineContext.runtimes]. */
+        const val LLM_RUNTIME_ID = "cosyvoice-llm"
+
+        /** The shared ONNX backend used for the deterministic flow + HiFT stages. */
+        const val ONNX_RUNTIME_ID = "onnx"
 
         private const val SAMPLE_RATE_HZ = 24_000
         private val SPEED_RANGE = 0.5f..1.5f
@@ -208,31 +229,19 @@ internal class CosyVoice2Engine(
         private const val DEFAULT_LANGUAGE = "en"
         private val DEFAULT_VOICE = Voice(id = "default", name = "Default Voice", language = DEFAULT_LANGUAGE)
 
-        // Bundle layout this engine recognizes (upstream CosyVoice2 file names, exported for the
-        // on-device LLM-style runtime): the three weight components plus its config file.
-        private val REQUIRED_WEIGHT_FILES = setOf("llm.onnx", "flow.onnx", "hift.onnx")
-        private const val CONFIG_FILE_NAME = "cosyvoice2.yaml"
+        // Bundle layout this engine recognizes: the GGUF LLM (matched by suffix, since quant/name
+        // varies), the flow + HiFT ONNX graphs, the baked voice bank, and the signed config.
+        const val LLM_SUFFIX = ".gguf"
+        const val FLOW_FILE = "flow.onnx"
+        const val HIFT_FILE = "hift.onnx"
+        const val VOICES_FILE = "voices.bin"
+        const val CONFIG_FILE = "cosyvoice2.yaml"
         private val SIGNATURE_MARKERS = listOf("cosyvoice2", "qwen2lm")
 
-        const val LLM_ASSET_KEY = "llm"
-        const val FLOW_ASSET_KEY = "flow"
-        const val HIFT_ASSET_KEY = "hift"
-        const val CONFIG_ASSET_KEY = "config"
-
-        // Assumed real tensor I/O names — the native runtime lands later; these are documented
-        // guesses that keep the seam exercised end-to-end (see class doc).
-        const val LLM_INPUT_TOKENS = "input_ids"
-        const val LLM_INPUT_SPEED = "speed"
-        const val LLM_OUTPUT_NEXT_TOKEN = "next_token"
-        const val LLM_OUTPUT_STOP = "stop"
-        const val FLOW_INPUT_TOKENS = "speech_tokens"
-        const val FLOW_OUTPUT_MEL = "mel"
-        const val VOCODER_INPUT_MEL = "mel"
-        const val VOCODER_OUTPUT_AUDIO = "audio"
-
-        private const val STOP_THRESHOLD = 0.5f
-
-        /** Safety bound on the AR loop — an implementation guard, not a model fact. */
-        private const val MAX_AR_STEPS = 200
+        const val LLM_ASSET = "llm"
+        const val FLOW_ASSET = "flow"
+        const val HIFT_ASSET = "hift"
+        const val VOICES_ASSET = "voices"
+        const val CONFIG_ASSET = "config"
     }
 }

@@ -9,16 +9,17 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
 /**
- * Proves inspect() fails closed (spec §9.1): only a bundle with ALL three CosyVoice2 weight
- * components AND a recognized config is claimed. Anything less confident returns null rather
- * than guessing. forcedMatch() is the opposite: it never refuses a user's explicit choice,
- * throwing only when the bundle is structurally unusable (no CosyVoice2 weight file at all).
+ * Proves inspect() fails closed (spec §9.1): only a bundle with all three pipeline components (a
+ * `.gguf` LLM, the flow ONNX, the HiFT ONNX) AND a recognized config is claimed. Anything less
+ * confident returns null rather than guessing. forcedMatch() is the opposite: it never refuses a
+ * user's explicit choice, throwing only when the bundle is structurally unusable (no CosyVoice2
+ * component at all).
  */
 class CosyVoice2InspectTest {
     private val engine = CosyVoice2Engine(emptyContext())
 
     @Test
-    fun `inspect claims a bundle with all three weight files and a recognized config`() {
+    fun `inspect claims a bundle with all three components and a recognized config`() {
         val bundle = validBundle()
 
         val match = assertNotNull(engine.inspect(bundle))
@@ -26,22 +27,36 @@ class CosyVoice2InspectTest {
         assertEquals(CosyVoice2Engine.ENGINE_ID, match.engineId)
         assertEquals(Origin.BUILT_IN, match.descriptor.origin)
         assertEquals(24_000, match.descriptor.sampleRate)
-        assertEquals("/models/${bundle.id}/llm.onnx", match.descriptor.assetPaths[CosyVoice2Engine.LLM_ASSET_KEY])
-        assertEquals("/models/${bundle.id}/flow.onnx", match.descriptor.assetPaths[CosyVoice2Engine.FLOW_ASSET_KEY])
-        assertEquals("/models/${bundle.id}/hift.onnx", match.descriptor.assetPaths[CosyVoice2Engine.HIFT_ASSET_KEY])
+        assertEquals("/models/${bundle.id}/llm.gguf", match.descriptor.assetPaths[CosyVoice2Engine.LLM_ASSET])
+        assertEquals("/models/${bundle.id}/flow.onnx", match.descriptor.assetPaths[CosyVoice2Engine.FLOW_ASSET])
+        assertEquals("/models/${bundle.id}/hift.onnx", match.descriptor.assetPaths[CosyVoice2Engine.HIFT_ASSET])
+        assertEquals("/models/${bundle.id}/voices.bin", match.descriptor.assetPaths[CosyVoice2Engine.VOICES_ASSET])
         assertEquals(
             "/models/${bundle.id}/cosyvoice2.yaml",
-            match.descriptor.assetPaths[CosyVoice2Engine.CONFIG_ASSET_KEY],
+            match.descriptor.assetPaths[CosyVoice2Engine.CONFIG_ASSET],
         )
     }
 
     @Test
-    fun `inspect fails closed when a weight file is missing`() {
+    fun `inspect fails closed when the LLM gguf is missing`() {
+        val bundle =
+            ModelBundle(
+                id = "incomplete",
+                // no .gguf LLM
+                fileNames = setOf("flow.onnx", "hift.onnx", "cosyvoice2.yaml"),
+                sideFiles = mapOf("cosyvoice2.yaml" to "model_type: cosyvoice2"),
+            )
+
+        assertInspectRejects(engine, bundle)
+    }
+
+    @Test
+    fun `inspect fails closed when a downstream ONNX component is missing`() {
         val bundle =
             ModelBundle(
                 id = "incomplete",
                 // hift.onnx deliberately missing
-                fileNames = setOf("llm.onnx", "flow.onnx", "cosyvoice2.yaml"),
+                fileNames = setOf("llm.gguf", "flow.onnx", "cosyvoice2.yaml"),
                 sideFiles = mapOf("cosyvoice2.yaml" to "model_type: cosyvoice2"),
             )
 
@@ -57,7 +72,7 @@ class CosyVoice2InspectTest {
 
     @Test
     fun `inspect fails closed when the config side file is absent entirely`() {
-        val bundle = ModelBundle(id = "no-config", fileNames = setOf("llm.onnx", "flow.onnx", "hift.onnx"))
+        val bundle = ModelBundle(id = "no-config", fileNames = setOf("llm.gguf", "flow.onnx", "hift.onnx"))
 
         assertInspectRejects(engine, bundle)
     }
@@ -70,18 +85,18 @@ class CosyVoice2InspectTest {
     }
 
     @Test
-    fun `forcedMatch never returns null when at least one weight file is present`() {
-        val bundle = ModelBundle(id = "manual", fileNames = setOf("llm.onnx"))
+    fun `forcedMatch never returns null when at least one component is present`() {
+        val bundle = ModelBundle(id = "manual", fileNames = setOf("llm.gguf"))
 
         val match = engine.forcedMatch(bundle)
 
         assertEquals(CosyVoice2Engine.ENGINE_ID, match.engineId)
         assertEquals(Origin.SIDELOADED, match.descriptor.origin)
-        assertEquals("llm.onnx", match.descriptor.assetPaths[CosyVoice2Engine.LLM_ASSET_KEY])
+        assertEquals("llm.gguf", match.descriptor.assetPaths[CosyVoice2Engine.LLM_ASSET])
     }
 
     @Test
-    fun `forcedMatch throws for a bundle with none of CosyVoice2's weight files`() {
+    fun `forcedMatch throws for a bundle with none of CosyVoice2's components`() {
         val bundle = ModelBundle(id = "unusable", fileNames = setOf("readme.txt"))
 
         assertFailsWith<IllegalArgumentException> { engine.forcedMatch(bundle) }

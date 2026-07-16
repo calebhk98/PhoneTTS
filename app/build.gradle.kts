@@ -16,6 +16,16 @@ plugins {
 // Real device builds pass -PwithEspeak=true after running scripts/fetch-espeak-ng.sh.
 val buildEspeak = (project.findProperty("withEspeak") as String?)?.toBooleanStrictOrNull() ?: false
 
+// The CosyVoice2 speech-token LLM bridge (spec §5.3 second runtime) links llama.cpp/ggml and is
+// gated the exact same way as espeak: opt-in via -PwithCosyVoice=true after running
+// scripts/fetch-cosyvoice-llama.sh. When off, libphonetts_cosyvoice.so isn't built,
+// LlamaCppSpeechTokenRuntime.isAvailable() is false, and CosyVoice2 simply isn't offered — the app
+// still assembles everywhere. See docs/COSYVOICE2.md.
+val buildCosyVoice = (project.findProperty("withCosyVoice") as String?)?.toBooleanStrictOrNull() ?: false
+
+// Either native bridge pulls in the NDK + CMake externalNativeBuild; configure it if either is on.
+val buildNative = buildEspeak || buildCosyVoice
+
 android {
     namespace = "com.phonetts.app"
     compileSdk = 35
@@ -33,15 +43,18 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
 
-        // espeak-ng JNI bridge (Blocker 1 — docs/espeak-ng-integration.md). Only configured when
-        // -PwithEspeak=true (NDK + CMake present); CMake itself then links whether or not
-        // app/src/main/cpp/espeak-ng/ has been fetched (see that file's stub guard).
-        if (buildEspeak) {
+        // Native JNI bridges (docs/espeak-ng-integration.md, docs/COSYVOICE2.md). Only configured
+        // when at least one is opted in (NDK + CMake present); each CMake half then links whether or
+        // not its source tree has been fetched (see the stub guards in the CMakeLists files). A
+        // per-bridge define tells the top CMakeLists which half(s) to build.
+        if (buildNative) {
             externalNativeBuild {
                 cmake {
                     // c++_shared keeps one copy of the STL shared across native libs in the APK
-                    // instead of statically duplicating it into libphonetts_espeak.so.
+                    // instead of statically duplicating it into each libphonetts_*.so.
                     arguments += "-DANDROID_STL=c++_shared"
+                    if (buildEspeak) arguments += "-DPHONETTS_BUILD_ESPEAK=ON"
+                    if (buildCosyVoice) arguments += "-DPHONETTS_BUILD_COSYVOICE=ON"
                 }
             }
         }
@@ -81,11 +94,10 @@ android {
         }
     }
 
-    // Entry point for the espeak-ng JNI bridge build (see the defaultConfig block above and
+    // Entry point for the native JNI bridge builds (see the defaultConfig block above and
     // src/main/cpp/CMakeLists.txt). version pins the CMake release Gradle downloads via the SDK
-    // manager, matching what espeak-ng's own CMakeLists.txt requires (cmake_minimum_required).
-    // Only wired when -PwithEspeak=true so builds without the NDK still assemble.
-    if (buildEspeak) {
+    // manager. Wired when either native bridge is opted in, so builds without the NDK still assemble.
+    if (buildNative) {
         externalNativeBuild {
             cmake {
                 path = file("src/main/cpp/CMakeLists.txt")
