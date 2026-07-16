@@ -3,15 +3,17 @@ package com.phonetts.engines.melotts
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.Voice
-import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.text.TextChunker
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import com.phonetts.engines.common.AbstractVoiceEngine
+import com.phonetts.engines.common.closeAllQuietly
+import com.phonetts.engines.common.floatsOrError
+import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.requireAssetPath
+import com.phonetts.engines.common.requireRuntime
 
 /**
  * MeloTTS engine (spec Phase 2.2). Unlike the phoneme-only engines, MeloTTS's frontend needs a
@@ -23,15 +25,18 @@ import kotlinx.coroutines.flow.flow
  * multilingual, native speed parameter `speed`.
  */
 internal class MeloEngine(
-    private val context: EngineContext,
-) : VoiceEngine {
+    context: EngineContext,
+) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
+    override val engineLabel: String = ENGINE_ID
 
     private var bertSession: InferenceSession? = null
     private var acousticSession: InferenceSession? = null
     private var frontend: MeloFrontend? = null
     private var loadedDescriptor: ModelDescriptor? = null
+
+    override fun isLoaded(): Boolean = acousticSession != null
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         if (!hasMeloCompanionFiles(bundle)) return null
@@ -61,13 +66,9 @@ internal class MeloEngine(
 
     override suspend fun load(descriptor: ModelDescriptor) {
         unload()
-        val runtime = context.runtimes.get(RUNTIME_ID) ?: error("runtime '$RUNTIME_ID' is not registered")
-        val bertPath =
-            descriptor.assetPaths[BERT_ASSET]
-                ?: error("descriptor ${descriptor.modelId} is missing '$BERT_ASSET'")
-        val acousticPath =
-            descriptor.assetPaths[ACOUSTIC_ASSET]
-                ?: error("descriptor ${descriptor.modelId} is missing '$ACOUSTIC_ASSET'")
+        val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
+        val bertPath = requireAssetPath(descriptor, BERT_ASSET, engineLabel)
+        val acousticPath = requireAssetPath(descriptor, ACOUSTIC_ASSET, engineLabel)
 
         val bert = runtime.createSession(bertPath)
         val acoustic = runtime.createSession(acousticPath)
@@ -78,8 +79,7 @@ internal class MeloEngine(
     }
 
     override fun unload() {
-        acousticSession?.close()
-        bertSession?.close()
+        closeAllQuietly(acousticSession, bertSession)
         acousticSession = null
         bertSession = null
         frontend = null
@@ -88,40 +88,33 @@ internal class MeloEngine(
 
     override fun voices(): List<Voice> = loadedDescriptor?.voices ?: emptyList()
 
-    override fun synthesize(
-        text: String,
+    override fun synthesizeSentence(
+        sentence: String,
         voiceId: String,
         speed: Float,
-    ): Flow<FloatArray> {
-        val session = acousticSession ?: error("MeloEngine.load() must be called before synthesize()")
-        val activeFrontend = frontend ?: error("MeloEngine.load() must be called before synthesize()")
+    ): FloatArray {
+        val session = checkNotNull(acousticSession) { "$engineLabel.synthesizeSentence called before load()" }
+        val activeFrontend = checkNotNull(frontend) { "$engineLabel.synthesizeSentence called before load()" }
         val voiceIndex = voices().indexOfFirst { it.id == voiceId }
         require(voiceIndex >= 0) { "unknown voice '$voiceId'" }
         val language = voices()[voiceIndex].language
 
-        return flow {
-            for (sentence in TextChunker.intoSentences(text)) {
-                val input = activeFrontend.toModelInput(sentence, language)
-                val bertFeatures =
-                    input.extras[MeloFrontend.EXTRA_BERT_FEATURES] as? Tensor
-                        ?: error("frontend did not produce '${MeloFrontend.EXTRA_BERT_FEATURES}'")
-                val outputs =
-                    session.run(
-                        mapOf(
-                            // Assumed real MeloTTS VITS2 acoustic-model export input names.
-                            ACOUSTIC_INPUT_TOKENS to Tensor.longs(input.tokenIds, intArrayOf(1, input.tokenIds.size)),
-                            ACOUSTIC_INPUT_BERT to bertFeatures,
-                            ACOUSTIC_INPUT_SPEAKER to Tensor.longs(longArrayOf(voiceIndex.toLong())),
-                            // Native speed knob (spec rule #2): routed straight through, never resampled.
-                            ACOUSTIC_INPUT_SPEED to Tensor.scalarFloat(speed),
-                        ),
-                    )
-                val audio =
-                    outputs[ACOUSTIC_OUTPUT_AUDIO]
-                        ?: error("acoustic session did not return '$ACOUSTIC_OUTPUT_AUDIO'")
-                emit(audio.asFloats())
-            }
-        }
+        val input = activeFrontend.toModelInput(sentence, language)
+        val bertFeatures =
+            input.extras[MeloFrontend.EXTRA_BERT_FEATURES] as? Tensor
+                ?: error("frontend did not produce '${MeloFrontend.EXTRA_BERT_FEATURES}'")
+        val outputs =
+            session.run(
+                mapOf(
+                    // Assumed real MeloTTS VITS2 acoustic-model export input names.
+                    ACOUSTIC_INPUT_TOKENS to Tensor.longs(input.tokenIds, intArrayOf(1, input.tokenIds.size)),
+                    ACOUSTIC_INPUT_BERT to bertFeatures,
+                    ACOUSTIC_INPUT_SPEAKER to Tensor.longs(longArrayOf(voiceIndex.toLong())),
+                    // Native speed knob (spec rule #2): routed straight through, never resampled.
+                    ACOUSTIC_INPUT_SPEED to Tensor.scalarFloat(speed),
+                ),
+            )
+        return outputs.floatsOrError(ACOUSTIC_OUTPUT_AUDIO, engineLabel)
     }
 
     private fun hasMeloCompanionFiles(bundle: ModelBundle): Boolean =
@@ -129,10 +122,10 @@ internal class MeloEngine(
 
     private fun assetPaths(rootPath: String): Map<String, String> =
         mapOf(
-            ACOUSTIC_ASSET to "$rootPath/$ACOUSTIC_FILE",
-            BERT_ASSET to "$rootPath/$BERT_FILE",
-            TOKENIZER_ASSET to "$rootPath/$TOKENIZER_FILE",
-            CONFIG_ASSET to "$rootPath/$CONFIG_FILE",
+            ACOUSTIC_ASSET to joinAssetPath(rootPath, ACOUSTIC_FILE),
+            BERT_ASSET to joinAssetPath(rootPath, BERT_FILE),
+            TOKENIZER_ASSET to joinAssetPath(rootPath, TOKENIZER_FILE),
+            CONFIG_ASSET to joinAssetPath(rootPath, CONFIG_FILE),
         )
 
     private fun buildDescriptor(

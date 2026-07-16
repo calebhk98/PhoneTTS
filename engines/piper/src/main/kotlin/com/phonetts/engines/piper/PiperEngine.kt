@@ -3,16 +3,18 @@ package com.phonetts.engines.piper
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.Voice
-import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Runtime
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.text.TextChunker
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import com.phonetts.engines.common.AbstractVoiceEngine
+import com.phonetts.engines.common.closeAllQuietly
+import com.phonetts.engines.common.floatsOrError
+import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.requireAssetPath
+import com.phonetts.engines.common.requireRuntime
 import java.io.File
 
 /**
@@ -29,20 +31,25 @@ import java.io.File
  * with its own `<voice>.onnx.json` sidecar (phoneme_id_map, audio.sample_rate, inference
  * defaults). Each such pair becomes one [Voice]; this engine keeps one [InferenceSession] per
  * loaded voice (spec rule 6 — "one engine loaded at a time" bounds the *engine*, not how many
- * voice graphs one Piper bundle may contain).
+ * voice graphs one Piper bundle may contain). That per-voice-N-sessions topology is bespoke to
+ * Piper, so `load()`/`unload()` are hand-written here (see [AbstractVoiceEngine]'s KDoc) using
+ * only the leaf session-lifecycle helpers from `com.phonetts.engines.common`.
  *
  * [sidecarReader] is injected so tests can supply sidecar JSON without touching a real
  * filesystem; production uses the real-file default.
  */
 internal class PiperEngine(
-    private val context: EngineContext,
+    context: EngineContext,
     private val sidecarReader: (path: String) -> String? = ::readSidecarFile,
-) : VoiceEngine {
+) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = "Piper"
+    override val engineLabel: String = displayName
 
     private var loadedVoices: Map<String, LoadedVoice> = emptyMap()
     private var loadedDescriptor: ModelDescriptor? = null
+
+    override fun isLoaded(): Boolean = loadedVoices.isNotEmpty()
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         val entries =
@@ -64,50 +71,33 @@ internal class PiperEngine(
 
     override suspend fun load(descriptor: ModelDescriptor) {
         unload()
-        val runtime =
-            context.runtimes.get(ONNX_RUNTIME_ID)
-                ?: error("Piper requires the '$ONNX_RUNTIME_ID' runtime, but none is registered")
+        val runtime = requireRuntime(context, ONNX_RUNTIME_ID, engineLabel)
         loadedVoices = descriptor.voices.associate { voice -> voice.id to loadVoice(descriptor, voice, runtime) }
         loadedDescriptor = descriptor
     }
 
     override fun unload() {
-        loadedVoices.values.forEach { it.session.close() }
+        closeAllQuietly(loadedVoices.values.map { it.session })
         loadedVoices = emptyMap()
         loadedDescriptor = null
     }
 
     override fun voices(): List<Voice> = loadedDescriptor?.voices ?: emptyList()
 
-    override fun synthesize(
-        text: String,
+    override fun synthesizeSentence(
+        sentence: String,
         voiceId: String,
         speed: Float,
-    ): Flow<FloatArray> {
-        require(speed > 0f) { "speed must be positive, was $speed" }
-        val loadedVoice = loadedVoices[voiceId] ?: error("Piper voice '$voiceId' is not loaded")
-        return flow {
-            val frontend = PiperFrontend(context.phonemizer, loadedVoice.config.phonemeIdMap)
-            TextChunker.intoSentences(text).forEach { sentence ->
-                emit(synthesizeSentence(frontend, loadedVoice, sentence, speed))
-            }
-        }
-    }
-
-    private fun synthesizeSentence(
-        frontend: PiperFrontend,
-        loadedVoice: LoadedVoice,
-        sentence: String,
-        speed: Float,
     ): FloatArray {
+        val loadedVoice = loadedVoices[voiceId] ?: error("Piper voice '$voiceId' is not loaded")
+        val frontend = PiperFrontend(context.phonemizer, loadedVoice.config.phonemeIdMap)
         val input = frontend.toModelInput(sentence, loadedVoice.config.language)
         // Speed ALWAYS routes to the model's native length_scale (spec rule 2) — never resample
         // output audio. length_scale is INVERSE to speed: larger = slower. Anchor on the voice's
         // own config default (normally 1.0) so speed=1.0 reproduces the model's natural pace.
         val lengthScale = loadedVoice.config.defaultLengthScale / speed
         val outputs = loadedVoice.session.run(sessionInputs(input.tokenIds, loadedVoice, lengthScale))
-        return outputs[OUTPUT_TENSOR]?.asFloats()
-            ?: error("Piper ONNX session produced no '$OUTPUT_TENSOR' tensor")
+        return outputs.floatsOrError(OUTPUT_TENSOR, engineLabel)
     }
 
     // ASSUMPTION (not runnable against a real ONNX graph in this environment): mirrors the
@@ -133,9 +123,7 @@ internal class PiperEngine(
         voice: Voice,
         runtime: Runtime,
     ): LoadedVoice {
-        val onnxPath =
-            descriptor.assetPaths[assetKey(voice.id, ONNX_SUFFIX)]
-                ?: error("no onnx asset path recorded for Piper voice '${voice.id}'")
+        val onnxPath = requireAssetPath(descriptor, assetKey(voice.id, ONNX_SUFFIX), engineLabel)
         val configPath = descriptor.assetPaths[assetKey(voice.id, SIDECAR_SUFFIX)]
         val config = configPath?.let(sidecarReader)?.let(PiperVoiceConfig::parse) ?: PiperVoiceConfig.fallback()
         return LoadedVoice(runtime.createSession(onnxPath), config)
@@ -191,15 +179,10 @@ internal class PiperEngine(
         rootPath: String?,
         assetPaths: MutableMap<String, String>,
     ): Voice {
-        assetPaths[assetKey(voiceId, ONNX_SUFFIX)] = pathFor(rootPath, onnxFile)
-        assetPaths[assetKey(voiceId, SIDECAR_SUFFIX)] = pathFor(rootPath, sidecarFile)
+        assetPaths[assetKey(voiceId, ONNX_SUFFIX)] = joinAssetPath(rootPath, onnxFile)
+        assetPaths[assetKey(voiceId, SIDECAR_SUFFIX)] = joinAssetPath(rootPath, sidecarFile)
         return Voice(id = voiceId, name = prettify(voiceId), language = config.language)
     }
-
-    private fun pathFor(
-        rootPath: String?,
-        fileName: String,
-    ): String = if (rootPath != null) "$rootPath/$fileName" else fileName
 
     private fun prettify(voiceId: String): String = voiceId.replace('_', ' ').replace('-', ' ')
 

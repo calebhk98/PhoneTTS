@@ -27,9 +27,12 @@ fun requireAssetPath(
         ?: error("$engineLabel descriptor '${descriptor.modelId}' is missing its '$assetKey' asset path")
 
 /** Close every non-null session, ignoring individual close failures (best-effort cleanup). */
-fun closeAllQuietly(vararg sessions: InferenceSession?) {
+fun closeAllQuietly(sessions: Iterable<InferenceSession?>) {
     for (session in sessions) {
         session ?: continue
         runCatching { session.close() }
     }
 }
+
+/** Vararg convenience for the fixed-session engines; N-session engines pass a collection directly. */
+fun closeAllQuietly(vararg sessions: InferenceSession?) = closeAllQuietly(sessions.asList())

@@ -4,15 +4,17 @@ import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.TextFrontend
 import com.phonetts.core.engine.Voice
-import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.text.TextChunker
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import com.phonetts.engines.common.AbstractVoiceEngine
+import com.phonetts.engines.common.closeAllQuietly
+import com.phonetts.engines.common.floatsOrError
+import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.requireAssetPath
+import com.phonetts.engines.common.requireRuntime
 import java.io.File
 
 /**
@@ -26,13 +28,14 @@ import java.io.File
  * [KokoroFrontend] handles text -> token ids.
  */
 internal class KokoroEngine(
-    private val context: EngineContext,
+    context: EngineContext,
     // Injected so load() stays plain-JVM testable without real files on disk (parity with
     // PiperEngine's sidecarReader). Defaults to a real file read.
     private val fileReader: (path: String) -> String = { File(it).readText() },
-) : VoiceEngine {
+) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
+    override val engineLabel: String = ENGINE_ID
 
     private val frontend: TextFrontend = KokoroFrontend(context.phonemizer)
 
@@ -40,6 +43,8 @@ internal class KokoroEngine(
     private var voiceEmbeddings: Map<String, FloatArray> = emptyMap()
     private var voiceLanguages: Map<String, String> = emptyMap()
     private var loadedVoices: List<Voice> = emptyList()
+
+    override fun isLoaded(): Boolean = session != null
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         val weightsFile = bundle.fileNames.firstOrNull { it.endsWith(WEIGHTS_SUFFIX) } ?: return null
@@ -85,12 +90,8 @@ internal class KokoroEngine(
     )
 
     override suspend fun load(descriptor: ModelDescriptor) {
-        val runtime =
-            context.runtimes.get(RUNTIME_ID)
-                ?: error("Kokoro engine requires the '$RUNTIME_ID' runtime, none registered")
-        val weightsPath =
-            descriptor.assetPaths[WEIGHTS_ASSET]
-                ?: error("Kokoro descriptor '${descriptor.modelId}' has no '$WEIGHTS_ASSET' asset path")
+        val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
+        val weightsPath = requireAssetPath(descriptor, WEIGHTS_ASSET, engineLabel)
 
         session?.close()
         session = runtime.createSession(weightsPath)
@@ -99,7 +100,7 @@ internal class KokoroEngine(
     }
 
     override fun unload() {
-        session?.close()
+        closeAllQuietly(session)
         session = null
         voiceEmbeddings = emptyMap()
         voiceLanguages = emptyMap()
@@ -108,28 +109,15 @@ internal class KokoroEngine(
 
     override fun voices(): List<Voice> = loadedVoices
 
-    override fun synthesize(
-        text: String,
+    override fun synthesizeSentence(
+        sentence: String,
         voiceId: String,
         speed: Float,
-    ): Flow<FloatArray> =
-        flow {
-            val activeSession = session ?: error("Kokoro engine not loaded")
-            val embedding = voiceEmbeddings[voiceId] ?: error("Unknown Kokoro voice id '$voiceId'")
-            val language = voiceLanguages[voiceId] ?: DEFAULT_LANGUAGE
-
-            for (sentence in TextChunker.intoSentences(text)) {
-                emit(synthesizeSentence(activeSession, sentence, language, embedding, speed))
-            }
-        }
-
-    private fun synthesizeSentence(
-        activeSession: InferenceSession,
-        sentence: String,
-        language: String,
-        embedding: FloatArray,
-        speed: Float,
     ): FloatArray {
+        val activeSession = session ?: error("$engineLabel.synthesizeSentence called before load()")
+        val embedding = voiceEmbeddings[voiceId] ?: error("Unknown Kokoro voice id '$voiceId'")
+        val language = voiceLanguages[voiceId] ?: DEFAULT_LANGUAGE
+
         val modelInput = frontend.toModelInput(sentence, language)
         // Assumed ONNX graph IO names, mirroring common community Kokoro ONNX exports (e.g.
         // onnx-community/Kokoro-82M-ONNX): "tokens" int64 [1, T], "style" float32 [1, D] (the
@@ -142,8 +130,7 @@ internal class KokoroEngine(
                 SPEED_INPUT to Tensor.scalarFloat(speed),
             )
         val outputs = activeSession.run(inputs)
-        return outputs[AUDIO_OUTPUT]?.asFloats()
-            ?: error("Kokoro session did not return an '$AUDIO_OUTPUT' tensor")
+        return outputs.floatsOrError(AUDIO_OUTPUT, engineLabel)
     }
 
     private fun loadVoiceTable(descriptor: ModelDescriptor) {
@@ -192,8 +179,8 @@ internal class KokoroEngine(
             defaultSpeed = defaultSpeed,
             assetPaths =
                 mapOf(
-                    WEIGHTS_ASSET to assetPath(bundle, weightsFile),
-                    VOICES_TABLE_ASSET to assetPath(bundle, VOICES_FILE),
+                    WEIGHTS_ASSET to joinAssetPath(bundle, weightsFile),
+                    VOICES_TABLE_ASSET to joinAssetPath(bundle, VOICES_FILE),
                 ),
         )
     }
@@ -213,16 +200,8 @@ internal class KokoroEngine(
             speedRange = FALLBACK_SPEED_MIN..FALLBACK_SPEED_MAX,
             defaultVoiceId = fallbackVoice.id,
             defaultSpeed = FALLBACK_DEFAULT_SPEED,
-            assetPaths = mapOf(WEIGHTS_ASSET to assetPath(bundle, weightsFile)),
+            assetPaths = mapOf(WEIGHTS_ASSET to joinAssetPath(bundle, weightsFile)),
         )
-    }
-
-    private fun assetPath(
-        bundle: ModelBundle,
-        fileName: String,
-    ): String {
-        val root = bundle.rootPath
-        return if (root.isNullOrEmpty()) fileName else "$root/$fileName"
     }
 
     companion object {

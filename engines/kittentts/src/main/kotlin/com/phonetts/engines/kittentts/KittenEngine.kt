@@ -3,15 +3,17 @@ package com.phonetts.engines.kittentts
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.Voice
-import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.text.TextChunker
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import com.phonetts.engines.common.AbstractVoiceEngine
+import com.phonetts.engines.common.closeAllQuietly
+import com.phonetts.engines.common.floatsOrError
+import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.requireAssetPath
+import com.phonetts.engines.common.requireRuntime
 
 /**
  * KittenTTS (KittenML/KittenTTS) engine: a single ONNX graph with ~8 built-in speakers, no
@@ -30,13 +32,16 @@ import kotlinx.coroutines.flow.flow
  *    ships per model-facts.md). A bare `.onnx` with none of these companions, or a bundle
  *    whose config doesn't carry the marker, is refused — never guessed.
  */
-internal class KittenEngine(private val context: EngineContext) : VoiceEngine {
+internal class KittenEngine(context: EngineContext) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
+    override val engineLabel: String = ENGINE_ID
 
     private val frontend = KittenFrontend(context.phonemizer)
     private var session: InferenceSession? = null
     private var loadedDescriptor: ModelDescriptor? = null
+
+    override fun isLoaded(): Boolean = session != null
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         val modelFile = bundle.fileNames.firstOrNull { it.endsWith(MODEL_SUFFIX) } ?: return null
@@ -67,10 +72,8 @@ internal class KittenEngine(private val context: EngineContext) : VoiceEngine {
     }
 
     override suspend fun load(descriptor: ModelDescriptor) {
-        val runtime = context.runtimes.get(RUNTIME_ID) ?: error("runtime '$RUNTIME_ID' is not registered")
-        val modelPath =
-            descriptor.assetPaths[MODEL_ASSET_KEY]
-                ?: error("descriptor for '${descriptor.modelId}' is missing its '$MODEL_ASSET_KEY' asset path")
+        val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
+        val modelPath = requireAssetPath(descriptor, MODEL_ASSET_KEY, engineLabel)
 
         session?.close()
         session = runtime.createSession(modelPath)
@@ -78,35 +81,22 @@ internal class KittenEngine(private val context: EngineContext) : VoiceEngine {
     }
 
     override fun unload() {
-        session?.close()
+        closeAllQuietly(session)
         session = null
         loadedDescriptor = null
     }
 
     override fun voices(): List<Voice> = loadedDescriptor?.voices ?: emptyList()
 
-    override fun synthesize(
-        text: String,
+    override fun synthesizeSentence(
+        sentence: String,
         voiceId: String,
         speed: Float,
-    ): Flow<FloatArray> {
-        val activeSession = session ?: error("KittenEngine.synthesize called before load()")
-        val descriptor = loadedDescriptor ?: error("KittenEngine.synthesize called before load()")
+    ): FloatArray {
+        val activeSession = checkNotNull(session) { "$engineLabel.synthesizeSentence called before load()" }
+        val descriptor = checkNotNull(loadedDescriptor) { "$engineLabel.synthesizeSentence called before load()" }
         val speakerIndex = resolveSpeakerIndex(descriptor, voiceId)
 
-        return flow {
-            TextChunker.intoSentences(text).forEach { sentence ->
-                emit(synthesizeSentence(activeSession, sentence, speakerIndex, speed))
-            }
-        }
-    }
-
-    private fun synthesizeSentence(
-        activeSession: InferenceSession,
-        sentence: String,
-        speakerIndex: Long,
-        speed: Float,
-    ): FloatArray {
         val modelInput = frontend.toModelInput(sentence, LANGUAGE)
         // ASSUMED real ONNX graph input/output names (no confirmed export available in this
         // module) — see class doc. Kept as named constants below so a real graph's names can
@@ -118,8 +108,7 @@ internal class KittenEngine(private val context: EngineContext) : VoiceEngine {
                 SPEED_KEY to Tensor.scalarFloat(speed),
             )
         val outputs = activeSession.run(inputs)
-        return outputs[WAVEFORM_KEY]?.asFloats()
-            ?: error("session did not return a '$WAVEFORM_KEY' output tensor")
+        return outputs.floatsOrError(WAVEFORM_KEY, engineLabel)
     }
 
     private fun resolveSpeakerIndex(
@@ -153,19 +142,11 @@ internal class KittenEngine(private val context: EngineContext) : VoiceEngine {
             defaultSpeed = DEFAULT_SPEED,
             assetPaths =
                 mapOf(
-                    MODEL_ASSET_KEY to resolvePath(bundle, modelFile),
-                    CONFIG_ASSET_KEY to resolvePath(bundle, CONFIG_FILE),
-                    VOICES_ASSET_KEY to resolvePath(bundle, VOICES_FILE),
+                    MODEL_ASSET_KEY to joinAssetPath(bundle, modelFile),
+                    CONFIG_ASSET_KEY to joinAssetPath(bundle, CONFIG_FILE),
+                    VOICES_ASSET_KEY to joinAssetPath(bundle, VOICES_FILE),
                 ),
         )
-    }
-
-    private fun resolvePath(
-        bundle: ModelBundle,
-        fileName: String,
-    ): String {
-        val root = bundle.rootPath?.trimEnd('/')
-        return if (root.isNullOrBlank()) fileName else "$root/$fileName"
     }
 
     /**

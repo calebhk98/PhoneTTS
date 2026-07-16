@@ -3,15 +3,18 @@ package com.phonetts.engines.cosyvoice2
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.Voice
-import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
-import com.phonetts.core.text.TextChunker
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import com.phonetts.engines.common.AbstractVoiceEngine
+import com.phonetts.engines.common.closeAllQuietly
+import com.phonetts.engines.common.floatsOrError
+import com.phonetts.engines.common.joinAssetPath
+import com.phonetts.engines.common.requireAssetPath
+import com.phonetts.engines.common.requireRuntime
+import com.phonetts.engines.common.tensorOrError
 
 /**
  * CosyVoice2-0.5B — the hardest model in the registry (see CLAUDE.md build order). It exists
@@ -30,13 +33,16 @@ import kotlinx.coroutines.flow.flow
  * documented assumptions, called out at each call site.
  */
 internal class CosyVoice2Engine(
-    private val context: EngineContext,
-) : VoiceEngine {
+    context: EngineContext,
+) : AbstractVoiceEngine(context) {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
+    override val engineLabel: String = ENGINE_ID
 
     private val frontend = CosyVoice2Frontend(context.phonemizer)
     private var state: LoadedState? = null
+
+    override fun isLoaded(): Boolean = state != null
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         if (!looksLikeCosyVoice2(bundle)) return null
@@ -52,15 +58,10 @@ internal class CosyVoice2Engine(
     }
 
     override suspend fun load(descriptor: ModelDescriptor) {
-        val runtime =
-            context.runtimes.get(RUNTIME_ID)
-                ?: error(
-                    "CosyVoice2Engine requires a runtime registered under id '$RUNTIME_ID' in " +
-                        "EngineContext.runtimes; none is registered, cannot load '${descriptor.modelId}'",
-                )
-        val llmPath = requireAssetPath(descriptor, LLM_ASSET_KEY)
-        val flowPath = requireAssetPath(descriptor, FLOW_ASSET_KEY)
-        val hiftPath = requireAssetPath(descriptor, HIFT_ASSET_KEY)
+        val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
+        val llmPath = requireAssetPath(descriptor, LLM_ASSET_KEY, engineLabel)
+        val flowPath = requireAssetPath(descriptor, FLOW_ASSET_KEY, engineLabel)
+        val hiftPath = requireAssetPath(descriptor, HIFT_ASSET_KEY, engineLabel)
 
         unload()
         state =
@@ -73,37 +74,19 @@ internal class CosyVoice2Engine(
     }
 
     override fun unload() {
-        state?.let {
-            it.llmSession.close()
-            it.flowSession.close()
-            it.hiftSession.close()
-        }
+        state?.let { closeAllQuietly(it.llmSession, it.flowSession, it.hiftSession) }
         state = null
     }
 
     override fun voices(): List<Voice> = state?.descriptor?.voices ?: listOf(DEFAULT_VOICE)
 
-    override fun synthesize(
-        text: String,
+    override fun synthesizeSentence(
+        sentence: String,
         voiceId: String,
         speed: Float,
-    ): Flow<FloatArray> {
-        val loaded = state ?: error("CosyVoice2Engine.synthesize called before load()")
-        val language = loaded.descriptor.voices.firstOrNull { it.id == voiceId }?.language ?: DEFAULT_LANGUAGE
-        val sentences = TextChunker.intoSentences(text)
-        return flow {
-            for (sentence in sentences) {
-                emit(synthesizeSentence(loaded, sentence, language, speed))
-            }
-        }
-    }
-
-    private fun synthesizeSentence(
-        loaded: LoadedState,
-        sentence: String,
-        language: String,
-        speed: Float,
     ): FloatArray {
+        val loaded = checkNotNull(state) { "$engineLabel.synthesizeSentence called before load()" }
+        val language = loaded.descriptor.voices.firstOrNull { it.id == voiceId }?.language ?: DEFAULT_LANGUAGE
         val input = frontend.toModelInput(sentence, language)
         val tokens = generateTokens(loaded.llmSession, input.tokenIds, speed)
         val mel = runFlowDecoder(loaded.flowSession, tokens)
@@ -149,8 +132,7 @@ internal class CosyVoice2Engine(
         tokens: LongArray,
     ): Tensor {
         val outputs = session.run(mapOf(FLOW_INPUT_TOKENS to Tensor.longs(tokens)))
-        return outputs[FLOW_OUTPUT_MEL]
-            ?: error("CosyVoice2Engine: flow-matching decoder produced no '$FLOW_OUTPUT_MEL' output")
+        return outputs.tensorOrError(FLOW_OUTPUT_MEL, engineLabel)
     }
 
     /** HiFiGAN vocoder ("hift" upstream): mel -> raw waveform @ 24000 Hz (assumed I/O names). */
@@ -159,18 +141,8 @@ internal class CosyVoice2Engine(
         mel: Tensor,
     ): FloatArray {
         val outputs = session.run(mapOf(VOCODER_INPUT_MEL to mel))
-        val audio =
-            outputs[VOCODER_OUTPUT_AUDIO]
-                ?: error("CosyVoice2Engine: vocoder produced no '$VOCODER_OUTPUT_AUDIO' output")
-        return audio.asFloats()
+        return outputs.floatsOrError(VOCODER_OUTPUT_AUDIO, engineLabel)
     }
-
-    private fun requireAssetPath(
-        descriptor: ModelDescriptor,
-        key: String,
-    ): String =
-        descriptor.assetPaths[key]
-            ?: error("CosyVoice2Engine: descriptor '${descriptor.modelId}' is missing asset path '$key'")
 
     /**
      * Fail-closed recognition (spec §9.1): confident only when ALL three weight components are
@@ -201,14 +173,13 @@ internal class CosyVoice2Engine(
         )
 
     private fun buildAssetPaths(bundle: ModelBundle): Map<String, String> {
-        val root = bundle.rootPath
         val paths = mutableMapOf<String, String>()
         for (fileName in REQUIRED_WEIGHT_FILES) {
             if (!bundle.hasFile(fileName)) continue
-            paths[fileName.substringBefore(".")] = if (root.isNullOrEmpty()) fileName else "$root/$fileName"
+            paths[fileName.substringBefore(".")] = joinAssetPath(bundle, fileName)
         }
         if (bundle.hasFile(CONFIG_FILE_NAME)) {
-            paths[CONFIG_ASSET_KEY] = if (root.isNullOrEmpty()) CONFIG_FILE_NAME else "$root/$CONFIG_FILE_NAME"
+            paths[CONFIG_ASSET_KEY] = joinAssetPath(bundle, CONFIG_FILE_NAME)
         }
         return paths
     }

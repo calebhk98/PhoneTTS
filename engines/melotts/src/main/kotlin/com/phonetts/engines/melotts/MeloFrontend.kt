@@ -4,6 +4,7 @@ import com.phonetts.core.engine.ModelInput
 import com.phonetts.core.engine.TextFrontend
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
+import com.phonetts.engines.common.tensorOrError
 
 /**
  * MeloTTS's own [TextFrontend] (spec §5.2, Phase 2.2). This is the reason MeloTTS is in the
@@ -39,9 +40,7 @@ class MeloFrontend(
                     BERT_ATTENTION_MASK to Tensor.longs(attentionMask, intArrayOf(1, tokenIds.size)),
                 ),
             )
-        val bertFeatures =
-            bertOutputs[BERT_OUTPUT_FEATURES]
-                ?: error("BERT session did not return '$BERT_OUTPUT_FEATURES'")
+        val bertFeatures = bertOutputs.tensorOrError(BERT_OUTPUT_FEATURES, ENGINE_LABEL)
 
         return ModelInput(
             tokenIds = tokenIds,
@@ -72,6 +71,7 @@ class MeloFrontend(
         private const val BERT_INPUT_IDS = "input_ids"
         private const val BERT_ATTENTION_MASK = "attention_mask"
         private const val BERT_OUTPUT_FEATURES = "bert_features"
+        private const val ENGINE_LABEL = "MeloFrontend"
 
         private val WHITESPACE_REGEX = Regex("\\s+")
         private const val BOS_ID = 0L
