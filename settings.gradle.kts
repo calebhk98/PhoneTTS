@@ -23,6 +23,7 @@ include(":core")
 // at runtime via ServiceLoader — so this list is the ONLY place the set of built-in engines is
 // enumerated, and it is build config, not logic (no shared code branches on which model it is).
 // Adding a model = a new module + a line here; removing one = deleting both. Nothing else changes.
+include(":engines:common") // shared, model-agnostic engine plumbing the engine modules link against
 include(":engines:cosyvoice2")
 include(":engines:melotts")
 include(":engines:piper")

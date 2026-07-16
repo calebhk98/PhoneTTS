@@ -1,15 +1,13 @@
-package com.phonetts.engines.piper
+package com.phonetts.engines.common.json
 
 /**
- * A minimal, dependency-free JSON reader for Piper's `<voice>.onnx.json` sidecar files.
- *
- * The `engines/piper` module deliberately has no JSON library dependency (its `build.gradle.kts`
- * is out of scope for this change), so this hand-rolled reader covers exactly the JSON subset a
- * Piper voice config needs: nested objects, arrays of numbers, strings, numbers, booleans, null.
- * Malformed input yields `null` from [MiniJson.parse] rather than throwing, which keeps callers
- * (notably [PiperVoiceConfig.parse], used from `inspect()`) fail-closed.
+ * A minimal, dependency-free JSON reader shared by the engine modules for their small companion
+ * files (`config.json`, `<voice>.onnx.json`, voice tables). The engine modules deliberately take
+ * no JSON-library dependency; this hand-rolled reader covers the JSON subset those files need:
+ * nested objects, arrays, strings, numbers, booleans, null. Malformed input yields `null` from
+ * [MiniJson.parse] rather than throwing, keeping fingerprinting callers fail-closed.
  */
-internal sealed class JsonValue {
+sealed class JsonValue {
     data class JsonObject(val value: Map<String, JsonValue>) : JsonValue()
 
     data class JsonArray(val value: List<JsonValue>) : JsonValue()
@@ -23,20 +21,20 @@ internal sealed class JsonValue {
     object JsonNull : JsonValue()
 }
 
-internal fun JsonValue.asObjectOrNull(): Map<String, JsonValue>? = (this as? JsonValue.JsonObject)?.value
+fun JsonValue.asObjectOrNull(): Map<String, JsonValue>? = (this as? JsonValue.JsonObject)?.value
 
-internal fun JsonValue.asArrayOrNull(): List<JsonValue>? = (this as? JsonValue.JsonArray)?.value
+fun JsonValue.asArrayOrNull(): List<JsonValue>? = (this as? JsonValue.JsonArray)?.value
 
-internal fun JsonValue.asStringOrNull(): String? = (this as? JsonValue.JsonString)?.value
+fun JsonValue.asStringOrNull(): String? = (this as? JsonValue.JsonString)?.value
 
-internal fun JsonValue.asIntOrNull(): Int? = (this as? JsonValue.JsonNumber)?.value?.toInt()
+fun JsonValue.asIntOrNull(): Int? = (this as? JsonValue.JsonNumber)?.value?.toInt()
 
-internal fun JsonValue.asFloatOrNull(): Float? = (this as? JsonValue.JsonNumber)?.value?.toFloat()
+fun JsonValue.asFloatOrNull(): Float? = (this as? JsonValue.JsonNumber)?.value?.toFloat()
 
-internal fun JsonValue.asLongListOrEmpty(): List<Long> =
+fun JsonValue.asLongListOrEmpty(): List<Long> =
     asArrayOrNull()?.mapNotNull { (it as? JsonValue.JsonNumber)?.value?.toLong() } ?: emptyList()
 
-internal object MiniJson {
+object MiniJson {
     /** Parses [text] as JSON, or returns null on any malformed input (fail-closed, never throws). */
     fun parse(text: String): JsonValue? = runCatching { JsonParser(text).parseDocument() }.getOrNull()
 

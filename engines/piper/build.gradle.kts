@@ -12,6 +12,7 @@ plugins {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":engines:common"))
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(kotlin("test"))

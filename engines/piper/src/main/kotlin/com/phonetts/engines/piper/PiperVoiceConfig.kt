@@ -1,5 +1,13 @@
 package com.phonetts.engines.piper
 
+import com.phonetts.engines.common.json.JsonValue
+import com.phonetts.engines.common.json.MiniJson
+import com.phonetts.engines.common.json.asFloatOrNull
+import com.phonetts.engines.common.json.asIntOrNull
+import com.phonetts.engines.common.json.asLongListOrEmpty
+import com.phonetts.engines.common.json.asObjectOrNull
+import com.phonetts.engines.common.json.asStringOrNull
+
 /**
  * The subset of a Piper `<voice>.onnx.json` sidecar this engine needs.
  *
