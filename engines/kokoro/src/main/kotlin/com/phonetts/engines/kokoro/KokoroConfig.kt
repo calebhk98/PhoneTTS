@@ -7,8 +7,9 @@ import com.phonetts.engines.common.json.asObjectOrNull
 import com.phonetts.engines.common.json.asStringOrNull
 
 /**
- * Parses Kokoro's `config.json` companion file — one of the two side files [KokoroEngine.inspect]
- * fingerprints a bundle by (the other being [KokoroVoiceTable]'s `voices.json`). Reads it through
+ * Parses Kokoro's `config.json` companion file — one of the two signals [KokoroEngine.inspect]
+ * fingerprints a bundle by (the other being at least one `voices/<name>.bin` file present by
+ * name; see [KokoroVoiceTable]). Reads it through
  * the shared, dependency-free `com.phonetts.engines.common.json.MiniJson` reader every engine
  * module already links against for exactly this kind of small companion file, rather than a
  * second hand-rolled parser private to this engine.
@@ -37,8 +38,12 @@ object KokoroConfig {
 
     fun parse(text: String): Parsed {
         val root = MiniJson.parse(text)?.asObjectOrNull()
+        // The real onnx-community Kokoro export's config.json carries no "family" field — just
+        // {"model_type": "style_text_to_speech_2"}. Fall back to model_type so a curated/sideloaded
+        // real repo is recognized (KokoroEngine accepts either marker), while our own curated
+        // "family": "kokoro" bundles keep working.
         return Parsed(
-            family = root?.get(KEY_FAMILY)?.asStringOrNull(),
+            family = root?.get(KEY_FAMILY)?.asStringOrNull() ?: root?.get(KEY_MODEL_TYPE)?.asStringOrNull(),
             sampleRate = root?.get(KEY_SAMPLE_RATE)?.asIntOrNull(),
             speedMin = root?.get(KEY_SPEED_MIN)?.asFloatOrNull(),
             speedMax = root?.get(KEY_SPEED_MAX)?.asFloatOrNull(),
@@ -48,6 +53,7 @@ object KokoroConfig {
     }
 
     private const val KEY_FAMILY = "family"
+    private const val KEY_MODEL_TYPE = "model_type"
     private const val KEY_SAMPLE_RATE = "sample_rate"
     private const val KEY_SPEED_MIN = "speed_min"
     private const val KEY_SPEED_MAX = "speed_max"

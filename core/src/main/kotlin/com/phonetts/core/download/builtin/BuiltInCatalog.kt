@@ -5,10 +5,9 @@ package com.phonetts.core.download.builtin
 // produce valid audio (docs/MODEL-VERIFICATION.md) AND handled end-to-end by an engine's
 // inspect()/load() belong here — a one-tap download must not land a model that then fails to load.
 //
-// Kokoro and MeloTTS are intentionally absent for now: Kokoro's engine still expects a voices.json
-// table while the real repo ships voices/*.bin, and MeloTTS's frontend rework is in progress — both
-// tracked in docs/research/onnx-io.md and docs/MODEL-VERIFICATION.md. Adding them here is a one-line
-// change once their engines load the real repos.
+// MeloTTS is intentionally absent: it runs shape-correctly but doesn't yet produce real speech
+// (its symbol table is export-specific — see docs/MODEL-VERIFICATION.md), so a one-tap download
+// would land a silent model. It joins once it sings.
 object BuiltInCatalog {
     val PIPER_LESSAC =
         BuiltInModel(
@@ -45,6 +44,28 @@ object BuiltInCatalog {
             note = "Tiny 8-voice English model. Smallest download.",
         )
 
-    /** Every recommended model, in display order. */
-    val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO)
+    // The fp32 export (the q8f16 variant segfaults ONNX Runtime — docs/MODEL-VERIFICATION.md).
+    // Voices keep their voices/<name>.bin path so KokoroEngine.inspect() fingerprints them; a
+    // curated subset of the repo's 54 voices keeps the download reasonable while still multi-voice.
+    val KOKORO_82M =
+        BuiltInModel(
+            id = "kokoro-82m",
+            displayName = "Kokoro-82M (English, multi-voice)",
+            repoId = "onnx-community/Kokoro-82M-v1.0-ONNX",
+            approxSizeMb = 326,
+            files =
+                listOf(
+                    BuiltInFile("onnx/model.onnx", "model.onnx"),
+                    BuiltInFile("config.json", "config.json"),
+                    BuiltInFile("voices/af_heart.bin", "voices/af_heart.bin"),
+                    BuiltInFile("voices/af_bella.bin", "voices/af_bella.bin"),
+                    BuiltInFile("voices/am_michael.bin", "voices/am_michael.bin"),
+                    BuiltInFile("voices/bf_emma.bin", "voices/bf_emma.bin"),
+                    BuiltInFile("voices/bm_george.bin", "voices/bm_george.bin"),
+                ),
+            note = "Highest quality, 5 English voices. Larger download (fp32).",
+        )
+
+    /** Every recommended model, in display order (smallest-first is friendlier, but quality-first here). */
+    val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M)
 }

@@ -1,58 +1,71 @@
 package com.phonetts.engines.kokoro
 
 import com.phonetts.core.engine.Voice
-import com.phonetts.engines.common.json.JsonValue
-import com.phonetts.engines.common.json.MiniJson
-import com.phonetts.engines.common.json.asArrayOrNull
-import com.phonetts.engines.common.json.asFloatOrNull
-import com.phonetts.engines.common.json.asObjectOrNull
-import com.phonetts.engines.common.json.asStringOrNull
 
 /**
- * Parses Kokoro's voices/embeddings table — `voices.json` — the companion file
- * [KokoroEngine.inspect] requires alongside `config.json` to fail-closed-identify a bundle
- * (spec §9.1, docs/research/model-facts.md: "54 voices ... selected via voice embeddings, a
- * voices table, one embedding per voice — not per file").
+ * Builds Kokoro's per-voice tables from the REAL repo format
+ * (`onnx-community/Kokoro-82M-v1.0-ONNX`, VALIDATED via `scripts/model-verify/run_kokoro.py`): one
+ * `voices/<name>.bin` file per voice — NOT a `voices.json` name->embedding array and NOT a single
+ * zipped `voices.npz` archive like KittenTTS. Because each voice is its own named file, its id is
+ * known from the bundle's file NAMES alone (see [KokoroEngine.inspect]); only the [Entry.table]
+ * itself (the raw [KokoroVoiceBinReader.ROWS] x [KokoroVoiceBinReader.COLS] floats) requires
+ * reading the file's bytes, which happens later in [KokoroEngine.load].
  *
- * The real Kokoro ships this table as a binary `.npz` (a numpy archive keyed by voice name).
- * This module has no numpy/binary-tensor dependency, and [com.phonetts.core.model.ModelBundle]
- * only carries *text* side files for fingerprinting, so this engine's own bundle format instead
- * uses a small JSON text manifest carrying both the per-voice display metadata (id/name/language,
- * which feed [com.phonetts.core.model.ModelDescriptor.voices]) and the style embedding itself
- * (which [KokoroEngine.load] reads from disk to feed [com.phonetts.core.runtime.Tensor] inputs at
- * synthesis time). A real integration would swap this parser for an `.npz` reader without
- * touching the [KokoroEngine] contract around it. Read through the shared, dependency-free
- * `com.phonetts.engines.common.json.MiniJson` reader every engine module already links against,
- * rather than a second hand-rolled parser private to this engine.
- *
- * Expected shape — a JSON array of flat objects:
- * ```
- * [
- *   {"id": "af_heart", "name": "Heart", "language": "en-us", "embedding": [0.1, 0.2, 0.3]},
- *   {"id": "bf_emma", "name": "Emma", "language": "en-gb", "embedding": [0.4, -0.1, 0.2]}
- * ]
- * ```
+ * A voice's language is guessed from the first letter of its id, per Kokoro's own voice-naming
+ * convention (e.g. `af_heart` -> American English, `bf_emma` -> British English); an unrecognized
+ * prefix falls back to [DEFAULT_LANGUAGE] rather than guessing further.
  */
 object KokoroVoiceTable {
-    data class Entry(val voice: Voice, val embedding: FloatArray)
+    data class Entry(val voice: Voice, val table: FloatArray)
 
-    /** Parse the manifest text into ordered voice entries. Empty/malformed input yields no entries. */
-    fun parse(manifest: String): List<Entry> {
-        val entries = MiniJson.parse(manifest)?.asArrayOrNull() ?: return emptyList()
-        return entries.mapNotNull(::toEntryOrNull)
+    /**
+     * The [Voice] metadata for one voice id (a `.bin` file name with the `voices/` directory
+     * prefix and `.bin` suffix already stripped). No byte content is needed for this, so
+     * `inspect()`/`forcedMatch()` can build the full voice list from file names alone.
+     */
+    fun voiceFor(id: String): Voice = Voice(id = id, name = id, language = languageFor(id))
+
+    /**
+     * Decodes one voice's raw `.bin` [bytes] into a full [Entry], pairing [voiceFor]'s metadata
+     * with [KokoroVoiceBinReader]'s table. Null if [bytes] isn't the expected [510, 256] size.
+     */
+    fun entryFor(
+        id: String,
+        bytes: ByteArray,
+    ): Entry? {
+        val table = KokoroVoiceBinReader.parseTable(bytes) ?: return null
+        return Entry(voiceFor(id), table)
     }
 
-    private fun toEntryOrNull(value: JsonValue): Entry? {
-        val obj = value.asObjectOrNull() ?: return null
-        val id = obj[KEY_ID]?.asStringOrNull() ?: return null
-        val name = obj[KEY_NAME]?.asStringOrNull() ?: return null
-        val language = obj[KEY_LANGUAGE]?.asStringOrNull() ?: return null
-        val embedding = obj[KEY_EMBEDDING]?.asArrayOrNull()?.mapNotNull { it.asFloatOrNull() } ?: return null
-        return Entry(Voice(id = id, name = name, language = language), embedding.toFloatArray())
+    /**
+     * Decodes a full `id -> bytes` map (one entry per loaded `voices/<name>.bin` file) into ordered
+     * entries. A file whose byte count doesn't match [KokoroVoiceBinReader.EXPECTED_BYTE_COUNT] is
+     * skipped, not thrown — [KokoroEngine.load] fails closed on the whole table via emptiness, not
+     * a crash triggered by one bad file.
+     */
+    fun parse(voiceFiles: Map<String, ByteArray>): List<Entry> =
+        voiceFiles.toSortedMap().mapNotNull { (id, bytes) -> entryFor(id, bytes) }
+
+    // Kokoro voice-naming convention (onnx-community/Kokoro-82M-v1.0-ONNX `voices/` listing): the
+    // first letter of the id names the language/locale, the second the speaker gender — gender
+    // doesn't affect language routing, so only the first letter is keyed here.
+    private fun languageFor(voiceId: String): String {
+        val prefix = voiceId.firstOrNull() ?: return DEFAULT_LANGUAGE
+        return LANGUAGE_BY_PREFIX[prefix] ?: DEFAULT_LANGUAGE
     }
 
-    private const val KEY_ID = "id"
-    private const val KEY_NAME = "name"
-    private const val KEY_LANGUAGE = "language"
-    private const val KEY_EMBEDDING = "embedding"
+    const val DEFAULT_LANGUAGE = "en-us"
+
+    private val LANGUAGE_BY_PREFIX =
+        mapOf(
+            'a' to "en-us",
+            'b' to "en-gb",
+            'j' to "ja",
+            'z' to "cmn",
+            'e' to "es",
+            'f' to "fr-fr",
+            'h' to "hi",
+            'i' to "it",
+            'p' to "pt-br",
+        )
 }

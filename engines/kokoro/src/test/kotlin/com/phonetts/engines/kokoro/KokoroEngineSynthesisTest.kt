@@ -16,43 +16,46 @@ private const val CONFIG =
     """{"family": "kokoro", "sample_rate": 24000, "speed_min": 0.5, "speed_max": 2.0, """ +
         """"default_voice": "af_heart", "default_speed": 1.0}"""
 
-// A small fake voices/embeddings table for the seam - two voices with distinct, easily
-// distinguishable embeddings so a test can prove the *right* row reaches the session.
-private const val VOICES =
-    """[
-        {"id": "af_heart", "name": "Heart", "language": "en-us", "embedding": [0.1, 0.2, 0.3]},
-        {"id": "bf_emma", "name": "Emma", "language": "en-gb", "embedding": [0.4, -0.1, 0.2]}
-    ]"""
-
 /**
- * synthesize()-side plumbing: speed routes to the model's native "speed" parameter (spec §9.4),
- * the selected voice's row from the embeddings table (not a per-file weight) reaches the
- * session, and load()/unload() manage the one live session (spec §5.5).
+ * synthesize()-side plumbing against the REAL Kokoro voice format (VALIDATED via
+ * `scripts/model-verify/run_kokoro.py`): speed routes to the model's native "speed" parameter
+ * (spec §9.4), the STYLE ROW selected by the active voice's `voices/<name>.bin` table -- indexed
+ * by that sentence's token count, not a flat per-voice embedding -- reaches the session, and
+ * load()/unload() manage the one live session (spec §5.5).
  */
 class KokoroEngineSynthesisTest {
-    // A fully in-memory Kokoro-shaped bundle: inspect() reads the companions from sideFiles, and
-    // load() reads the voices table through the engine's injected fileReader (Fixture below) — no
-    // temp files needed. rootPath is a virtual string only used to build (unread) asset paths.
+    // A fully in-memory Kokoro-shaped bundle: inspect() sees the voice ids from file NAMES
+    // (voices/*.bin is binary, never a text side file) and reads the config from sideFiles;
+    // load() reads each voice's raw bytes through the engine's injected fileReader (Fixture
+    // below) -- no temp files needed. rootPath is a virtual string only used to build asset paths.
     private fun inMemoryBundle(): ModelBundle =
         ModelBundle(
             id = "kokoro-synth-test",
-            fileNames = setOf("model.onnx", "config.json", "voices.json"),
-            sideFiles = mapOf("config.json" to CONFIG, "voices.json" to VOICES),
+            fileNames = setOf("model.onnx", "config.json", "voices/af_heart.bin", "voices/bf_emma.bin"),
+            sideFiles = mapOf("config.json" to CONFIG),
             rootPath = "/virtual/kokoro",
         )
 
-    private class Fixture {
+    private class Fixture(
+        voiceTables: Map<String, FloatArray> =
+            mapOf(
+                "af_heart" to KokoroBinFixtures.uniformTable(0.1f),
+                "bf_emma" to KokoroBinFixtures.uniformTable(0.4f),
+            ),
+    ) {
         val session = FakeSession(outputs = mapOf("waveform" to Tensor.floats(floatArrayOf(0.1f, -0.2f))))
+        private val voiceBytes = voiceTables.mapValues { (_, table) -> KokoroBinFixtures.bytesFor(table) }
         val engine =
             KokoroEngine(
                 onnxEngineContext(session),
-                // The injected reader seam: load() gets the voices table without touching disk.
-                fileReader = { VOICES },
+                // The injected reader seam: load() gets each voice's raw bytes without touching
+                // disk, keyed by the "<dir>/<voiceId>.bin" path the engine itself constructs.
+                fileReader = { path -> voiceBytes.getValue(path.substringAfterLast('/').removeSuffix(".bin")) },
             )
     }
 
     @Test
-    fun loadPopulatesVoicesFromTheEmbeddingsTable() =
+    fun loadPopulatesVoicesFromTheirBinFiles() =
         runTest {
             val fixture = Fixture()
             val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
@@ -76,7 +79,7 @@ class KokoroEngineSynthesisTest {
         }
 
     @Test
-    fun synthesizeFeedsTheSelectedVoicesEmbeddingNotAnyOthers() =
+    fun synthesizeFeedsTheSelectedVoicesTableNotAnyOthers() =
         runTest {
             val fixture = Fixture()
             val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
@@ -85,11 +88,11 @@ class KokoroEngineSynthesisTest {
             fixture.engine.synthesize("Hi.", "bf_emma", 1.0f).toList()
 
             val run = fixture.session.runs.single()
-            assertContentEquals(floatArrayOf(0.4f, -0.1f, 0.2f), run.getValue("style").asFloats())
+            assertContentEquals(FloatArray(256) { 0.4f }, run.getValue("style").asFloats())
         }
 
     @Test
-    fun synthesizeUsesTheOtherVoicesEmbeddingWhenThatOneIsSelectedInstead() =
+    fun synthesizeUsesTheOtherVoicesTableWhenThatOneIsSelectedInstead() =
         runTest {
             val fixture = Fixture()
             val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
@@ -98,7 +101,31 @@ class KokoroEngineSynthesisTest {
             fixture.engine.synthesize("Hi.", "af_heart", 1.0f).toList()
 
             val run = fixture.session.runs.single()
-            assertContentEquals(floatArrayOf(0.1f, 0.2f, 0.3f), run.getValue("style").asFloats())
+            assertContentEquals(FloatArray(256) { 0.1f }, run.getValue("style").asFloats())
+        }
+
+    @Test
+    fun synthesizeSelectsTheStyleRowIndexedByTheSentencesTokenCount() =
+        runTest {
+            // "hello" is 5 plain-ASCII lowercase letters -> KokoroFrontend's misaki stand-in
+            // accepts it whole and emits exactly 5 tokens, so the VALIDATED recipe's
+            // `row = min(tokenCount, 509)` (scripts/model-verify/run_kokoro.py line 23) selects
+            // row 5 -- distinguishable here because tableWithRowMarkers() makes row r's value r.
+            val fixture =
+                Fixture(
+                    voiceTables =
+                        mapOf(
+                            "af_heart" to KokoroBinFixtures.tableWithRowMarkers(),
+                            "bf_emma" to KokoroBinFixtures.uniformTable(0.4f),
+                        ),
+                )
+            val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
+            fixture.engine.load(descriptor)
+
+            fixture.engine.synthesize("hello", "af_heart", 1.0f).toList()
+
+            val run = fixture.session.runs.single()
+            assertContentEquals(FloatArray(256) { 5f }, run.getValue("style").asFloats())
         }
 
     @Test

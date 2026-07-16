@@ -14,7 +14,7 @@ the models; need `python3`, `onnxruntime`, `numpy`, and `espeak-ng` on PATH for 
 | Model | Voice | Tokens | Duration | WAV size | Peak | NaNs | Verdict |
 |---|---|---|---|---|---|---|---|
 | **Piper** (en_US-lessac-medium) | lessac | 390 | **9.68 s** | **417 KB** | 0.639 | none | ✅ PASS |
-| **Kokoro-82M** (fp32) | af_heart | 193 | **11.05 s** | **518 KB** | 0.519 | none | ✅ PASS |
+| **Kokoro-82M** (fp32) | af_heart | 193 | **11.05 s** | **518 KB** | 0.519 | none | ✅ PASS (now one-tap) |
 | **KittenTTS** (nano-0.1) | expr-voice-2-m | 194 | **10.25 s** | **480 KB** | 0.667 | none | ✅ PASS |
 | MeloTTS (zh_mix_en export) | EN | 162 | 8.73 s | 752 KB | **0.000** | none | ⚠️ RUNS but **silent** — see below |
 | CosyVoice2-0.5B | — | — | — | — | — | — | ⏸ deferred (LLM, ~1 GB, autoregressive) |
@@ -29,10 +29,12 @@ Every passing model clears the > 1 KB / > 2 s bar with large margins, confirming
    **fp32** `onnx/model.onnx` runs cleanly. The one-tap download therefore pulls a known-good
    variant, and the in-app quantized-variant picker should treat q8f16 as risky. (onnxruntime-android
    may differ, but we default to the safe file.)
-2. **Kokoro voice format:** the real repo ships voices as `voices/*.bin` (`[510, 256]` float32,
-   indexed by token count), **not** the `voices.json` name→embedding table `KokoroEngine` currently
-   expects. The model is proven working (above); the engine's voice loader needs to read `*.bin`
-   before Kokoro is one-tap-ready in-app. Tracked as a follow-up.
+2. **Kokoro voice format — FIXED.** The real repo ships voices as `voices/*.bin` (`[510, 256]`
+   float32, indexed by token count), not a `voices.json` table, and its `config.json` marks the
+   family via `"model_type": "style_text_to_speech_2"` (no `family` field). `KokoroEngine` now
+   reads `voices/<name>.bin` and selects the length-indexed style row (matching this test exactly),
+   and detection accepts the real StyleTTS2 marker — so **Kokoro is now in the one-tap
+   `BuiltInCatalog`** (fp32, 5 English voices).
 3. **Phonemization** here uses system `espeak-ng` (same engine the app's `EspeakPhonemizer` wraps via
    NDK), so these token sequences match what the app produces once the espeak native build is on.
 
