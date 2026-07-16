@@ -69,6 +69,7 @@ dependencies {
     runtimeOnly(project(":engines:kokoro"))
 
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json) // HfCatalog exposes a kotlinx.serialization Json default
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
