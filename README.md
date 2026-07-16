@@ -82,6 +82,9 @@ the APK — you pick and download them on first use, and they're stored privatel
 You can also sideload a model folder, or import a document (.txt/.md/.html/.docx/.pdf) to read
 aloud. Everything after the download runs **fully offline** — no network is used during speech.
 
+**Which models to download — and the gotchas** (which Hugging Face repos work, the exact files
+each engine needs, sizes, and troubleshooting) are in **[`docs/MODELS.md`](docs/MODELS.md)**.
+
 ### Pre-commit hook
 
 Commits are gated on **ktlint + detekt + `:core` tests** (see `scripts/`). Install the hook
