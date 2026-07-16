@@ -1,6 +1,7 @@
 package com.phonetts.app
 
 import android.content.Context
+import com.phonetts.app.audio.export.ExportFormats
 import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
 import com.phonetts.app.runtime.OnnxRuntime
@@ -9,6 +10,9 @@ import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.prefs.DocumentMemory
+import com.phonetts.core.prefs.FavoriteVoices
+import com.phonetts.core.resolver.DetectionFailureExplainer
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
 import com.phonetts.core.registry.EngineRegistry
@@ -65,6 +69,18 @@ class AppGraph(context: Context) {
             overrideStore = overrideStore,
             engineManager = engineManager,
         )
+
+    // Preferences-backed features: favorite voices + per-language default, per-document resume,
+    // and the read-only "why did detection fail" explainer. All model facts still come from
+    // descriptor.voices / the registry — these only persist user choices.
+    private val preferenceStore = PrefsPreferenceStore(appContext)
+    val favoriteVoices = FavoriteVoices(preferenceStore)
+    val documentMemory = DocumentMemory(preferenceStore)
+    val detectionFailureExplainer = DetectionFailureExplainer()
+
+    // The export-format registry (WAV always; AAC always; Opus on API 29+). The picker reads
+    // display names/extensions/MIME from here — no format string is hardcoded in the UI (SSOT).
+    val exportFormats = ExportFormats.available(appContext)
 
     /**
      * Re-import previously downloaded/sideloaded model folders so the catalog is repopulated on

@@ -58,7 +58,7 @@ fun TtsScreen(
             uri?.let(viewModel::importTextFrom)
         }
     val exportLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/*")) { uri ->
             uri?.let { context.contentResolver.openOutputStream(it)?.let(viewModel::export) }
         }
     val sideloadLauncher =
@@ -105,9 +105,9 @@ fun TtsScreen(
                 enabled = state.selected != null && !state.busy,
             ) { Text("Sample voice") }
             OutlinedButton(
-                onClick = { exportLauncher.launch("speech.wav") },
+                onClick = { exportLauncher.launch("speech.${state.exportFormat.format.fileExtension}") },
                 enabled = state.selected != null && !state.busy,
-            ) { Text("Export WAV") }
+            ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
             OutlinedButton(onClick = { importLauncher.launch(IMPORT_MIME_TYPES) }) { Text("Import file") }
             OutlinedButton(onClick = onBrowseModels) { Text("Browse models") }
             OutlinedButton(onClick = onManageModels) { Text("Manage models") }
@@ -115,10 +115,45 @@ fun TtsScreen(
         }
 
         TransformToggles(state, viewModel)
+        if (viewModel.exportFormats.size > 1) {
+            ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
+        }
 
         if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.stats?.let { GenerationStatsView(it) }
         state.status?.let { Text(it) }
+    }
+}
+
+/** Export-format picker; the list + display names come from the encoder registry (SSOT). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExportFormatPicker(
+    formats: List<com.phonetts.core.audio.export.AudioEncoder>,
+    selected: com.phonetts.core.audio.export.AudioEncoder,
+    onSelect: (com.phonetts.core.audio.export.AudioEncoder) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        TextField(
+            value = selected.format.displayName,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Export format") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            formats.forEach { encoder ->
+                DropdownMenuItem(
+                    text = { Text(encoder.format.displayName) },
+                    onClick = {
+                        onSelect(encoder)
+                        expanded = false
+                    },
+                )
+            }
+        }
     }
 }
 

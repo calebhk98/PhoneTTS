@@ -7,7 +7,7 @@ import com.phonetts.app.AppGraph
 import com.phonetts.app.audio.AudioTrackSink
 import com.phonetts.core.audio.buffer.BufferedPlayback
 import com.phonetts.core.audio.buffer.GeneratedAudio
-import com.phonetts.core.audio.export.WavEncoder
+import com.phonetts.core.audio.export.AudioEncoder
 import com.phonetts.core.audio.transform.Crossfade
 import com.phonetts.core.audio.transform.LoudnessNormalize
 import com.phonetts.core.audio.transform.SilenceTrim
@@ -53,9 +53,31 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val normalizeVolume: Boolean = false,
         val crossfadeJoins: Boolean = false,
         val stats: GenerationStats? = null,
+        // Chosen export encoder (WAV/AAC/Opus); the list is derived from AppGraph.exportFormats.
+        val exportFormat: AudioEncoder,
     )
 
-    private val mutableState = MutableStateFlow(UiState())
+    /** The export encoders available on this device (WAV always; AAC always; Opus on API 29+). */
+    val exportFormats: List<AudioEncoder> = graph.exportFormats
+
+    /**
+     * The control surface the background [com.phonetts.app.playback.PlaybackService] drives from
+     * its notification / lock-screen controls — the SAME pause/resume/stop as the in-app buttons,
+     * so there is no second control path.
+     */
+    val playbackController =
+        object : com.phonetts.app.playback.PlaybackController {
+            override val isPlaying: Boolean get() = mutableState.value.playing
+            override val isPaused: Boolean get() = mutableState.value.paused
+
+            override fun pause() = pausePlayback()
+
+            override fun resume() = resumePlayback()
+
+            override fun stop() = this@TtsViewModel.stop()
+        }
+
+    private val mutableState = MutableStateFlow(UiState(exportFormat = exportFormats.first()))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
     private val sink = AudioTrackSink()
@@ -96,6 +118,8 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     fun setNormalizeVolume(on: Boolean) = mutableState.update { it.copy(normalizeVolume = on) }
 
     fun setCrossfadeJoins(on: Boolean) = mutableState.update { it.copy(crossfadeJoins = on) }
+
+    fun setExportFormat(encoder: AudioEncoder) = mutableState.update { it.copy(exportFormat = encoder) }
 
     fun play() {
         val s = mutableState.value
@@ -194,7 +218,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
                 withContext(Dispatchers.IO) {
                     output.use {
-                        WavEncoder().encode(engine.synthesize(s.text, voiceId, s.speed), descriptor.sampleRate, it, transforms)
+                        s.exportFormat.encode(engine.synthesize(s.text, voiceId, s.speed), descriptor.sampleRate, it, transforms)
                     }
                 }
             }
