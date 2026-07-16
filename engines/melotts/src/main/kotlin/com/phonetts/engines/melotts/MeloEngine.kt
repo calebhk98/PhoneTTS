@@ -3,9 +3,11 @@ package com.phonetts.engines.melotts
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.ModelInput
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
@@ -126,8 +128,9 @@ internal class MeloEngine(
     override fun synthesizeSentence(
         sentence: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): FloatArray {
+        val speed = params.speed
         require(speed > 0f) { "$engineLabel: speed must be positive, was $speed" }
         val session = checkNotNull(acousticSession) { "$engineLabel.synthesizeSentence called before load()" }
         val activeFrontend = checkNotNull(frontend) { "$engineLabel.synthesizeSentence called before load()" }
@@ -189,9 +192,10 @@ internal class MeloEngine(
             origin = origin,
             sampleRate = metadata?.sampleRate ?: DEFAULT_SAMPLE_RATE,
             voices = voices,
-            speedRange = SPEED_RANGE,
             defaultVoiceId = defaultVoiceId(voices, metadata),
-            defaultSpeed = DEFAULT_SPEED,
+            // Introspected: MeloTTS's VITS2 graph has a native length_scale input, so it advertises a
+            // speed knob (routed to length_scale = 1/speed — never resampled, CLAUDE.md rule 2).
+            parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths = assetPaths,
         )
 

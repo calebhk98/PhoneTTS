@@ -1,10 +1,12 @@
 package com.phonetts.core.testing
 
 import com.phonetts.core.engine.EngineMatch
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -28,9 +30,8 @@ fun testDescriptor(
         origin = origin,
         sampleRate = sampleRate,
         voices = voices,
-        speedRange = speedRange,
         defaultVoiceId = voices.first().id,
-        defaultSpeed = 1.0f.coerceIn(speedRange),
+        parameters = listOf(ModelParameter.speed(speedRange, 1.0f.coerceIn(speedRange))),
     )
 
 /**
@@ -59,6 +60,8 @@ class FakeEngine(
         private set
     var lastSpeed: Float? = null
         private set
+    var lastParams: SynthesisParams? = null
+        private set
     var lastVoiceId: String? = null
         private set
 
@@ -86,9 +89,10 @@ class FakeEngine(
     override fun synthesize(
         text: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): Flow<FloatArray> {
-        lastSpeed = speed
+        lastParams = params
+        lastSpeed = params.speed
         lastVoiceId = voiceId
         return flowOf(*audio.toTypedArray())
     }

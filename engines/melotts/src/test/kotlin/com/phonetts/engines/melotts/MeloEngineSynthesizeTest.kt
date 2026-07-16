@@ -2,6 +2,7 @@ package com.phonetts.engines.melotts
 
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.Tensor
 import com.phonetts.core.testing.FakeRuntime
@@ -50,9 +51,8 @@ class MeloEngineSynthesizeTest {
             origin = Origin.BUILT_IN,
             sampleRate = 44_100,
             voices = listOf(Voice("0", "Speaker 1", "en"), Voice("1", "Speaker 2", "en")),
-            speedRange = 0.5f..2.0f,
             defaultVoiceId = "0",
-            defaultSpeed = 1.0f,
+            parameters = listOf(ModelParameter.speed(0.5f..2.0f, 1.0f)),
             assetPaths =
                 mapOf(
                     MeloEngine.ACOUSTIC_ASSET to acousticPath,

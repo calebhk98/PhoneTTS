@@ -2,10 +2,12 @@ package com.phonetts.engines.kokoro
 
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.TextFrontend
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
@@ -156,8 +158,9 @@ internal class KokoroEngine(
     override fun synthesizeSentence(
         sentence: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): FloatArray {
+        val speed = params.speed
         val activeSession = session ?: error("$engineLabel.synthesizeSentence called before load()")
         val activeFrontend = frontend ?: error("$engineLabel.synthesizeSentence called before load()")
         val table = voiceTables[voiceId] ?: error("Unknown Kokoro voice id '$voiceId'")
@@ -233,9 +236,11 @@ internal class KokoroEngine(
             origin = origin,
             sampleRate = config.sampleRate ?: SAMPLE_RATE,
             voices = voices,
-            speedRange = speedRange,
             defaultVoiceId = defaultVoiceId,
-            defaultSpeed = defaultSpeed,
+            // Introspected: Kokoro's StyleTTS2 graph has a native "speed" input, and its bounds come
+            // from the model's own config.json (speed_min/max/default) — a per-model fact, not a
+            // constant. Routed to that scalar, never resampled (CLAUDE.md rule 2).
+            parameters = listOf(ModelParameter.speed(speedRange, defaultSpeed)),
             assetPaths =
                 mapOf(
                     WEIGHTS_ASSET to joinAssetPath(bundle, weightsFile),
@@ -257,9 +262,8 @@ internal class KokoroEngine(
             origin = Origin.SIDELOADED,
             sampleRate = SAMPLE_RATE,
             voices = listOf(fallbackVoice),
-            speedRange = FALLBACK_SPEED_MIN..FALLBACK_SPEED_MAX,
             defaultVoiceId = fallbackVoice.id,
-            defaultSpeed = FALLBACK_DEFAULT_SPEED,
+            parameters = listOf(ModelParameter.speed(FALLBACK_SPEED_MIN..FALLBACK_SPEED_MAX, FALLBACK_DEFAULT_SPEED)),
             assetPaths = mapOf(WEIGHTS_ASSET to joinAssetPath(bundle, weightsFile)),
         )
     }

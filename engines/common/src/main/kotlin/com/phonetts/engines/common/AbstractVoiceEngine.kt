@@ -1,6 +1,7 @@
 package com.phonetts.engines.common
 
 import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.VoiceEngine
 import com.phonetts.core.text.TextChunker
 import kotlinx.coroutines.Dispatchers
@@ -30,23 +31,26 @@ abstract class AbstractVoiceEngine(
     /** True once [load] has completed and the engine can synthesize. */
     protected abstract fun isLoaded(): Boolean
 
-    /** Synthesize exactly one sentence to audio samples. All model-specific work lives here. */
+    /**
+     * Synthesize exactly one sentence to audio samples. All model-specific work lives here — read
+     * whatever declared parameters this engine supports from [params] (e.g. `params.speed`).
+     */
     protected abstract fun synthesizeSentence(
         sentence: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): FloatArray
 
     final override fun synthesize(
         text: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): Flow<FloatArray> {
-        require(speed > 0f) { "speed must be positive, was $speed" }
+        require(params.speed > 0f) { "speed must be positive, was ${params.speed}" }
         check(isLoaded()) { "$engineLabel.synthesize called before load()" }
         return flow {
             for (sentence in TextChunker.intoSentences(text)) {
-                emit(synthesizeSentence(sentence, voiceId, speed))
+                emit(synthesizeSentence(sentence, voiceId, params))
             }
             // flowOn moves the per-sentence inference off the collector's thread (rule 8: never on
             // the main thread), so a UI callsite can't accidentally run ONNX/AR inference on Main.

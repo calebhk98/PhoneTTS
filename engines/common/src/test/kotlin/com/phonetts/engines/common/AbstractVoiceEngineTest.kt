@@ -1,6 +1,7 @@
 package com.phonetts.engines.common
 
 import com.phonetts.core.engine.EngineMatch
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
@@ -25,7 +26,7 @@ private class StubEngine(loaded: Boolean) : AbstractVoiceEngine(engineContext())
     override fun synthesizeSentence(
         sentence: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): FloatArray {
         sentences.add(sentence)
         return floatArrayOf(0.1f)

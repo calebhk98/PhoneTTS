@@ -27,10 +27,14 @@ data class ModelDescriptor(
     val sampleRate: Int,
     /** The voice dropdown reads THIS. */
     val voices: List<Voice>,
-    /** The speed slider configures its own bounds from THIS. */
-    val speedRange: ClosedFloatingPointRange<Float>,
     val defaultVoiceId: String,
-    val defaultSpeed: Float,
+    /**
+     * The tunable synthesis parameters this model actually supports — the SSOT the UI iterates to
+     * render a control per knob (dynamic, so a model that adds an emotion selector needs no app
+     * change; a model without a speed knob, like CosyVoice3, simply omits it). Discovered by the
+     * engine when it inspects the model, never a hardcoded assumption. May be empty.
+     */
+    val parameters: List<ModelParameter> = emptyList(),
     /**
      * Logical file name → on-device absolute path for this model's weights and side files,
      * populated by the engine from the bundle it inspected. Generic (every model has files);
@@ -38,14 +42,33 @@ data class ModelDescriptor(
      */
     val assetPaths: Map<String, String> = emptyMap(),
 ) {
+    /** The speed knob if this model has one, else null (e.g. CosyVoice3 exposes no speed parameter). */
+    val speedParameter: ModelParameter?
+        get() = parameters.firstOrNull { it.id == ModelParameter.SPEED_ID }
+
+    /**
+     * The speed slider's bounds, derived from [speedParameter]. A model without a speed knob reports
+     * a locked `1.0..1.0` — honest-closed, so the UI shows no adjustable speed rather than faking one.
+     */
+    val speedRange: ClosedFloatingPointRange<Float>
+        get() = speedParameter?.range ?: LOCKED_SPEED
+
+    /** The default speed, derived from [speedParameter] (1.0 when the model has no speed knob). */
+    val defaultSpeed: Float
+        get() = speedParameter?.default ?: 1.0f
+
     init {
         require(voices.isNotEmpty()) { "descriptor $modelId must expose at least one voice" }
         require(voices.any { it.id == defaultVoiceId }) {
             "defaultVoiceId '$defaultVoiceId' is not among the voices of $modelId"
         }
-        require(defaultSpeed in speedRange) {
-            "defaultSpeed $defaultSpeed is outside speedRange $speedRange for $modelId"
+        require(parameters.distinctBy { it.id }.size == parameters.size) {
+            "descriptor $modelId has duplicate parameter ids"
         }
         require(sampleRate > 0) { "sampleRate must be positive for $modelId" }
+    }
+
+    private companion object {
+        val LOCKED_SPEED = 1.0f..1.0f
     }
 }

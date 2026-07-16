@@ -2,9 +2,11 @@ package com.phonetts.engines.piper
 
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Runtime
@@ -95,8 +97,9 @@ internal class PiperEngine(
     override fun synthesizeSentence(
         sentence: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): FloatArray {
+        val speed = params.speed
         val loadedVoice = loadedVoices[voiceId] ?: error("Piper voice '$voiceId' is not loaded")
         val frontend = PiperFrontend(context.phonemizer, loadedVoice.config.phonemeIdMap)
         val input = frontend.toModelInput(sentence, loadedVoice.config.language)
@@ -171,9 +174,10 @@ internal class PiperEngine(
             origin = origin,
             sampleRate = entries.first().config.sampleRate,
             voices = voices,
-            speedRange = SPEED_RANGE,
             defaultVoiceId = voices.first().id,
-            defaultSpeed = DEFAULT_SPEED,
+            // Introspected: Piper's VITS graph has a native length/duration input (scales[1]), so it
+            // advertises a speed knob (routed to length_scale — never resampled, CLAUDE.md rule 2).
+            parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths = assetPaths,
         )
     }

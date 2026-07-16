@@ -2,6 +2,7 @@ package com.phonetts.engines.cosyvoice2
 
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
@@ -30,9 +31,11 @@ import com.phonetts.engines.common.requireRuntime
  * (the earlier skeleton's Qwen2 token-id placeholder frontend and separate ONNX graphs are gone).
  * The voice list is the SSOT-clean set the native session reads from the model's voices GGUF.
  *
- * Speed: the CrispASR synth C ABI exposes no speed knob, and CLAUDE.md rule 2 forbids resampling
- * output audio to fake one (that shifts pitch). So this engine advertises a **locked speed of 1.0**
- * ([SPEED_RANGE]) — honest-closed — until the native path routes a native token-rate parameter.
+ * Parameters: the CrispASR synth C ABI exposes no speed (or any other) knob, and CLAUDE.md rule 2
+ * forbids resampling output audio to fake one (that shifts pitch). So this engine declares **no
+ * tunable parameters** — the descriptor's parameter list is empty, the UI shows no speed control,
+ * and [ModelDescriptor.speedRange] resolves to a locked `1.0..1.0`. Honest-closed: a speed knob will
+ * appear only if/when the native path genuinely routes one.
  *
  * One engine loaded at a time (spec §5.5): [load] opens one [NativeTtsSession], [unload] closes it.
  */
@@ -89,11 +92,12 @@ internal class CosyVoice2Engine(
     override fun synthesizeSentence(
         sentence: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): FloatArray {
         val loaded = checkNotNull(state) { "$engineLabel.synthesizeSentence called before load()" }
-        // speed is intentionally unused: SPEED_RANGE locks it to 1.0 (see the class kdoc) so the
-        // native synth is never asked to time-scale, and audio is never resampled (CLAUDE.md rule 2).
+        // params is intentionally unused: this engine declares NO tunable parameters (the native
+        // synth has no speed/other knob — see buildDescriptor), so there is nothing to route and
+        // audio is never resampled (CLAUDE.md rule 2).
         val voiceName = loaded.voices.firstOrNull { it.id == voiceId }?.id ?: loaded.voices.first().id
         return loaded.session.synthesize(NativeTtsRequest(text = sentence, voiceName = voiceName))
     }
@@ -139,9 +143,11 @@ internal class CosyVoice2Engine(
             origin = origin,
             sampleRate = SAMPLE_RATE_HZ,
             voices = listOf(DEFAULT_VOICE),
-            speedRange = SPEED_RANGE,
             defaultVoiceId = DEFAULT_VOICE.id,
-            defaultSpeed = DEFAULT_SPEED,
+            // No tunable parameters: introspected fact — the CrispASR synth C ABI exposes no speed
+            // (or any other) knob, so the descriptor advertises none and the UI shows no speed
+            // control (rather than a fake one that would need resampling, CLAUDE.md rule 2).
+            parameters = emptyList(),
             assetPaths = buildAssetPaths(bundle),
         )
 
@@ -170,10 +176,6 @@ internal class CosyVoice2Engine(
         const val NATIVE_RUNTIME_ID = "cosyvoice"
 
         private const val SAMPLE_RATE_HZ = 24_000
-
-        // Locked at 1.0: the native synth exposes no speed knob and rule 2 forbids resampling.
-        private val SPEED_RANGE = 1.0f..1.0f
-        private const val DEFAULT_SPEED = 1.0f
 
         // CosyVoice3 is multilingual and reads any language directly, so this default is cosmetic
         // (the native BPE tokenizer, not the Kotlin phonemizer, handles text). zero_shot is the

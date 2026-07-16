@@ -42,14 +42,27 @@ interface VoiceEngine {
     fun voices(): List<Voice>
 
     /**
-     * The ONE generation path. Real-time playback and file export both consume this same
-     * flow (spec §6.1). Emits audio in chunks so playback/writing can start before the whole
-     * utterance is generated. [speed] always routes to the model's native duration/speed
-     * parameter — never resample the output to change speed (that shifts pitch, spec §1.1.3).
+     * The ONE generation path. Real-time playback and file export both consume this same flow
+     * (spec §6.1). Emits audio in chunks so playback/writing can start before the whole utterance
+     * is generated. [params] carries the chosen values for the model's declared
+     * [com.phonetts.core.model.ModelDescriptor.parameters] — each routes to the model's native
+     * parameter (speed → the native duration knob, etc.); output audio is NEVER resampled to change
+     * speed (that shifts pitch, spec §1.1.3). An engine reads only the parameters it declared.
+     */
+    fun synthesize(
+        text: String,
+        voiceId: String,
+        params: SynthesisParams,
+    ): Flow<FloatArray>
+
+    /**
+     * Convenience for the common "just a speed" call (keeps the many existing call sites terse).
+     * Delegates to the [params] path with only speed set — every other declared parameter takes its
+     * default.
      */
     fun synthesize(
         text: String,
         voiceId: String,
         speed: Float,
-    ): Flow<FloatArray>
+    ): Flow<FloatArray> = synthesize(text, voiceId, SynthesisParams.ofSpeed(speed))
 }

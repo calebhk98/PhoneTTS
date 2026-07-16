@@ -12,6 +12,7 @@ import com.phonetts.core.audio.transform.Crossfade
 import com.phonetts.core.audio.transform.LoudnessNormalize
 import com.phonetts.core.audio.transform.SilenceTrim
 import com.phonetts.core.audio.transform.TransformChain
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.metrics.GenerationStats
 import com.phonetts.core.metrics.RtfEstimator
@@ -43,7 +44,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val models: List<ModelDescriptor> = emptyList(),
         val selected: ModelDescriptor? = null,
         val voiceId: String? = null,
-        val speed: Float = 1f,
+        // The user's chosen value for each parameter the selected model declares (keyed by
+        // ModelParameter.id). Dynamic: whatever parameters a model advertises get an entry here, so a
+        // model that adds e.g. an emotion knob needs no new field. The generation path reads [params].
+        val paramValues: Map<String, Float> = emptyMap(),
         val text: String = "",
         val busy: Boolean = false,
         val playing: Boolean = false,
@@ -60,7 +64,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // the voice picker reads this to star/sort — the voices themselves still come from
         // descriptor.voices (SSOT).
         val favoriteVoiceIds: Set<String> = emptySet(),
-    )
+    ) {
+        /** The chosen parameter values, as the [SynthesisParams] bag the one generation path consumes. */
+        val params: SynthesisParams get() = SynthesisParams(paramValues)
+    }
 
     /** The export encoders available on this device (WAV always; AAC always; Opus on API 29+). */
     val exportFormats: List<AudioEncoder> = graph.exportFormats
@@ -102,7 +109,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 models = models,
                 selected = selected,
                 voiceId = current.voiceId ?: selected?.let(::defaultVoiceIdFor),
-                speed = selected?.defaultSpeed ?: current.speed,
+                paramValues = selected?.let(::defaultParamValues) ?: current.paramValues,
                 favoriteVoiceIds = graph.favoriteVoices.favoriteIds(),
             )
         }
@@ -110,8 +117,16 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun selectModel(descriptor: ModelDescriptor) =
         mutableState.update {
-            it.copy(selected = descriptor, voiceId = defaultVoiceIdFor(descriptor), speed = descriptor.defaultSpeed)
+            it.copy(
+                selected = descriptor,
+                voiceId = defaultVoiceIdFor(descriptor),
+                paramValues = defaultParamValues(descriptor),
+            )
         }
+
+    // Each declared parameter's default value, keyed by id — the starting point for the controls.
+    private fun defaultParamValues(descriptor: ModelDescriptor): Map<String, Float> =
+        descriptor.parameters.associate { it.id to it.default }
 
     // Remembering the user's manual pick as the per-language default (favoriteVoices.setDefaultVoice)
     // is what makes defaultVoiceIdFor's prefill useful next time this language comes up.
@@ -137,7 +152,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         return saved?.id ?: fallbackId
     }
 
-    fun setSpeed(speed: Float) = mutableState.update { it.copy(speed = speed) }
+    /** Set the value of one declared parameter (e.g. "speed") by id — the UI's generic control hook. */
+    fun setParam(
+        id: String,
+        value: Float,
+    ) = mutableState.update { it.copy(paramValues = it.paramValues + (id to value)) }
 
     fun setText(text: String) = mutableState.update { it.copy(text = text) }
 
@@ -157,7 +176,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(playing = true, paused = false, status = null, stats = null) }
 
         val audio = GeneratedAudio()
-        genJob = viewModelScope.launch { generate(descriptor, voiceId, s.speed, s.text, audio) }
+        genJob = viewModelScope.launch { generate(descriptor, voiceId, s.params, s.text, audio) }
         playJob =
             viewModelScope.launch {
                 runCatching { playback.play(audio, descriptor.sampleRate, sink) }
@@ -170,7 +189,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private suspend fun generate(
         descriptor: ModelDescriptor,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
         text: String,
         audio: GeneratedAudio,
     ) {
@@ -178,7 +197,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             graph.engineManager.switchTo(descriptor.engineId, descriptor)
             val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
             val totalWords = WordCounter.count(text)
-            engine.synthesize(text, voiceId, speed)
+            engine.synthesize(text, voiceId, params)
                 .trackGeneration(descriptor.sampleRate, totalWords = totalWords)
                 .collect { (chunk, stats) ->
                     audio.append(chunk)
@@ -223,7 +242,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             runCatching {
                 graph.engineManager.switchTo(descriptor.engineId, descriptor)
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
-                RtfEstimator.estimate(engine, voiceId, s.speed, VOICE_SAMPLE_PHRASE, descriptor.sampleRate)
+                RtfEstimator.estimate(engine, voiceId, s.params, VOICE_SAMPLE_PHRASE, descriptor.sampleRate)
             }
                 .onSuccess { r ->
                     val rtf = "%.2f".format(r.realTimeFactor)
@@ -246,7 +265,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
                 withContext(Dispatchers.IO) {
                     output.use {
-                        s.exportFormat.encode(engine.synthesize(s.text, voiceId, s.speed), descriptor.sampleRate, it, transforms)
+                        s.exportFormat.encode(
+                            engine.synthesize(s.text, voiceId, s.params),
+                            descriptor.sampleRate,
+                            it,
+                            transforms,
+                        )
                     }
                 }
             }

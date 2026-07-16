@@ -2,9 +2,11 @@ package com.phonetts.engines.kittentts
 
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
@@ -95,8 +97,9 @@ internal class KittenEngine(
     override fun synthesizeSentence(
         sentence: String,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
     ): FloatArray {
+        val speed = params.speed
         val activeSession = session ?: error("$engineLabel.synthesizeSentence called before load()")
         val embedding = voiceEmbeddings[voiceId] ?: error("Unknown KittenTTS voice id '$voiceId'")
 
@@ -150,9 +153,10 @@ internal class KittenEngine(
             // §5.7); nothing outside this engine may repeat this literal.
             sampleRate = SAMPLE_RATE,
             voices = voices,
-            speedRange = SPEED_RANGE,
             defaultVoiceId = voices.first().id,
-            defaultSpeed = DEFAULT_SPEED,
+            // Introspected: KittenTTS's StyleTTS2 graph has a native "speed" input, so it advertises
+            // a speed knob (routed to that scalar — never resampled, CLAUDE.md rule 2).
+            parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths =
                 mapOf(
                     MODEL_ASSET_KEY to joinAssetPath(bundle, modelFile),

@@ -1,5 +1,6 @@
 package com.phonetts.core.metrics
 
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.VoiceEngine
 import kotlinx.coroutines.flow.collect
 
@@ -53,7 +54,7 @@ object RtfEstimator {
     suspend fun estimate(
         engine: VoiceEngine,
         voiceId: String,
-        speed: Float,
+        params: SynthesisParams,
         calibrationText: String,
         sampleRate: Int,
         now: () -> Long = { System.nanoTime() },
@@ -65,7 +66,7 @@ object RtfEstimator {
         var samplesProduced = 0L
         var chunksProduced = 0
 
-        engine.synthesize(calibrationText, voiceId, speed).collect { chunk ->
+        engine.synthesize(calibrationText, voiceId, params).collect { chunk ->
             samplesProduced += chunk.size
             chunksProduced++
         }

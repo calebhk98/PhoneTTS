@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.engine.Voice
 import kotlinx.coroutines.delay
 
@@ -90,7 +91,7 @@ fun TtsScreen(
                     onSelect = viewModel::setVoice,
                     onToggleFavorite = viewModel::toggleFavoriteVoice,
                 )
-                SpeedControl(descriptor, state.speed) { viewModel.setSpeed(it) }
+                ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
             }
         }
 
@@ -287,24 +288,61 @@ private fun FavoriteStar(
     )
 }
 
+// DYNAMIC: one control per parameter the model DECLARES (descriptor.parameters — the SSOT the engine
+// filled by inspecting the model). A model with no tunable parameters (e.g. CosyVoice3) renders no
+// controls at all; a model that later adds an emotion selector shows a chooser here with NO change to
+// this code. Nothing about "speed" is special-cased except its familiar preset shortcuts.
+@Composable
+private fun ParameterControls(
+    descriptor: ModelDescriptor,
+    paramValues: Map<String, Float>,
+    onSet: (String, Float) -> Unit,
+) {
+    descriptor.parameters.forEach { param ->
+        val value = paramValues[param.id] ?: param.default
+        when (param.kind) {
+            ModelParameter.Kind.CONTINUOUS -> ContinuousControl(param, value) { onSet(param.id, it) }
+            ModelParameter.Kind.CHOICE -> ChoiceControl(param, value) { onSet(param.id, it) }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SpeedControl(
-    descriptor: ModelDescriptor,
-    speed: Float,
-    onSpeed: (Float) -> Unit,
+private fun ContinuousControl(
+    param: ModelParameter,
+    value: Float,
+    onValue: (Float) -> Unit,
 ) {
-    Text("Speed: ${"%.2f".format(speed)}x")
-    Slider(
-        value = speed,
-        onValueChange = onSpeed,
-        valueRange = descriptor.speedRange, // bounds come straight from the descriptor (SSOT)
-    )
-    // Preset shortcuts, clamped to the model's own range (still SSOT — no bound invented here).
+    val range = param.range ?: return
+    Text("${param.displayName}: ${"%.2f".format(value)}")
+    Slider(value = value, onValueChange = onValue, valueRange = range)
+    // Speed keeps its familiar preset shortcuts; other continuous knobs just get the slider.
+    if (param.id != ModelParameter.SPEED_ID) return
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SPEED_PRESETS.forEach { preset ->
-            val clamped = preset.coerceIn(descriptor.speedRange)
-            OutlinedButton(onClick = { onSpeed(clamped) }) { Text("${"%.2fx".format(clamped)}") }
+            val clamped = preset.coerceIn(range)
+            OutlinedButton(onClick = { onValue(clamped) }) { Text("${"%.2fx".format(clamped)}") }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ChoiceControl(
+    param: ModelParameter,
+    value: Float,
+    onIndex: (Float) -> Unit,
+) {
+    val selected = value.toInt()
+    Text(param.displayName)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        param.choices.forEachIndexed { index, choice ->
+            if (index == selected) {
+                Button(onClick = { onIndex(index.toFloat()) }) { Text(choice) }
+            } else {
+                OutlinedButton(onClick = { onIndex(index.toFloat()) }) { Text(choice) }
+            }
         }
     }
 }

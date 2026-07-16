@@ -1,5 +1,6 @@
 package com.phonetts.core.metrics
 
+import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.testing.FakeEngine
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -32,7 +33,7 @@ class RtfEstimatorTest {
                 RtfEstimator.estimate(
                     engine = engine,
                     voiceId = "v0",
-                    speed = 1.0f,
+                    params = SynthesisParams.ofSpeed(1.0f),
                     calibrationText = "one two three four",
                     sampleRate = TEST_SAMPLE_RATE,
                     now = now,
@@ -58,7 +59,7 @@ class RtfEstimatorTest {
                 RtfEstimator.estimate(
                     engine = fastEngine,
                     voiceId = "v0",
-                    speed = 1.0f,
+                    params = SynthesisParams.ofSpeed(1.0f),
                     calibrationText = "hello world",
                     sampleRate = TEST_SAMPLE_RATE,
                     now = clockAdvancingBy(stepNanos = 1_000_000_000L),
@@ -67,7 +68,7 @@ class RtfEstimatorTest {
                 RtfEstimator.estimate(
                     engine = slowEngine,
                     voiceId = "v0",
-                    speed = 1.0f,
+                    params = SynthesisParams.ofSpeed(1.0f),
                     calibrationText = "hello world",
                     sampleRate = TEST_SAMPLE_RATE,
                     now = clockAdvancingBy(stepNanos = 1_000_000_000L),
@@ -86,7 +87,7 @@ class RtfEstimatorTest {
             RtfEstimator.estimate(
                 engine = engine,
                 voiceId = "voice-7",
-                speed = 1.4f,
+                params = SynthesisParams.ofSpeed(1.4f),
                 calibrationText = "calibration phrase",
                 sampleRate = TEST_SAMPLE_RATE,
                 now = { 0L },
@@ -105,7 +106,7 @@ class RtfEstimatorTest {
                 RtfEstimator.estimate(
                     engine = engine,
                     voiceId = "v0",
-                    speed = 1.0f,
+                    params = SynthesisParams.ofSpeed(1.0f),
                     calibrationText = "   ",
                     sampleRate = TEST_SAMPLE_RATE,
                     now = { 0L },
@@ -124,7 +125,7 @@ class RtfEstimatorTest {
                 RtfEstimator.estimate(
                     engine = engine,
                     voiceId = "v0",
-                    speed = 1.0f,
+                    params = SynthesisParams.ofSpeed(1.0f),
                     calibrationText = "hello world",
                     sampleRate = TEST_SAMPLE_RATE,
                     now = clockAdvancingBy(stepNanos = 1_000_000_000L),
@@ -144,7 +145,7 @@ class RtfEstimatorTest {
                 RtfEstimator.estimate(
                     engine = engine,
                     voiceId = "v0",
-                    speed = 1.0f,
+                    params = SynthesisParams.ofSpeed(1.0f),
                     calibrationText = "hello",
                     sampleRate = 0,
                     now = { 0L },
