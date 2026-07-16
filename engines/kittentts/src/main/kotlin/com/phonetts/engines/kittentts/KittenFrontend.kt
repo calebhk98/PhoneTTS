@@ -5,20 +5,13 @@ import com.phonetts.core.engine.TextFrontend
 import com.phonetts.core.text.Phonemizer
 
 /**
- * KittenTTS's text frontend.
- *
- * Real KittenTTS phonemizes with the bundled "misaki" G2P pipeline, then maps phonemes to ids
- * via a vocabulary table shipped inside the released weights (see docs/research/model-facts.md).
- * This module has no dependency on that vocab table, so [phonemizer] (the shared, injected
- * seam — `context.phonemizer` in [com.phonetts.core.engine.EngineContext], backed by espeak-ng
- * in `:app` and by `FakePhonemizer` in tests, per spec §5.2) is used to turn text into a phoneme
- * string, and each phoneme character's Unicode code point becomes its token id.
- *
- * ASSUMPTION (flagged per the issue's "comment where you assume it"): a one-id-per-code-point
- * mapping is only a scaffold that proves ids flow through to the inference session correctly.
- * It is almost certainly NOT the real KittenTTS phoneme->id table, which would need to be
- * extracted from the model's own vocab/tokens file once bundled. Swap this out once that file
- * is available; nothing outside this class needs to change to do so.
+ * KittenTTS's text frontend. KittenTTS is StyleTTS2, whose phoneme->id table is the fixed
+ * StyleTTS2 symbol set (pad + punctuation + ASCII letters + IPA letters) — NOT shipped as a
+ * file, so it is the engine's own internal data here (spec §5.2: the phoneme->id mapping is the
+ * engine's business and must not leak into shared code). Text is phonemized to an IPA string via
+ * the shared [phonemizer] (espeak-ng in :app), each IPA character is mapped to its symbol id, and
+ * the sequence is wrapped with the pad id (0) at both ends — matching the verified reference
+ * recipe in `scripts/model-verify/run_kitten.py` (`input_ids = [0, *ids, 0]`).
  */
 class KittenFrontend(private val phonemizer: Phonemizer) : TextFrontend {
     override fun toModelInput(
@@ -26,7 +19,31 @@ class KittenFrontend(private val phonemizer: Phonemizer) : TextFrontend {
         language: String,
     ): ModelInput {
         val phonemes = phonemizer.phonemize(text, language)
-        val ids = phonemes.map { it.code.toLong() }.toLongArray()
-        return ModelInput(tokenIds = ids)
+        val ids = ArrayList<Long>(phonemes.length + 2)
+        ids.add(PAD_ID)
+        for (ch in phonemes) {
+            SYMBOL_TO_ID[ch]?.let(ids::add) // drop symbols outside the table rather than crash
+        }
+        ids.add(PAD_ID)
+        return ModelInput(tokenIds = ids.toLongArray())
+    }
+
+    private companion object {
+        const val PAD_ID = 0L
+
+        // The StyleTTS2 / KittenTTS symbol table, in order: pad, punctuation, ASCII letters, IPA
+        // letters. Index == token id. Copied verbatim from the StyleTTS2 text cleaner (the same
+        // table run_kitten.py validated against the real model).
+        private const val PAD = "$"
+        private const val PUNCTUATION = ";:,.!?¡¿—…\"«»“” "
+        private const val LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        private const val IPA_LETTERS =
+            "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊ" +
+                "ʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩'ᵻ"
+
+        val SYMBOL_TO_ID: Map<Char, Long> =
+            (PAD + PUNCTUATION + LETTERS + IPA_LETTERS)
+                .withIndex()
+                .associate { (index, ch) -> ch to index.toLong() }
     }
 }

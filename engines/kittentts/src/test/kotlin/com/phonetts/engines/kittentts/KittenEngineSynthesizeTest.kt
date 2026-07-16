@@ -96,8 +96,11 @@ class KittenEngineSynthesizeTest {
 
             engine.synthesize("Hi.", voiceId = "expr-voice-2-m", speed = 1.0f).toList()
 
-            val tokens = session.runs[0].getValue(KittenEngine.INPUT_IDS_KEY)
-            assertEquals("Hi.".length, tokens.asLongs().size)
+            val tokens = session.runs[0].getValue(KittenEngine.INPUT_IDS_KEY).asLongs()
+            // "H", "i", "." are all StyleTTS2 symbols; the frontend wraps them with a pad (0) each end.
+            assertEquals("Hi.".length + 2, tokens.size)
+            assertEquals(0L, tokens.first())
+            assertEquals(0L, tokens.last())
         }
 
     @Test

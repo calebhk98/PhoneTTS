@@ -91,6 +91,61 @@ class RealModelAutoLoadTest {
             )
         }
 
+    // A non-Piper engine (StyleTTS2 — completely different architecture: style embeddings + a
+    // symbol vocab), and a model NOT in BuiltInCatalog (that ships nano-0.1). Proves the fix that
+    // gave KittenFrontend the real StyleTTS2 vocab actually yields audio end-to-end.
+    @Test
+    fun downloadingARandomKittenModelAutoLoadsAndActuallySpeaks() =
+        runTest(timeout = 5.minutes) {
+            assumeTrue(System.getProperty("runRealModel") == "true", "opt-in: set -DrunRealModel=true")
+
+            val repo = "https://huggingface.co/KittenML/kitten-tts-nano-0.2/resolve/main"
+            val dir = Files.createTempDirectory("random-kitten").toFile()
+            download("$repo/kitten_tts_nano_v0_2.onnx", File(dir, "kitten_tts_nano_v0_2.onnx"))
+            download("$repo/config.json", File(dir, "config.json"))
+            download("$repo/voices.npz", File(dir, "voices.npz"))
+
+            val descriptor = importReal(dir)
+            assertEquals("kittentts", descriptor.engineId, "a KittenTTS bundle must auto-detect as KittenTTS")
+            assertTrue(descriptor.voices.isNotEmpty())
+
+            val (samples, durationSeconds, finite) = synthesize(descriptor)
+            assertTrue(samples > 0, "synthesize produced no audio")
+            assertTrue(durationSeconds > 2.0, "expected > 2s, got ${"%.2f".format(durationSeconds)}s")
+            assertTrue(finite, "audio must be finite and bounded")
+            println(
+                "REAL AUTO-LOAD: engine=${descriptor.engineId} voice=${descriptor.defaultVoiceId} " +
+                    "sr=${descriptor.sampleRate} samples=$samples duration=${"%.2f".format(durationSeconds)}s",
+            )
+        }
+
+    // The app's real wiring, shared by the per-engine cases above. Returns the auto-resolved descriptor.
+    private fun importReal(dir: File): com.phonetts.core.model.ModelDescriptor {
+        val runtimes = RuntimeRegistry().apply { register(JvmOnnxRuntime()) }
+        val context = EngineContext(runtimes, EspeakCliPhonemizer(), dir.absolutePath)
+        val registry = EngineRegistry().also { EngineLoader.seed(it, context) }
+        val resolver =
+            Resolver(registry.list(), InMemoryOverrideStore()) {
+                error("should have auto-detected the model, not asked the user")
+            }
+        lastRegistry = registry
+        return ModelImporter(DirectoryBundleReader(), resolver, ModelCatalog()).import(dir.absolutePath)
+    }
+
+    private var lastRegistry: EngineRegistry? = null
+
+    // Runs the engine's real generation path; returns (sampleCount, durationSeconds, allFiniteBounded).
+    private suspend fun synthesize(descriptor: com.phonetts.core.model.ModelDescriptor): Triple<Int, Double, Boolean> {
+        val manager = EngineManager(requireNotNull(lastRegistry))
+        manager.switchTo(descriptor.engineId, descriptor)
+        val engine = requireNotNull(manager.currentEngine) { "engine failed to load" }
+        val text = "Text to speech turns written words into natural sounding audio."
+        val chunks = engine.synthesize(text, descriptor.defaultVoiceId, 1.0f).toList()
+        val samples = chunks.sumOf { it.size }
+        val finite = chunks.all { chunk -> chunk.all { !it.isNaN() && abs(it) <= 1.5f } }
+        return Triple(samples, samples.toDouble() / descriptor.sampleRate, finite)
+    }
+
     private fun download(
         url: String,
         target: File,
