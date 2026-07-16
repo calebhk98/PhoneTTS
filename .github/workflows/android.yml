@@ -50,11 +50,21 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --no-daemon
+      - name: Resolve release tag
+        id: rel
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "pre=false" >> "$GITHUB_OUTPUT"
+          else
+            # A manual (workflow_dispatch) run publishes the current app versionName as a prerelease.
+            echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+            echo "pre=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Name the APK
         id: name
         run: |
-          ref="${GITHUB_REF_NAME:-dev}"
-          out="phonetts-${ref}.apk"
+          out="phonetts-${{ steps.rel.outputs.tag }}.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "$out"
           echo "apk=$out" >> "$GITHUB_OUTPUT"
       # Always keep the APK as a build artifact (downloadable from the Actions run page).
@@ -63,14 +73,18 @@ jobs:
         with:
           name: phonetts-apk
           path: ${{ steps.name.outputs.apk }}
-      # On a version tag, also publish it to a GitHub Release for one-click download.
+      # On a version tag OR a manual run, publish the APK to a GitHub Release for one-click download.
+      # (The Actions GITHUB_TOKEN creates the tag+release; a manual run marks it a prerelease.)
       - name: Publish to Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          prerelease: ${{ steps.rel.outputs.pre }}
+          name: PhoneTTS ${{ steps.rel.outputs.tag }}
           files: ${{ steps.name.outputs.apk }}
           body: |
-            PhoneTTS ${{ github.ref_name }} — fully-offline on-device TTS.
+            PhoneTTS ${{ steps.rel.outputs.tag }} — fully-offline on-device TTS.
 
             **Install:** download the `.apk` below, enable "install unknown apps" for your browser/files app, and open it.
 
