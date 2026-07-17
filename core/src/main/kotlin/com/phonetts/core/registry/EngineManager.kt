@@ -34,6 +34,10 @@ class EngineManager(private val registry: EngineRegistry) {
         descriptor: ModelDescriptor,
     ) {
         mutex.withLock {
+            // Already the loaded model: unload()+load() would just pay the weight-load cost again
+            // for no effect. This is what makes an explicit "load ahead of time" caller (e.g. a
+            // "load model" UI action before Generate/Play) actually save the next call anything.
+            if (currentEngine != null && currentDescriptor == descriptor) return@withLock
             val next = registry.get(engineId) ?: error("no engine registered under id '$engineId'")
             currentEngine?.unload()
             // Clear state before load: if load() throws (corrupt/oversized model, missing asset),

@@ -117,11 +117,24 @@ fun TtsScreen(
                 minLines = 3,
             )
 
-            val playbackCaption = "Play generates the audio and starts speaking it — there's no separate generate step."
+            val playbackCaption =
+                "Load model warms up the engine ahead of time. Generate previews the audio (with " +
+                    "stats) without playing it. Play generates it if needed and speaks it — tap " +
+                    "Play again afterward to replay instantly, no regeneration."
             ButtonGroup("Playback", caption = playbackCaption) {
+                val selected = state.selected
+                val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
+                OutlinedButton(
+                    onClick = viewModel::loadModel,
+                    enabled = state.selected != null && !state.busy && !state.playing && !isModelLoaded,
+                ) { Text(if (isModelLoaded) "Model loaded" else "Load model") }
+                OutlinedButton(
+                    onClick = viewModel::generateAudio,
+                    enabled = state.selected != null && !state.busy && !state.playing,
+                ) { Text("Generate") }
                 Button(onClick = viewModel::play, enabled = state.selected != null && !state.playing) {
-                    // Play generates and streams playback in one action (there's no separate
-                    // "Generate" step — see TtsViewModel.play); this at least shows something is
+                    // Play generates and streams playback in one action when nothing's been
+                    // generated yet (see TtsViewModel.play); this at least shows something is
                     // happening for the whole time the button is disabled, not just once audible.
                     Text(if (state.playing) "Playing…" else "Play")
                 }

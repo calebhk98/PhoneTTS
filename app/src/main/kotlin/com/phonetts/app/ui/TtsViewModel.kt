@@ -35,11 +35,14 @@ import java.io.OutputStream
  * Drives the main TTS screen. Everything the UI shows is derived from the catalog and the
  * selected [ModelDescriptor] (models, voices, speed range) — no model fact is hardcoded here.
  *
- * Playback and export are consumers of the one `synthesize()` flow (spec §6.1). Playback runs the
- * flow into a [GeneratedAudio] buffer as fast as the model can generate (ahead of playback), while
- * a [BufferedPlayback] consumes it — so playback can pause while generation keeps running, and
- * resume already-generated audio without re-synthesizing. Live [GenerationStats] come from
- * [trackGeneration]; the voice-sample button measures real speed via [RtfEstimator].
+ * Playback and export are consumers of the one `synthesize()` flow (spec §6.1). [loadModel],
+ * [generateAudio] and [play] split that one flow into three optional steps — load the engine,
+ * generate into a buffer, play the buffer — each usable on its own, so [play] alone (its default
+ * behavior) still generates-and-streams in one tap. Playback runs the flow into a [GeneratedAudio]
+ * buffer as fast as the model can generate (ahead of playback), while a [BufferedPlayback]
+ * consumes it — so playback can pause while generation keeps running, and resume already-generated
+ * audio without re-synthesizing. Live [GenerationStats] come from [trackGeneration] for every
+ * generation path (Play, Generate, and the voice-sample button's [RtfEstimator] run).
  */
 class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     data class UiState(
@@ -60,6 +63,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val normalizeVolume: Boolean = false,
         val crossfadeJoins: Boolean = false,
         val stats: GenerationStats? = null,
+        // The modelId currently loaded into EngineManager (or null if none). Compared against
+        // `selected?.modelId` by the UI to show "loaded" vs "load model" — set by loadModel() and
+        // also picked up as a side effect of generate()/sampleVoice()/export() loading it anyway.
+        val loadedModelId: String? = null,
         // Chosen export encoder (WAV/AAC/Opus); the list is derived from AppGraph.exportFormats.
         val exportFormat: AudioEncoder,
         // Favorited voice ids (spec §5.7). Sourced from graph.favoriteVoices, never invented here;
@@ -97,9 +104,27 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
     private val sink = AudioTrackSink()
-    private val playback = BufferedPlayback()
+    // A fresh BufferedPlayback per play session — see play(): the class is documented/tested
+    // (core BufferedAudioTest) as single-use, since stop() latches its internal "stopped" flag
+    // with no reset. Reusing one instance across sessions would make every play() after the first
+    // stop() silently do nothing (stop() is called at the top of every play()/generateAudio() to
+    // interrupt whatever came before).
+    private var playback = BufferedPlayback()
     private var genJob: Job? = null
     private var playJob: Job? = null
+
+    // The most recently generated buffer, kept so a Play tap that exactly matches what was last
+    // generated (same model/voice/text/params) replays instantly instead of re-synthesizing —
+    // still the ONE generation path (spec §6.1), just not re-run when nothing changed.
+    private var cachedAudio: GeneratedAudio? = null
+    private var cachedKey: GenKey? = null
+
+    private data class GenKey(
+        val modelId: String,
+        val voiceId: String,
+        val text: String,
+        val paramValues: Map<String, Float>,
+    )
 
     init {
         refreshModels()
@@ -189,11 +214,76 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun setExportFormat(encoder: AudioEncoder) = mutableState.update { it.copy(exportFormat = encoder) }
 
-    fun play() {
+    /**
+     * Load the selected model's engine ahead of time, so Generate/Play's first tap isn't also
+     * paying the weight-load cost (EngineManager.switchTo is a no-op if this exact model is
+     * already loaded — see core EngineManagerTest — so this genuinely saves the next call
+     * something, it doesn't just move the cost around).
+     */
+    fun loadModel() {
+        val descriptor = mutableState.value.selected ?: return
+        mutableState.update { it.copy(busy = true, status = "Loading model…") }
+        viewModelScope.launch {
+            runCatching { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
+                .onSuccess {
+                    mutableState.update {
+                        it.copy(busy = false, status = "Model loaded", loadedModelId = descriptor.modelId)
+                    }
+                }
+                .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Load failed: ${e.message}") } }
+        }
+    }
+
+    /**
+     * Generate audio for the current text/voice/params WITHOUT playing it — lets you see the
+     * stats (real-time factor, timing) before committing to playback. Same one generation path as
+     * Play/Export (spec §6.1); this just stops short of consuming the flow into playback. A
+     * matching Play tap afterward replays this buffer instantly instead of regenerating it.
+     */
+    fun generateAudio() {
         val s = mutableState.value
         val descriptor = s.selected ?: return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         stop()
+        mutableState.update { it.copy(busy = true, status = "Generating…", stats = null) }
+        val audio = GeneratedAudio()
+        val key = GenKey(descriptor.modelId, voiceId, s.text, s.paramValues)
+        genJob =
+            viewModelScope.launch {
+                val ok = generate(descriptor, voiceId, s.params, s.text, audio)
+                if (ok) {
+                    cachedAudio = audio
+                    cachedKey = key
+                }
+                val loaded = if (ok) descriptor.modelId else null
+                mutableState.update { it.copy(busy = false, loadedModelId = loaded ?: it.loadedModelId) }
+            }
+    }
+
+    fun play() {
+        val s = mutableState.value
+        val descriptor = s.selected ?: return
+        val voiceId = s.voiceId ?: descriptor.defaultVoiceId
+        val key = GenKey(descriptor.modelId, voiceId, s.text, s.paramValues)
+        stop()
+        // A fresh instance per session (see the field doc above) — stop() above just latched the
+        // previous one's "stopped" flag for good.
+        playback = BufferedPlayback()
+
+        val cached = cachedAudio?.takeIf { cachedKey == key }
+        if (cached != null) {
+            // Exact match for what's already generated (e.g. right after Generate, or replaying
+            // the last Play) — play it straight from the buffer, no re-synthesis, no delay.
+            mutableState.update { it.copy(playing = true, paused = false, status = null) }
+            playJob =
+                viewModelScope.launch {
+                    runCatching { playback.play(cached, descriptor.sampleRate, sink) }
+                        .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+                    mutableState.update { it.copy(playing = false, paused = false) }
+                }
+            return
+        }
+
         // Play IS generate-and-stream (spec §6.1: one generation path, no separate "Generate"
         // button) — this status is the only feedback during the gap between tapping Play and the
         // first audio chunk landing (switching/loading the model can take a few seconds on a
@@ -201,7 +291,15 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(playing = true, paused = false, status = "Loading voice…", stats = null) }
 
         val audio = GeneratedAudio()
-        genJob = viewModelScope.launch { generate(descriptor, voiceId, s.params, s.text, audio) }
+        genJob =
+            viewModelScope.launch {
+                val ok = generate(descriptor, voiceId, s.params, s.text, audio)
+                if (ok) {
+                    cachedAudio = audio
+                    cachedKey = key
+                    mutableState.update { it.copy(loadedModelId = descriptor.modelId) }
+                }
+            }
         playJob =
             viewModelScope.launch {
                 runCatching { playback.play(audio, descriptor.sampleRate, sink) }
@@ -211,27 +309,31 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     // Run the ONE generation flow into [audio] as fast as the model produces, updating live stats.
+    // Returns false (audio left as whatever was collected before the failure) if generation threw.
     private suspend fun generate(
         descriptor: ModelDescriptor,
         voiceId: String,
         params: SynthesisParams,
         text: String,
         audio: GeneratedAudio,
-    ) {
-        runCatching {
-            graph.engineManager.switchTo(descriptor.engineId, descriptor)
-            val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
-            val totalWords = WordCounter.count(text)
-            engine.synthesize(text, voiceId, params)
-                .trackGeneration(descriptor.sampleRate, totalWords = totalWords)
-                .collect { (chunk, stats) ->
-                    audio.append(chunk)
-                    // "Loading voice…" only covers the gap before audio exists; once the first
-                    // chunk lands, the live GenerationStatsView (rendered off `stats`) takes over.
-                    mutableState.update { it.copy(stats = stats, status = null) }
-                }
-        }.onFailure { e -> mutableState.update { it.copy(status = "Generation failed: ${e.message}") } }
+    ): Boolean {
+        val result =
+            runCatching {
+                graph.engineManager.switchTo(descriptor.engineId, descriptor)
+                val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
+                val totalWords = WordCounter.count(text)
+                engine.synthesize(text, voiceId, params)
+                    .trackGeneration(descriptor.sampleRate, totalWords = totalWords)
+                    .collect { (chunk, stats) ->
+                        audio.append(chunk)
+                        // "Loading voice…"/"Generating…" only cover the gap before audio exists;
+                        // once the first chunk lands, the live GenerationStatsView (rendered off
+                        // `stats`) takes over.
+                        mutableState.update { it.copy(stats = stats, status = null) }
+                    }
+            }.onFailure { e -> mutableState.update { it.copy(status = "Generation failed: ${e.message}") } }
         audio.markComplete()
+        return result.isSuccess
     }
 
     /** Pause audio playback; generation keeps running and filling the buffer. */
