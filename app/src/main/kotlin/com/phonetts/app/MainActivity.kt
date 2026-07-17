@@ -160,7 +160,12 @@ private fun AppNav(
             )
         Screen.BROWSE -> {
             val hfViewModel: HfBrowseViewModel =
-                viewModel(factory = viewModelFactory { initializer { HfBrowseViewModel(graph.hfCatalog, graph.hfDownloader) } })
+                viewModel(
+                    factory =
+                        viewModelFactory {
+                            initializer { HfBrowseViewModel(graph.hfCatalog, graph.hfDownloader, graph.catalog) }
+                        },
+                )
             BackScaffold(title = "Browse models", onBack = {
                 ttsViewModel.refreshModels() // pick up anything downloaded while browsing
                 screen = Screen.MAIN

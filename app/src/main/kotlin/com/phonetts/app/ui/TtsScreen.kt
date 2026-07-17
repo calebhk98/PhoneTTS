@@ -117,8 +117,14 @@ fun TtsScreen(
                 minLines = 3,
             )
 
-            ButtonGroup("Playback") {
-                Button(onClick = viewModel::play, enabled = state.selected != null && !state.playing) { Text("Play") }
+            val playbackCaption = "Play generates the audio and starts speaking it — there's no separate generate step."
+            ButtonGroup("Playback", caption = playbackCaption) {
+                Button(onClick = viewModel::play, enabled = state.selected != null && !state.playing) {
+                    // Play generates and streams playback in one action (there's no separate
+                    // "Generate" step — see TtsViewModel.play); this at least shows something is
+                    // happening for the whole time the button is disabled, not just once audible.
+                    Text(if (state.playing) "Playing…" else "Play")
+                }
                 // Pause the audio while generation keeps running; resume replays already-generated audio.
                 if (state.playing && !state.paused) {
                     OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
@@ -168,10 +174,12 @@ fun TtsScreen(
 @Composable
 private fun ButtonGroup(
     label: String,
+    caption: String? = null,
     content: @Composable () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        caption?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             content()
         }

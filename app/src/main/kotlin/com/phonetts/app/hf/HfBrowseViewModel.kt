@@ -2,6 +2,7 @@ package com.phonetts.app.hf
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.phonetts.app.ModelStorage
 import com.phonetts.core.download.builtin.BuiltInCatalog
 import com.phonetts.core.download.builtin.BuiltInModel
 import com.phonetts.core.download.hf.HfCatalog
@@ -11,6 +12,7 @@ import com.phonetts.core.download.hf.HfQuantizedDownloadPlan
 import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.QuantizationVariant
+import com.phonetts.core.registry.ModelCatalog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +29,7 @@ import kotlinx.coroutines.withContext
 class HfBrowseViewModel(
     private val catalog: HfCatalog,
     private val downloader: HfDownloader,
+    private val modelCatalog: ModelCatalog,
 ) : ViewModel() {
     data class UiState(
         val query: String = "",
@@ -34,8 +37,12 @@ class HfBrowseViewModel(
         val loading: Boolean = false,
         val downloadingId: String? = null,
         val progress: Pair<Int, Int>? = null,
-        val importedModelId: String? = null,
         val error: String? = null,
+        // Every model already in the catalog (this session's downloads AND anything imported in a
+        // prior session) keyed by the SAME sanitized id every engine's descriptor.modelId uses
+        // (ModelStorage.sanitize) — so "is this row already installed" survives leaving/reopening
+        // this screen, not just the moment right after a fresh download completes.
+        val installedIds: Set<String> = emptySet(),
         // Set when a chosen repo ships more than one weight precision and the user must pick one
         // (a budget-device win: fetch only fp16/q8 instead of every variant). Null otherwise.
         val variantChoice: VariantChoice? = null,
@@ -48,11 +55,16 @@ class HfBrowseViewModel(
         val variants: List<QuantizationVariant>,
     )
 
-    private val mutableState = MutableStateFlow(UiState())
+    private val mutableState = MutableStateFlow(UiState(installedIds = installedIdsSnapshot()))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
     /** Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md). */
     val recommended: List<BuiltInModel> = BuiltInCatalog.ALL
+
+    /** True if [rawId] (an [HfModelSummary.id] or [BuiltInModel.id]) is already in the catalog. */
+    fun isInstalled(rawId: String): Boolean = ModelStorage.sanitize(rawId) in mutableState.value.installedIds
+
+    private fun installedIdsSnapshot(): Set<String> = modelCatalog.list().map { it.modelId }.toSet()
 
     /** Download a curated model directly — no search, no webpage — using its known file list. */
     fun downloadBuiltIn(model: BuiltInModel) = runDownload(model.id, model.downloadItems())
@@ -117,7 +129,11 @@ class HfBrowseViewModel(
                 }
             }.onSuccess { descriptor ->
                 mutableState.update {
-                    it.copy(downloadingId = null, progress = null, importedModelId = descriptor.modelId)
+                    it.copy(
+                        downloadingId = null,
+                        progress = null,
+                        installedIds = it.installedIds + descriptor.modelId,
+                    )
                 }
             }.onFailure { e ->
                 mutableState.update { it.copy(downloadingId = null, progress = null, error = e.message) }

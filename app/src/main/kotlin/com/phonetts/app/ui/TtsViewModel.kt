@@ -194,7 +194,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val descriptor = s.selected ?: return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         stop()
-        mutableState.update { it.copy(playing = true, paused = false, status = null, stats = null) }
+        // Play IS generate-and-stream (spec §6.1: one generation path, no separate "Generate"
+        // button) — this status is the only feedback during the gap between tapping Play and the
+        // first audio chunk landing (switching/loading the model can take a few seconds on a
+        // budget phone). Cleared the moment the first chunk arrives, in generate() below.
+        mutableState.update { it.copy(playing = true, paused = false, status = "Loading voice…", stats = null) }
 
         val audio = GeneratedAudio()
         genJob = viewModelScope.launch { generate(descriptor, voiceId, s.params, s.text, audio) }
@@ -222,7 +226,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 .trackGeneration(descriptor.sampleRate, totalWords = totalWords)
                 .collect { (chunk, stats) ->
                     audio.append(chunk)
-                    mutableState.update { it.copy(stats = stats) }
+                    // "Loading voice…" only covers the gap before audio exists; once the first
+                    // chunk lands, the live GenerationStatsView (rendered off `stats`) takes over.
+                    mutableState.update { it.copy(stats = stats, status = null) }
                 }
         }.onFailure { e -> mutableState.update { it.copy(status = "Generation failed: ${e.message}") } }
         audio.markComplete()
