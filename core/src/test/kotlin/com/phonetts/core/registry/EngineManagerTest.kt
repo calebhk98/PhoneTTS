@@ -75,6 +75,25 @@ class EngineManagerTest {
         }
 
     @Test
+    fun switchingToTheSameDescriptorTwiceSkipsUnloadAndReload() =
+        runTest {
+            val events = mutableListOf<String>()
+            val engineA = FakeEngine(id = "a", eventLog = events)
+            val registry = EngineRegistry().apply { register(engineA) }
+            val manager = EngineManager(registry)
+            val descriptor = testDescriptor("model-a", "a")
+
+            manager.switchTo("a", descriptor)
+            manager.switchTo("a", descriptor)
+
+            // Second switchTo with the identical descriptor is a no-op: no second load, no unload.
+            assertEquals(1, engineA.loadCount)
+            assertEquals(0, engineA.unloadCount)
+            assertEquals(listOf("load:a"), events)
+            assertSame(engineA, manager.currentEngine)
+        }
+
+    @Test
     fun switchingToAnUnregisteredEngineIdThrowsAndLeavesCurrentEngineUntouched() =
         runTest {
             val events = mutableListOf<String>()

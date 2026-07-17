@@ -41,8 +41,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
     val state by viewModel.state.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Downloaded models", style = MaterialTheme.typography.titleLarge)
-        Text("Storage used: ${formatBytes(state.totalBytes)}")
+        Text("Storage used: ${formatBytes(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
 
         state.error?.let { Text("Error: $it") }
 

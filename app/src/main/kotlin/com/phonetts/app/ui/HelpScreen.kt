@@ -26,8 +26,6 @@ fun HelpScreen() {
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("Help & voices", style = MaterialTheme.typography.headlineSmall)
-
         Section("Getting a voice") {
             Bullet("Tap Browse models → the Recommended (one-tap) section for a working voice in one tap.")
             Bullet("Or search Hugging Face in Browse models and tap Download on a result.")

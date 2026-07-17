@@ -11,6 +11,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -55,7 +58,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                     model = model,
                     isDownloading = state.downloadingId == model.id,
                     progress = state.progress.takeIf { state.downloadingId == model.id },
-                    isImported = state.importedModelId == model.id,
+                    isInstalled = viewModel.isInstalled(model.id),
                     onDownload = { viewModel.downloadBuiltIn(model) },
                 )
             }
@@ -68,7 +71,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                     model = model,
                     isDownloading = state.downloadingId == model.id,
                     progress = state.progress.takeIf { state.downloadingId == model.id },
-                    isImported = state.importedModelId == model.id,
+                    isInstalled = viewModel.isInstalled(model.id),
                     onDownload = { viewModel.download(model) },
                 )
             }
@@ -114,19 +117,23 @@ private fun RecommendedRow(
     model: com.phonetts.core.download.builtin.BuiltInModel,
     isDownloading: Boolean,
     progress: Pair<Int, Int>?,
-    isImported: Boolean,
+    isInstalled: Boolean,
     onDownload: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(model.displayName, fontWeight = FontWeight.Bold)
-            Text("~${model.approxSizeMb} MB${model.note?.let { " · $it" } ?: ""}")
+    ModelCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(model.displayName, fontWeight = FontWeight.Bold)
+                Text("~${model.approxSizeMb} MB", style = MaterialTheme.typography.bodyMedium)
+                model.note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+            DownloadControl(isDownloading, progress, isInstalled, onDownload)
         }
-        DownloadControl(isDownloading, progress, isImported, onDownload)
+        DownloadProgress(isDownloading, progress)
     }
 }
 
@@ -135,19 +142,56 @@ private fun ModelRow(
     model: HfModelSummary,
     isDownloading: Boolean,
     progress: Pair<Int, Int>?,
-    isImported: Boolean,
+    isInstalled: Boolean,
     onDownload: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(model.id, fontWeight = FontWeight.Bold)
-            Text("▼ ${model.downloads}   ♥ ${model.likes}")
+    ModelCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(model.id, fontWeight = FontWeight.Bold)
+                Text("▼ ${model.downloads}   ♥ ${model.likes}", style = MaterialTheme.typography.bodyMedium)
+                // pipelineTag + tags come straight from the HF API response — no extra network call,
+                // just fields the parser already kept that the UI wasn't showing.
+                val tags = listOfNotNull(model.pipelineTag) + model.tags.take(MAX_TAGS_SHOWN)
+                val subtitle = tags.joinToString(" · ")
+                if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall)
+            }
+            DownloadControl(isDownloading, progress, isInstalled, onDownload)
         }
-        DownloadControl(isDownloading, progress, isImported, onDownload)
+        DownloadProgress(isDownloading, progress)
+    }
+}
+
+/** A model card's Delete/Download row is followed by a progress bar when a download is in flight. */
+@Composable
+private fun DownloadProgress(
+    isDownloading: Boolean,
+    progress: Pair<Int, Int>?,
+) {
+    if (!isDownloading) return
+    val (done, total) = progress ?: (0 to 0)
+    // Progress is file-count based (how many of this repo's files have finished), not byte-based —
+    // most of these repos are 1-2 large weight files, so a single-file repo would sit at an
+    // uninformative 0% the whole time; show it as indeterminate instead of a bar that never moves.
+    if (total <= 1) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+    } else {
+        LinearProgressIndicator(
+            progress = { done.toFloat() / total },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+    }
+}
+
+/** Groups a model's info + controls into a visually distinct card instead of a bare list row. */
+@Composable
+private fun ModelCard(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), content = content)
     }
 }
 
@@ -155,16 +199,18 @@ private fun ModelRow(
 private fun DownloadControl(
     isDownloading: Boolean,
     progress: Pair<Int, Int>?,
-    isImported: Boolean,
+    isInstalled: Boolean,
     onDownload: () -> Unit,
 ) {
-    if (isImported) {
-        Text("Installed")
+    if (isInstalled) {
+        Text("Installed", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         return
     }
     if (isDownloading) {
-        Text(progress?.let { (done, total) -> "$done/$total" } ?: "…")
+        Text(progress?.let { (done, total) -> "$done/$total files" } ?: "Starting…")
         return
     }
     Button(onClick = onDownload) { Text("Download") }
 }
+
+private const val MAX_TAGS_SHOWN = 4

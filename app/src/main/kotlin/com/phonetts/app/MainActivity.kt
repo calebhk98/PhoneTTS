@@ -7,19 +7,22 @@ import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.phonetts.app.playback.PlaybackService
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -28,7 +31,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -40,6 +42,7 @@ import com.phonetts.app.ui.HelpScreen
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
+import com.phonetts.app.ui.theme.PhoneTtsTheme
 
 private enum class Screen { MAIN, BROWSE, MANAGE, HELP }
 
@@ -71,10 +74,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val sharedText = intent?.readSharedText()
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            PhoneTtsTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     AppNav(graph, ttsViewModel, sharedText, binderState)
                 }
             }
@@ -156,8 +160,13 @@ private fun AppNav(
             )
         Screen.BROWSE -> {
             val hfViewModel: HfBrowseViewModel =
-                viewModel(factory = viewModelFactory { initializer { HfBrowseViewModel(graph.hfCatalog, graph.hfDownloader) } })
-            BackScaffold(onBack = {
+                viewModel(
+                    factory =
+                        viewModelFactory {
+                            initializer { HfBrowseViewModel(graph.hfCatalog, graph.hfDownloader, graph.catalog) }
+                        },
+                )
+            BackScaffold(title = "Browse models", onBack = {
                 ttsViewModel.refreshModels() // pick up anything downloaded while browsing
                 screen = Screen.MAIN
             }) { HfBrowseScreen(hfViewModel) }
@@ -165,22 +174,34 @@ private fun AppNav(
         Screen.MANAGE -> {
             val manageViewModel: ModelManagementViewModel =
                 viewModel(factory = viewModelFactory { initializer { ModelManagementViewModel(graph.modelManager) } })
-            BackScaffold(onBack = {
+            BackScaffold(title = "Downloaded models", onBack = {
                 ttsViewModel.refreshModels() // a delete removes it from the model dropdown too
                 screen = Screen.MAIN
             }) { ModelManagementScreen(manageViewModel) }
         }
-        Screen.HELP -> BackScaffold(onBack = { screen = Screen.MAIN }) { HelpScreen() }
+        Screen.HELP -> BackScaffold(title = "Help", onBack = { screen = Screen.MAIN }) { HelpScreen() }
     }
 }
 
+// A Scaffold's topBar reserves and pads for the status bar itself, so this is also what keeps
+// the back control (and every screen below it) clear of the notification/status bar area.
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BackScaffold(
+    title: String,
     onBack: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
-        OutlinedButton(onClick = onBack, modifier = Modifier.padding(horizontal = 16.dp)) { Text("← Back") }
-        content()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Text("←", style = MaterialTheme.typography.titleLarge) }
+                },
+            )
+        },
+    ) { innerPadding ->
+        Surface(modifier = Modifier.fillMaxSize().padding(innerPadding)) { content() }
     }
 }
