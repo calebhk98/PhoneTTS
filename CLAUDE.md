@@ -120,6 +120,31 @@ works: `gradle :core:test`.)
 `:core` compiles with the running JDK (21 here) but **emits JVM 17 bytecode** so the Android
 `:app` module can consume it unchanged.
 
+## Environment quirks (remote / Claude Code on the web)
+
+These bite in the ephemeral cloud sessions; note them so you don't waste a loop rediscovering them.
+
+- **`./gradlew` can't fetch its distribution behind the proxy** — the wrapper download 403s from
+  `github.com`. **Use the system Gradle instead: `gradle …` (8.14.3 at `/opt/gradle/bin/gradle`,
+  matches the wrapper version).** Same tasks, e.g. `gradle -PskipApp=true :core:test ktlintCheck detekt`.
+  Don't hand-edit `gradle-wrapper.jar`/`.properties` to work around it — CI validates the wrapper.
+- **No Android SDK preinstalled, but it's downloadable** — `dl.google.com` is reachable. See the
+  block in *Build & test* to install it and build `:app`; don't claim the app can't be built here.
+- **The pre-commit hook is NOT installed in a fresh clone** — there's no `.git/hooks/pre-commit`
+  and no `core.hooksPath` until you run `scripts/install-hooks.sh`. So a commit runs **no** checks
+  automatically here. Run them yourself before committing (`gradle -PskipApp=true :core:test
+  ktlintCheck detekt`), and note the hook itself calls `./gradlew` — which fails per the first bullet.
+- **CI lint is core-only** — the `test` job runs `-PskipApp=true`, so `:app` Kotlin is **not**
+  ktlint/detekt-checked by CI. If you touch `:app`, lint it locally with the SDK present
+  (`gradle ktlintCheck detekt`), or style regressions land unnoticed.
+- **`JAVA_TOOL_OPTIONS` proxy/truststore noise** is printed on **every** JVM invocation
+  (`Picked up JAVA_TOOL_OPTIONS: …`). It's harmless boilerplate, not an error — ignore it.
+- **The container is ephemeral** — only what you commit and push survives. `local.properties`
+  (the `sdk.dir` you write) is git-ignored and vanishes with the container; that's fine.
+- **History can be rewritten between sessions** — the old `v0.1.0`/`v0.1.1` tags point at orphaned
+  commits, which is what once stranded the version anchor. If a build's version looks wrong, check
+  the merge count against `VERSION_BASE_MERGES` before assuming the logic is broken.
+
 ## TDD — test the plumbing, not the audio
 
 Voice quality is the model's job, not this codebase's. Tests target the **deterministic
@@ -135,11 +160,31 @@ Shared test fixtures (`FakeEngine`, `testDescriptor`) live in
 
 ## Workflow conventions in this repo
 
-- Work is tracked as **GitHub issues** (one per ticket). Comment progress on the issue you're
-  working; close it with `state_reason: completed` when its tests are green.
-- Branch: feature work lands on `claude/local-tts-android-setup-8xshx0` (per session config).
-- Commits: clear, descriptive messages. Pre-commit hook runs ktlint + detekt + `:core:test`
-  and blocks on failure (see `scripts/`).
+**The issue is the source of truth for what to do — the prompt only gets you up to speed.** Work is
+tracked as **GitHub issues** (one per ticket). The session prompt carries *generic* orientation
+(which branch, how the repo is laid out, environment quirks) — the *actual task, scope, and
+acceptance criteria live in the issue*. If the prompt and the issue seem to disagree about what to
+build, the issue wins; ask before diverging from it.
+
+So, when working an issue:
+
+1. **Read the whole issue first — the body AND every comment.** Later comments often refine, narrow,
+   or redirect the original ask (a decision, a gotcha, a "actually do X instead"). Don't act on the
+   title alone.
+2. **Do the work described there**, on the branch named in the session config (a fresh `claude/<slug>`
+   per session). Keep the change scoped to what the issue asks.
+3. **Leave a comment on the issue** summarizing what you did — what changed, why, anything the issue
+   didn't anticipate, and what you verified (tests run, build result). This is the trail the human
+   follows; keep it honest (if tests failed or a step was skipped, say so).
+4. **Close it with `state_reason: completed`** once its tests/acceptance criteria are green. If it's
+   blocked or ambiguous, comment with the question instead of guessing.
+
+Other conventions:
+
+- Branch: feature work lands on the `claude/<slug>` branch named in the session config.
+- Commits: clear, descriptive messages. The pre-commit hook runs ktlint + detekt + `:core:test` and
+  blocks on failure (see `scripts/`) — **but it isn't installed in a fresh clone** (run
+  `scripts/install-hooks.sh`, or just run the checks by hand — see *Environment quirks*).
 - Weights, `.onnx`/`.bin` files, and `models/` are git-ignored — never commit model data.
 
 ## Release, versioning, and self-update
