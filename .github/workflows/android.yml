@@ -60,12 +60,13 @@ jobs:
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "pre=false" >> "$GITHUB_OUTPUT"
           else
-            # Auto-derive the version from commit count (keep base/major_minor in sync with
-            # VERSION_BASE_COMMITS / VERSION_MAJOR_MINOR in app/build.gradle.kts). A push to main
-            # publishes a real release; a manual workflow_dispatch on any other branch publishes a
+            # Auto-derive the version from the count of MERGES to main — first-parent commits, so each
+            # merged PR bumps the patch by one and branch commits never inflate it (keep base/major_minor
+            # in sync with VERSION_BASE_MERGES / VERSION_MAJOR_MINOR in app/build.gradle.kts). A push to
+            # main publishes a real release; a manual workflow_dispatch on another branch publishes a
             # prerelease so a branch can be test-built without claiming "Latest".
-            base=52; major_minor="0.1"
-            count=$(git rev-list --count HEAD)
+            base=2; major_minor="0.1"
+            count=$(git rev-list --count --first-parent HEAD)
             patch=$(( count - base )); [ "$patch" -lt 0 ] && patch=0
             echo "tag=v${major_minor}.${patch}" >> "$GITHUB_OUTPUT"
             if [ "${{ github.ref }}" = "refs/heads/main" ]; then

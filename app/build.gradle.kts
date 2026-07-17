@@ -26,33 +26,44 @@ val buildCosyVoice = (project.findProperty("withCosyVoice") as String?)?.toBoole
 // Either native bridge pulls in the NDK + CMake externalNativeBuild; configure it if either is on.
 val buildNative = buildEspeak || buildCosyVoice
 
-// Auto-versioning: the patch number tracks git commits, so EVERY commit bumps the version
-// (0.1.0 -> 0.1.1 -> 0.1.2 …) with no manual edit. [VERSION_BASE_COMMITS] is the commit count at
-// which patch 0 was anchored; patch = commits since then. versionCode uses the raw count so it is
-// monotonic (Android requires an increasing integer). Falls back to a safe default when git history
-// isn't available (e.g. building from a source tarball) — CI checks out full history
-// (fetch-depth: 0) so the count is correct there. Bump MAJOR/MINOR by editing VERSION_MAJOR_MINOR
-// and re-anchoring VERSION_BASE_COMMITS.
+// Auto-versioning: the patch number is the count of MERGES to main, so every merged PR bumps the
+// version by exactly one (0.1.2 -> 0.1.3 -> 0.1.4 …) with no manual edit. We count FIRST-PARENT
+// commits, not every commit: a PR merge (or squash) adds exactly one first-parent commit to main,
+// while the branch's own commits sit off the first-parent line and never touch the version. This is
+// why heavy branch work no longer inflates the patch the way the old raw-commit count did.
+// (Caveat: "rebase and merge" replays each branch commit onto main's first-parent line, so it counts
+//  per-commit — prefer "Create a merge commit" or "Squash and merge".)
+//
+// [VERSION_BASE_MERGES] is the first-parent count at which patch 0 was anchored; patch = merges
+// since then. Bump MAJOR/MINOR by editing VERSION_MAJOR_MINOR and re-anchoring VERSION_BASE_MERGES.
+// Falls back to a safe default when git history isn't available (e.g. a source tarball); CI checks
+// out full history (fetch-depth: 0) so the count is correct there.
 val VERSION_MAJOR_MINOR = "0.1"
-// Re-anchored to 52 so the next auto build is 0.1.2 (main is at 54 commits) — clears the already
-// published 0.1.0/0.1.1 and increments by one per merge from here. Keep this in sync with `base=` in
-// .github/workflows/android.yml. Re-anchor again if the history is ever rewritten/squashed such that
-// the commit count drops below this value (which is what stranded the old anchor of 64).
-val VERSION_BASE_COMMITS = 52
+// Anchored to 2 so the first automated release (main's first-parent count reaches 4 once this lands)
+// is 0.1.2 — clearing the already published 0.1.0/0.1.1. Keep in sync with `base=` in
+// .github/workflows/android.yml.
+val VERSION_BASE_MERGES = 2
 
-fun gitCommitCount(): Int =
+fun mainMergeCount(): Int =
     runCatching {
         val process =
-            ProcessBuilder("git", "rev-list", "--count", "HEAD")
+            ProcessBuilder("git", "rev-list", "--count", "--first-parent", "HEAD")
                 .directory(rootDir)
                 .redirectErrorStream(true)
                 .start()
         process.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 0
     }.getOrDefault(0)
 
-val gitCommits = gitCommitCount()
-val autoVersionCode = gitCommits.coerceAtLeast(1)
-val autoVersionName = "$VERSION_MAJOR_MINOR.${(gitCommits - VERSION_BASE_COMMITS).coerceAtLeast(0)}"
+val mainMerges = mainMergeCount()
+val patchNumber = (mainMerges - VERSION_BASE_MERGES).coerceAtLeast(0)
+val autoVersionName = "$VERSION_MAJOR_MINOR.$patchNumber"
+// versionCode encodes the version itself (major*1_000_000 + minor*1_000 + patch) rather than a raw
+// count. That keeps it strictly increasing as the version rises AND well above the old raw-count
+// codes (which were ≤ ~66), so upgrading over a previously sideloaded build never trips Android's
+// "downgrade" block.
+val versionParts = VERSION_MAJOR_MINOR.split(".")
+val autoVersionCode =
+    (versionParts[0].toInt() * 1_000_000 + versionParts[1].toInt() * 1_000 + patchNumber).coerceAtLeast(1)
 
 android {
     namespace = "com.phonetts.app"

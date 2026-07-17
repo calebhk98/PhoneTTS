@@ -95,6 +95,25 @@ on a core-only machine it is skipped. Don't assume the SDK/NDK is absent — che
 (`local.properties` `sdk.dir`, `$ANDROID_HOME`) before claiming the app can't be built. The NDK
 native bridges (espeak, CosyVoice) cross-compile for arm64 with the NDK; see docs/COSYVOICE2.md.
 
+**No SDK? Download it — `dl.google.com` is reachable, so `:app` can be built here.** Grab Google's
+command-line tools and install exactly what `app/build.gradle.kts` needs (`compileSdk`/`targetSdk`
+35 → `platforms;android-35` + `build-tools;35.0.0`), then point the build at it:
+
+```bash
+SDK=/opt/android-sdk; mkdir -p "$SDK/cmdline-tools"
+curl -sSL -o /tmp/cmdline-tools.zip \
+  https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+unzip -q /tmp/cmdline-tools.zip -d "$SDK/cmdline-tools" && mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+export ANDROID_SDK_ROOT="$SDK" ANDROID_HOME="$SDK"
+yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+"$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+echo "sdk.dir=$SDK" > local.properties          # or just export ANDROID_SDK_ROOT
+gradle :app:compileDebugKotlin --no-daemon      # now builds :app; :app:assembleDebug for the APK
+```
+
+(Bump the platform/build-tools versions to match if `compileSdk` changes. The NDK — `ndk;<ver>` — is
+only needed for the opt-in `-PwithEspeak`/`-PwithCosyVoice` native bridges, not the baseline APK.)
+
 (If the wrapper can't fetch its distribution behind a proxy, a system Gradle 8.14.3 also
 works: `gradle :core:test`.)
 
@@ -126,18 +145,27 @@ Shared test fixtures (`FakeEngine`, `testDescriptor`) live in
 ## Release, versioning, and self-update
 
 - **CI + APK:** `.github/workflows/android.yml` runs the core seam tests on every push and builds
-  the debug APK; on a `v*` tag (or a manual run) it publishes the APK to a **GitHub Release** for
-  one-click sideload. The checked-in `gradle-wrapper.jar` **must** be the official one (the
-  workflow validates it) — regenerate with the pinned Gradle, never hand-edit it.
-- **Auto-versioning:** `app/build.gradle.kts` derives the version from git — `versionCode` is the
-  commit count, `versionName` is `0.1.<commits − VERSION_BASE_COMMITS>`, so **every commit bumps
-  the patch** (0.1.0 → 0.1.1 → …) with no manual edit. Bump MAJOR/MINOR by editing
-  `VERSION_MAJOR_MINOR` and re-anchoring `VERSION_BASE_COMMITS`. CI checks out full history so the
-  count is right.
+  the debug APK. It publishes the APK to a **GitHub Release** on **every push to `main`** (each merge
+  bumps the patch, so each merge ships a release) and on any `v*` tag; a manual `workflow_dispatch`
+  on another branch publishes a **prerelease**. Feature-branch pushes only upload the APK as an
+  Actions artifact — they do **not** cut a release. The checked-in `gradle-wrapper.jar` **must** be
+  the official one (the workflow validates it) — regenerate with the pinned Gradle, never hand-edit it.
+- **Auto-versioning (per merge, not per commit):** `app/build.gradle.kts` derives the version from
+  the count of **merges to main** — `git rev-list --count --first-parent HEAD`, so a PR merge (or
+  squash) adds exactly one and the branch's own commits never inflate it. `versionName` is
+  `0.1.<merges − VERSION_BASE_MERGES>` (**every merge bumps the patch**, 0.1.2 → 0.1.3 → …);
+  `versionCode` encodes the version (`major*1_000_000 + minor*1_000 + patch`) so it stays monotonic
+  and above the old raw-count codes. Bump MAJOR/MINOR by editing `VERSION_MAJOR_MINOR` and
+  re-anchoring `VERSION_BASE_MERGES` (keep `base=` in the workflow in sync). CI checks out full
+  history (`fetch-depth: 0`) so the count is right. Use "merge commit" or "squash and merge", **not
+  "rebase and merge"** (rebase replays each branch commit onto main's first-parent line and would
+  count per-commit).
 - **In-app update check (offer, never force):** `core/.../update/UpdateChecker` compares
   `BuildConfig.VERSION_NAME` to the latest GitHub Release and, if newer, the app shows a
   **dismissible** banner that opens the new APK's download URL — it never downloads or installs on
-  its own. Fail-closed: a network hiccup shows nothing.
+  its own. Fail-closed: a network hiccup shows nothing. The **Help screen** also has a manual
+  **"Check for updates"** button (`HelpScreen` → `TtsViewModel.checkForUpdatesNow`) that re-runs the
+  same check on demand and reports "Up to date" / a download offer / a can't-reach note.
 
 ## Build order (locked — hardest first, see spec §3–§4)
 
