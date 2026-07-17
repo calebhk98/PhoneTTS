@@ -34,7 +34,11 @@ val buildNative = buildEspeak || buildCosyVoice
 // (fetch-depth: 0) so the count is correct there. Bump MAJOR/MINOR by editing VERSION_MAJOR_MINOR
 // and re-anchoring VERSION_BASE_COMMITS.
 val VERSION_MAJOR_MINOR = "0.1"
-val VERSION_BASE_COMMITS = 64
+// Re-anchored to 52 so the next auto build is 0.1.2 (main is at 54 commits) — clears the already
+// published 0.1.0/0.1.1 and increments by one per merge from here. Keep this in sync with `base=` in
+// .github/workflows/android.yml. Re-anchor again if the history is ever rewritten/squashed such that
+// the commit count drops below this value (which is what stranded the old anchor of 64).
+val VERSION_BASE_COMMITS = 52
 
 fun gitCommitCount(): Int =
     runCatching {

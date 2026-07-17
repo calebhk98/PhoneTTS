@@ -36,8 +36,9 @@ jobs:
         run: ./gradlew -PskipApp=true :core:test ktlintCheck detekt --no-daemon
 
   apk:
-    # Build/publish the APK on branch pushes, tags and manual runs — not on PRs (the push build
-    # already covers the branch).
+    # Build the APK on branch pushes, tags and manual runs — not on PRs (the push build already
+    # covers the branch). Whether it also *publishes* a Release is decided by the "Publish" step
+    # below: pushes to main and version tags publish; feature-branch pushes only upload an artifact.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -59,13 +60,19 @@ jobs:
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
             echo "pre=false" >> "$GITHUB_OUTPUT"
           else
-            # A manual (workflow_dispatch) run publishes the current auto-derived version as a
-            # prerelease. Keep these two constants in sync with app/build.gradle.kts.
-            base=64; major_minor="0.1"
+            # Auto-derive the version from commit count (keep base/major_minor in sync with
+            # VERSION_BASE_COMMITS / VERSION_MAJOR_MINOR in app/build.gradle.kts). A push to main
+            # publishes a real release; a manual workflow_dispatch on any other branch publishes a
+            # prerelease so a branch can be test-built without claiming "Latest".
+            base=52; major_minor="0.1"
             count=$(git rev-list --count HEAD)
             patch=$(( count - base )); [ "$patch" -lt 0 ] && patch=0
             echo "tag=v${major_minor}.${patch}" >> "$GITHUB_OUTPUT"
-            echo "pre=true" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "pre=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "pre=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
       - name: Name the APK
         id: name
@@ -79,10 +86,12 @@ jobs:
         with:
           name: phonetts-apk
           path: ${{ steps.name.outputs.apk }}
-      # On a version tag OR a manual run, publish the APK to a GitHub Release for one-click download.
-      # (The Actions GITHUB_TOKEN creates the tag+release; a manual run marks it a prerelease.)
+      # Publish the APK to a GitHub Release for one-click download on every push to main (each merge
+      # bumps the patch, so each merge ships a new release) and on any version tag. A manual run on
+      # another branch publishes a prerelease. Feature-branch pushes skip this and only keep the
+      # artifact above. (The Actions GITHUB_TOKEN creates the tag + release.)
       - name: Publish to Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.rel.outputs.tag }}

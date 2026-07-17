@@ -2,17 +2,22 @@ package com.phonetts.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.builtin.BuiltInCatalog
+import com.phonetts.core.update.UpdateStatus
 
 /**
  * In-app help: how to add a voice model, which recommended models exist (read from
@@ -21,11 +26,18 @@ import com.phonetts.core.download.builtin.BuiltInCatalog
  * drives another control; the recommended list is the single source of truth it derives from.
  */
 @Composable
-fun HelpScreen() {
+fun HelpScreen(
+    currentVersion: String,
+    update: UpdateStatus?,
+    checkStatus: String?,
+    onCheckForUpdates: () -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates)
+
         Section("Getting a voice") {
             Bullet("Tap Browse models → the Recommended (one-tap) section for a working voice in one tap.")
             Bullet("Or search Hugging Face in Browse models and tap Download on a result.")
@@ -63,6 +75,33 @@ fun HelpScreen() {
             Q("It asked me to pick an engine?", "It couldn't identify the model — pick the matching engine; it's remembered.")
             Q("Freeing space?", "Manage models shows each model's size and lets you delete it.")
         }
+    }
+}
+
+// Version + a manual update check. The app also checks automatically at launch (silent unless a
+// newer build exists); this button lets the user re-check on demand and always gives feedback —
+// "Up to date (v…)", a download offer, or a note when the check couldn't reach GitHub. Installing is
+// always the user's choice (offer, never force): Download only opens the APK URL in the browser.
+@Composable
+private fun UpdatesSection(
+    currentVersion: String,
+    update: UpdateStatus?,
+    checkStatus: String?,
+    onCheckForUpdates: () -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    Section("About & updates") {
+        Body("Version $currentVersion")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onCheckForUpdates) { Text("Check for updates") }
+            update?.let { available ->
+                val target = available.apkDownloadUrl ?: available.releasePageUrl
+                Button(onClick = { target?.let(uriHandler::openUri) }, enabled = target != null) {
+                    Text("Download ${available.latestVersion}")
+                }
+            }
+        }
+        checkStatus?.let { Body(it) }
     }
 }
 

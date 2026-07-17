@@ -26,6 +26,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -179,7 +180,17 @@ private fun AppNav(
                 screen = Screen.MAIN
             }) { ModelManagementScreen(manageViewModel) }
         }
-        Screen.HELP -> BackScaffold(title = "Help", onBack = { screen = Screen.MAIN }) { HelpScreen() }
+        Screen.HELP -> {
+            val ttsState by ttsViewModel.state.collectAsState()
+            BackScaffold(title = "Help", onBack = { screen = Screen.MAIN }) {
+                HelpScreen(
+                    currentVersion = BuildConfig.VERSION_NAME,
+                    update = ttsState.update,
+                    checkStatus = ttsState.updateCheckStatus,
+                    onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
+                )
+            }
+        }
     }
 }
 

@@ -75,6 +75,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val favoriteVoiceIds: Set<String> = emptySet(),
         // Set when a newer APK is available on GitHub Releases; drives the dismissible update banner.
         val update: UpdateStatus? = null,
+        // Transient result line for a manual "Check for updates" tap ("Checking…", "Up to date (v…)",
+        // or a failure note). Null except right after a manual check; the launch check stays silent.
+        val updateCheckStatus: String? = null,
     ) {
         /** The chosen parameter values, as the [SynthesisParams] bag the one generation path consumes. */
         val params: SynthesisParams get() = SynthesisParams(paramValues)
@@ -128,21 +131,35 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     init {
         refreshModels()
-        checkForUpdate()
+        checkForUpdate(announce = false)
     }
 
     // Ask GitHub Releases (off the main thread) whether a newer APK exists. Only ever surfaces a
     // dismissible banner — never downloads or installs on its own (offer, don't force). Fail-closed:
     // any error leaves [UiState.update] null, so a network hiccup is silent.
-    private fun checkForUpdate() {
+    //
+    // announce=false (launch): stay silent unless an update exists. announce=true (the manual
+    // "Check for updates" button): also report "up to date" / a failure, so a tap always gives feedback.
+    private fun checkForUpdate(announce: Boolean) {
+        if (announce) mutableState.update { it.copy(updateCheckStatus = "Checking for updates…") }
         viewModelScope.launch(Dispatchers.IO) {
             val status =
                 runCatching {
                     graph.updateChecker.check(BuildConfig.VERSION_NAME, AppGraph.REPO_OWNER, AppGraph.REPO_NAME)
-                }.getOrNull() ?: return@launch
-            if (status.updateAvailable) mutableState.update { it.copy(update = status) }
+                }.getOrNull()
+            mutableState.update {
+                when {
+                    status == null -> if (announce) it.copy(updateCheckStatus = "Couldn't check — no connection?") else it
+                    status.updateAvailable -> it.copy(update = status, updateCheckStatus = null)
+                    announce -> it.copy(updateCheckStatus = "Up to date (v${status.currentVersion})")
+                    else -> it
+                }
+            }
         }
     }
+
+    /** Manually re-run the update check (the Help screen's "Check for updates" button). */
+    fun checkForUpdatesNow() = checkForUpdate(announce = true)
 
     /** Dismiss the update banner for this session (the check runs again next launch). */
     fun dismissUpdate() = mutableState.update { it.copy(update = null) }
