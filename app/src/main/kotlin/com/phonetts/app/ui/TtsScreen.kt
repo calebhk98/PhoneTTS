@@ -19,13 +19,17 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,7 +54,7 @@ import kotlinx.coroutines.delay
  * it appears here with no UI change (spec §7). Play and Export are the two consumers of the one
  * generation path.
  */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun TtsScreen(
     viewModel: TtsViewModel,
@@ -75,74 +79,102 @@ fun TtsScreen(
             uri?.let(viewModel::sideloadFolder)
         }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("PhoneTTS")
-
-        state.update?.let { update ->
-            UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
-        }
-
-        if (state.models.isEmpty()) {
-            Text("No models yet. Browse Hugging Face or sideload a folder to add one.")
-        } else {
-            ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
-            state.selected?.let { descriptor ->
-                VoicePicker(
-                    voices = descriptor.voices,
-                    selectedVoiceId = state.voiceId,
-                    favoriteVoiceIds = state.favoriteVoiceIds,
-                    onSelect = viewModel::setVoice,
-                    onToggleFavorite = viewModel::toggleFavoriteVoice,
-                )
-                ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
+    Scaffold(topBar = { TopAppBar(title = { Text("PhoneTTS") }) }) { innerPadding ->
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            state.update?.let { update ->
+                UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
             }
-        }
 
-        OutlinedTextField(
-            value = state.text,
-            onValueChange = viewModel::setText,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Text to speak") },
-            minLines = 3,
-        )
-
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = viewModel::play, enabled = state.selected != null && !state.playing) { Text("Play") }
-            // Pause the audio while generation keeps running; resume replays already-generated audio.
-            if (state.playing && !state.paused) {
-                OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
+            if (state.models.isEmpty()) {
+                Text("No models yet. Browse Hugging Face or sideload a folder to add one.")
+            } else {
+                ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
+                state.selected?.let { descriptor ->
+                    VoicePicker(
+                        voices = descriptor.voices,
+                        selectedVoiceId = state.voiceId,
+                        favoriteVoiceIds = state.favoriteVoiceIds,
+                        onSelect = viewModel::setVoice,
+                        onToggleFavorite = viewModel::toggleFavoriteVoice,
+                    )
+                    ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
+                }
             }
-            if (state.playing && state.paused) {
-                OutlinedButton(onClick = viewModel::resumePlayback) { Text("Resume") }
+
+            OutlinedTextField(
+                value = state.text,
+                onValueChange = viewModel::setText,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Text to speak") },
+                minLines = 3,
+            )
+
+            ButtonGroup("Playback") {
+                Button(onClick = viewModel::play, enabled = state.selected != null && !state.playing) { Text("Play") }
+                // Pause the audio while generation keeps running; resume replays already-generated audio.
+                if (state.playing && !state.paused) {
+                    OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
+                }
+                if (state.playing && state.paused) {
+                    OutlinedButton(onClick = viewModel::resumePlayback) { Text("Resume") }
+                }
+                OutlinedButton(onClick = viewModel::stop, enabled = state.playing) { Text("Stop") }
+                OutlinedButton(
+                    onClick = viewModel::sampleVoice,
+                    enabled = state.selected != null && !state.busy,
+                ) { Text("Sample voice") }
             }
-            OutlinedButton(onClick = viewModel::stop, enabled = state.playing) { Text("Stop") }
-            OutlinedButton(
-                onClick = viewModel::sampleVoice,
-                enabled = state.selected != null && !state.busy,
-            ) { Text("Sample voice") }
-            OutlinedButton(
-                onClick = { exportLauncher.launch("speech.${state.exportFormat.format.fileExtension}") },
-                enabled = state.selected != null && !state.busy,
-            ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
-            OutlinedButton(onClick = { importLauncher.launch(IMPORT_MIME_TYPES) }) { Text("Import file") }
-            OutlinedButton(onClick = onBrowseModels) { Text("Browse models") }
-            OutlinedButton(onClick = onManageModels) { Text("Manage models") }
-            OutlinedButton(onClick = onHelp) { Text("Help") }
-            OutlinedButton(onClick = { sideloadLauncher.launch(null) }) { Text("Sideload folder") }
-        }
 
-        TransformToggles(state, viewModel)
-        if (viewModel.exportFormats.size > 1) {
-            ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
-        }
-        SleepTimerControls(sleepTimer)
+            ButtonGroup("Files") {
+                OutlinedButton(
+                    onClick = { exportLauncher.launch("speech.${state.exportFormat.format.fileExtension}") },
+                    enabled = state.selected != null && !state.busy,
+                ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
+                OutlinedButton(onClick = { importLauncher.launch(IMPORT_MIME_TYPES) }) { Text("Import file") }
+                OutlinedButton(onClick = { sideloadLauncher.launch(null) }) { Text("Sideload folder") }
+            }
 
-        if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        state.stats?.let { GenerationStatsView(it) }
-        state.status?.let { Text(it) }
+            ButtonGroup("Models & help") {
+                OutlinedButton(onClick = onBrowseModels) { Text("Browse models") }
+                OutlinedButton(onClick = onManageModels) { Text("Manage models") }
+                OutlinedButton(onClick = onHelp) { Text("Help") }
+            }
+
+            HorizontalDivider()
+
+            TransformToggles(state, viewModel)
+            if (viewModel.exportFormats.size > 1) {
+                ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
+            }
+            SleepTimerControls(sleepTimer)
+
+            if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            state.stats?.let { GenerationStatsView(it) }
+            state.status?.let { Text(it) }
+        }
+    }
+}
+
+/** A labeled cluster of related action buttons — keeps the button wall scannable at a glance. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ButtonGroup(
+    label: String,
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            content()
+        }
     }
 }
 
@@ -347,9 +379,10 @@ private fun ContinuousControl(
     // Speed keeps its familiar preset shortcuts; other continuous knobs just get the slider.
     if (param.id != ModelParameter.SPEED_ID) return
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SPEED_PRESETS.forEach { preset ->
-            val clamped = preset.coerceIn(range)
-            OutlinedButton(onClick = { onValue(clamped) }) { Text("${"%.2fx".format(clamped)}") }
+        // Only presets the model's own range actually supports — clamping out-of-range presets to
+        // the boundary instead would show the same value twice (e.g. two "1.50x" buttons).
+        SPEED_PRESETS.filter { it in range }.forEach { preset ->
+            OutlinedButton(onClick = { onValue(preset) }) { Text("${"%.2fx".format(preset)}") }
         }
     }
 }
