@@ -69,6 +69,12 @@ android {
     namespace = "com.phonetts.app"
     compileSdk = 35
 
+    // Pinned so the CosyVoice/espeak native cross-compile is reproducible in CI (the release APK is
+    // now built with -PwithCosyVoice — see .github/workflows/android.yml). Only consulted when a
+    // native bridge is opted in; the baseline (ONNX-only) APK builds with no NDK at all. Matches
+    // AGP 8.7's default NDK; bump both together. CMake stays pinned in externalNativeBuild below.
+    ndkVersion = "27.0.12077973"
+
     defaultConfig {
         applicationId = "com.phonetts"
         minSdk = 24
@@ -98,11 +104,6 @@ android {
             }
         }
     }
-
-    // NDK version is intentionally left to the installed default rather than pinned here: this
-    // module was authored without a local NDK to test against (no Android SDK in this dev
-    // environment). Any NDK new enough for CMake 3.22.1 (r23+) should work; pin this once a real
-    // build has been run and the resolved version is known-good.
 
     buildFeatures {
         compose = true
