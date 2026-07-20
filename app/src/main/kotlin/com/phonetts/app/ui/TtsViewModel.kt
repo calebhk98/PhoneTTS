@@ -398,6 +398,74 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
+    /**
+     * Generate a short spoken sample of EVERY downloaded model and save each to its own file, so
+     * you can audition them back-to-back. Loops the catalog loading one engine at a time
+     * ([EngineManager.switchTo] unloads the previous — one engine in memory, spec §6.2), synthesizing
+     * the shared [VOICE_SAMPLE_PHRASE] with each model's default voice/params through the SAME one
+     * generation path (spec §6.1), and encoding it with the current export format. Best-effort per
+     * model: one that fails to load or generate is skipped and named in the summary, never fatal to
+     * the rest. Raw voice (no transforms) so the samples compare the models themselves.
+     */
+    fun sampleAllModels(sink: AudioFileSink) {
+        val models = mutableState.value.models
+        if (models.isEmpty()) {
+            mutableState.update { it.copy(status = "No models to sample yet") }
+            return
+        }
+        val encoder = mutableState.value.exportFormat
+        stop()
+        mutableState.update { it.copy(busy = true, status = "Sampling models…", stats = null) }
+        viewModelScope.launch {
+            val failures = mutableListOf<String>()
+            models.forEachIndexed { index, descriptor ->
+                mutableState.update {
+                    it.copy(status = "Sampling ${index + 1}/${models.size}: ${descriptor.displayName}…")
+                }
+                if (!sampleOneModel(descriptor, encoder, sink)) failures += descriptor.displayName
+            }
+            mutableState.update {
+                it.copy(
+                    busy = false,
+                    status = sampleSummary(models.size - failures.size, models.size, failures),
+                    loadedModelId = models.last().modelId,
+                )
+            }
+        }
+    }
+
+    // Synthesize + encode one model's sample into a freshly-created file. Returns false (and leaves
+    // the batch running) if the engine won't load, generation throws, or the file can't be created.
+    private suspend fun sampleOneModel(
+        descriptor: ModelDescriptor,
+        encoder: AudioEncoder,
+        sink: AudioFileSink,
+    ): Boolean =
+        runCatching {
+            graph.engineManager.switchTo(descriptor.engineId, descriptor)
+            val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
+            val voiceId = defaultVoiceIdFor(descriptor)
+            val params = SynthesisParams(defaultParamValues(descriptor))
+            val output = sink.create(sampleBaseName(descriptor)) ?: error("could not create file")
+            val audio = engine.synthesize(VOICE_SAMPLE_PHRASE, voiceId, params)
+            withContext(Dispatchers.IO) {
+                output.use { encoder.encode(audio, descriptor.sampleRate, it) }
+            }
+        }.isSuccess
+
+    // A file-safe base name (no extension — the file sink appends the format's) from the display name.
+    private fun sampleBaseName(descriptor: ModelDescriptor): String =
+        descriptor.displayName.replace(FILE_UNSAFE, "_").trim().ifEmpty { descriptor.modelId }
+
+    private fun sampleSummary(
+        saved: Int,
+        total: Int,
+        failures: List<String>,
+    ): String {
+        if (failures.isEmpty()) return "Saved $saved sample${if (saved == 1) "" else "s"}"
+        return "Saved $saved of $total — skipped: ${failures.joinToString()}"
+    }
+
     /** Export the current text to a WAV [output], applying the enabled non-destructive transforms. */
     fun export(output: OutputStream) {
         val s = mutableState.value
@@ -460,5 +528,19 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     private companion object {
         const val VOICE_SAMPLE_PHRASE = "The quick brown fox jumps over the lazy dog."
+
+        // Characters not safe in a saved file name; the "sample every model" names are derived from
+        // model display names, which can contain slashes/colons.
+        val FILE_UNSAFE = Regex("""[^A-Za-z0-9 _-]""")
     }
+}
+
+/**
+ * Creates one output file per model for [TtsViewModel.sampleAllModels], named [fileName] (no
+ * extension — the sink adds the export format's). Returning null skips that model without aborting
+ * the batch. Kept as a tiny functional interface so the ViewModel never touches SAF/DocumentFile
+ * directly, exactly as [TtsViewModel.export] takes a plain OutputStream.
+ */
+fun interface AudioFileSink {
+    fun create(fileName: String): OutputStream?
 }

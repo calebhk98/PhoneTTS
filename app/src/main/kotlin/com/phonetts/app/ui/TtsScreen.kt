@@ -54,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.engine.Voice
@@ -95,6 +96,15 @@ fun TtsScreen(
     val sideloadLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             uri?.let(viewModel::sideloadFolder)
+        }
+    // Pick a destination folder, then write one sample clip per model into it (named by model).
+    val sampleAllLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            val tree = uri?.let { DocumentFile.fromTreeUri(context, it) } ?: return@rememberLauncherForActivityResult
+            val mime = state.exportFormat.format.mimeType
+            viewModel.sampleAllModels { name ->
+                tree.createFile(mime, name)?.uri?.let { fileUri -> context.contentResolver.openOutputStream(fileUri) }
+            }
         }
 
     // Close the drawer, then run the destination's action. Navigation actions swap the whole screen
@@ -138,6 +148,7 @@ fun TtsScreen(
                 contentPadding = innerPadding,
                 onImport = { importLauncher.launch(IMPORT_MIME_TYPES) },
                 onExport = { exportLauncher.launch("speech.${state.exportFormat.format.fileExtension}") },
+                onSampleAll = { sampleAllLauncher.launch(null) },
             )
         }
     }
@@ -152,6 +163,7 @@ private fun TtsBody(
     contentPadding: PaddingValues,
     onImport: () -> Unit,
     onExport: () -> Unit,
+    onSampleAll: () -> Unit,
 ) {
     Column(
         modifier =
@@ -169,7 +181,7 @@ private fun TtsBody(
         VoiceCard(state, viewModel)
         TextCard(state, viewModel, onImport)
         PlaybackCard(state, viewModel)
-        OutputCard(state, viewModel, sleepTimer, onExport)
+        OutputCard(state, viewModel, sleepTimer, onExport, onSampleAll)
     }
 }
 
@@ -329,18 +341,27 @@ private fun PlaybackCard(
 }
 
 /** Export + the non-destructive post-processing toggles + the sleep timer — the "on the way out" knobs. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OutputCard(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
     sleepTimer: SleepTimerHandle,
     onExport: () -> Unit,
+    onSampleAll: () -> Unit,
 ) {
     SectionCard("Output") {
-        OutlinedButton(
-            onClick = onExport,
-            enabled = state.selected != null && !state.busy,
-        ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = onExport,
+                enabled = state.selected != null && !state.busy,
+            ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
+            // Audition every downloaded model at once: one sample clip per model, saved to a folder.
+            OutlinedButton(
+                onClick = onSampleAll,
+                enabled = state.models.isNotEmpty() && !state.busy && !state.playing,
+            ) { Text("Sample every model") }
+        }
         if (viewModel.exportFormats.size > 1) {
             ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
         }
