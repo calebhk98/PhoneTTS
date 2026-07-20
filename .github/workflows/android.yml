@@ -7,10 +7,10 @@ name: Android CI + APK release
 #
 # The debug APK is signed with the standard Android debug key, so it installs on any device with
 # "install unknown apps" enabled — no keystore secret needed. It bundles ONNX Runtime for the
-# Tier-A/B engines AND the CosyVoice3 native ggml runtime (built with -PwithCosyVoice — the apk job
-# fetches the CrispASR sources and NDK-cross-compiles it). The espeak-ng bridge is still an opt-in
-# native build (-PwithEspeak) and is not included (see docs/COSYVOICE2.md and
-# docs/espeak-ng-integration.md).
+# Tier-A/B engines; the espeak-ng and CosyVoice native bridges are opt-in native builds
+# (-PwithEspeak / -PwithCosyVoice) and are NOT included in this baseline APK (see docs/COSYVOICE2.md
+# and docs/espeak-ng-integration.md). Shipping CosyVoice by default is tracked separately — the
+# CrispASR native tree needs real integration work to cross-compile (see the "ship CosyVoice" issue).
 
 on:
   push:
@@ -52,15 +52,8 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
-      # The CosyVoice3 native ggml runtime is shipped in the release APK (-PwithCosyVoice below).
-      # It needs the NDK + CMake and the CrispASR source tree (fetched, not vendored). The four GGUF
-      # weight stages are still downloaded at runtime into app-private storage, never bundled.
-      - name: Install NDK + CMake for the native build
-        run: sdkmanager "ndk;27.0.12077973" "cmake;3.22.1"
-      - name: Fetch CosyVoice native sources (CrispASR + ggml)
-        run: sh scripts/fetch-cosyvoice-ggml.sh
-      - name: Build debug APK (with CosyVoice native runtime)
-        run: ./gradlew :app:assembleDebug -PwithCosyVoice=true --no-daemon
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
       - name: Resolve release tag
         id: rel
         run: |
@@ -113,5 +106,5 @@ jobs:
             **Install:** download the `.apk` below, enable "install unknown apps" for your browser/files app, and open it.
 
             Debug-signed build (installs without a Play account). ONNX engines (Piper/Kokoro/Kitten/Melo)
-            and the CosyVoice3 native runtime are included; espeak phonemization is an opt-in native build —
-            see the README. Model weights download on first use into app-private storage.
+            are included; espeak phonemization and CosyVoice are opt-in native builds — see the README.
+            Model weights download on first use into app-private storage.
