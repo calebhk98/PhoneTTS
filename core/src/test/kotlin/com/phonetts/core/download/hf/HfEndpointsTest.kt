@@ -36,6 +36,14 @@ class HfEndpointsTest {
     }
 
     @Test
+    fun modelPageUrlKeepsOwnerSlashAndEncodesSegments() {
+        assertEquals(
+            "https://huggingface.co/owner/Model%20Name",
+            HfEndpoints.modelPageUrl("owner/Model Name"),
+        )
+    }
+
+    @Test
     fun resolveUrlKeepsModelSlashAndEncodesPathSegments() {
         val url = HfEndpoints.resolveUrl("owner/Model Name", "main", "onnx/model file.onnx")
         assertEquals(

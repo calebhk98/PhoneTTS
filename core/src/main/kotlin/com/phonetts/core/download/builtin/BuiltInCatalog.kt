@@ -84,6 +84,30 @@ object BuiltInCatalog {
             note = "Multi-speaker English VITS model.",
         )
 
+    // CosyVoice3-0.5B, the Tier-C autoregressive model — the deployable GGUF sibling of the
+    // CosyVoice2 model proven in PyTorch (docs/MODEL-VERIFICATION.md). It runs ONLY on the native
+    // ggml backend built with -PwithCosyVoice, so it declares requiresRuntimeId = the CosyVoice
+    // runtime id: in a standard APK that runtime is unavailable and the recommended list hides this
+    // entry (no broken one-tap); in a native build it appears as the 5th model. The minimal 745 MB
+    // combo (Q4_K LLM + Q8_0 flow + F16 HiFT + voices) is the four-GGUF set CosyVoice2Engine
+    // fingerprints by name — the repo already ships them under those exact stage-prefixed names.
+    val COSYVOICE3_05B =
+        BuiltInModel(
+            id = "cosyvoice3-0.5b",
+            displayName = "CosyVoice3-0.5B (multilingual, native)",
+            repoId = "cstr/cosyvoice3-0.5b-2512-GGUF",
+            approxSizeMb = 745,
+            files =
+                listOf(
+                    BuiltInFile("cosyvoice3-llm-q4_k.gguf", "cosyvoice3-llm-q4_k.gguf"),
+                    BuiltInFile("cosyvoice3-flow-q8_0.gguf", "cosyvoice3-flow-q8_0.gguf"),
+                    BuiltInFile("cosyvoice3-hift-f16.gguf", "cosyvoice3-hift-f16.gguf"),
+                    BuiltInFile("cosyvoice3-voices.gguf", "cosyvoice3-voices.gguf"),
+                ),
+            note = "Highest quality, multilingual. Needs the native (-PwithCosyVoice) build; large download.",
+            requiresRuntimeId = "cosyvoice",
+        )
+
     /** Every recommended model, in display order (smallest-first is friendlier, but quality-first here). */
-    val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M, MELO_EN)
+    val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M, MELO_EN, COSYVOICE3_05B)
 }

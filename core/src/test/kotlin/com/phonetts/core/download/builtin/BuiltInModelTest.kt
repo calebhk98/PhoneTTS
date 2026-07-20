@@ -40,4 +40,14 @@ class BuiltInModelTest {
         val ids = BuiltInCatalog.ALL.map { it.id }
         assertEquals(ids.size, ids.toSet().size, "duplicate built-in model ids")
     }
+
+    @Test
+    fun oneModelPerEngineFamilyAndCosyVoiceIsRuntimeGated() {
+        // Five curated models, one per engine family (Piper, KittenTTS, Kokoro, MeloTTS, CosyVoice3).
+        assertEquals(5, BuiltInCatalog.ALL.size)
+        // Only the native CosyVoice3 declares a required runtime; the four ONNX models run anywhere.
+        val gated = BuiltInCatalog.ALL.filter { it.requiresRuntimeId != null }
+        assertEquals(listOf("cosyvoice"), gated.map { it.requiresRuntimeId })
+        assertEquals("cosyvoice3-0.5b", gated.single().id)
+    }
 }

@@ -165,7 +165,14 @@ private fun AppNav(
                 viewModel(
                     factory =
                         viewModelFactory {
-                            initializer { HfBrowseViewModel(graph.hfCatalog, graph.hfDownloader, graph.catalog) }
+                            initializer {
+                                HfBrowseViewModel(
+                                    graph.hfCatalog,
+                                    graph.hfDownloader,
+                                    graph.catalog,
+                                    isRuntimeAvailable = { id -> graph.runtimeRegistry.get(id)?.isAvailable() == true },
+                                )
+                            }
                         },
                 )
             BackScaffold(title = "Browse models", onBack = {

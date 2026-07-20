@@ -26,6 +26,11 @@ data class BuiltInModel(
     val files: List<BuiltInFile>,
     val revision: String = HfCatalog.DEFAULT_REVISION,
     val note: String? = null,
+    // The Runtime this model needs to actually run (e.g. CosyVoice3's native ggml backend), or null
+    // when any build can run it (the ONNX models). The recommended list hides a model whose required
+    // runtime isn't available on this build, so a one-tap download never lands a model that can't
+    // load — the browse layer filters on this; core states the requirement, it doesn't resolve it.
+    val requiresRuntimeId: String? = null,
 ) {
     /**
      * The concrete downloads: each file fetched from its repo path but written under its local

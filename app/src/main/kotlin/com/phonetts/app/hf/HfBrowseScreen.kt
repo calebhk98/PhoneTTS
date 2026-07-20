@@ -8,22 +8,29 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.phonetts.core.download.hf.HfEndpoints
 import com.phonetts.core.download.hf.HfModelSummary
 
 /**
@@ -31,10 +38,16 @@ import com.phonetts.core.download.hf.HfModelSummary
  * catalog + the resolver — it hardcodes no model. A downloaded repo the resolver can't identify
  * still lands in the catalog via the user-pick fallback (spec §6.2), so "browse everything" degrades
  * gracefully instead of failing.
+ *
+ * Layout: search box at the very top, then the live results directly beneath it, then the curated
+ * one-tap "Recommended" models below — all in one scrolling list, so the recommended block never
+ * wedges between the search box and its results. The list is pre-populated on open with the top TTS
+ * models (see [HfBrowseViewModel]'s init) so there's more than a handful to see before you type.
  */
 @Composable
 fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
     val state by viewModel.state.collectAsState()
+    val uriHandler = LocalUriHandler.current
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -44,6 +57,9 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 label = { Text("Search Hugging Face TTS models") },
+                // So the keyboard's Search/Enter key runs the query — not only the Search button.
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { viewModel.search() }),
             )
             Button(onClick = viewModel::search, enabled = !state.loading) { Text("Search") }
         }
@@ -51,29 +67,35 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         state.error?.let { Text("Error: $it") }
         if (state.loading) CircularProgressIndicator()
 
-        if (viewModel.recommended.isNotEmpty()) {
-            Text("Recommended (one-tap)", fontWeight = FontWeight.Bold)
-            viewModel.recommended.forEach { model ->
-                RecommendedRow(
-                    model = model,
-                    isDownloading = state.downloadingId == model.id,
-                    progress = state.progress.takeIf { state.downloadingId == model.id },
-                    isInstalled = viewModel.isInstalled(model.id),
-                    onDownload = { viewModel.downloadBuiltIn(model) },
-                )
-            }
-            Text("Or search Hugging Face:")
-        }
-
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.results, key = { it.id }) { model ->
+            items(state.results, key = { "hf:${it.id}" }) { model ->
                 ModelRow(
                     model = model,
                     isDownloading = state.downloadingId == model.id,
                     progress = state.progress.takeIf { state.downloadingId == model.id },
                     isInstalled = viewModel.isInstalled(model.id),
                     onDownload = { viewModel.download(model) },
+                    onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.id)) },
                 )
+            }
+
+            if (viewModel.recommended.isNotEmpty()) {
+                item(key = "recommended-header") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HorizontalDivider()
+                        Text("Recommended (one-tap)", fontWeight = FontWeight.Bold)
+                    }
+                }
+                items(viewModel.recommended, key = { "rec:${it.id}" }) { model ->
+                    RecommendedRow(
+                        model = model,
+                        isDownloading = state.downloadingId == model.id,
+                        progress = state.progress.takeIf { state.downloadingId == model.id },
+                        isInstalled = viewModel.isInstalled(model.id),
+                        onDownload = { viewModel.downloadBuiltIn(model) },
+                        onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.repoId)) },
+                    )
+                }
             }
         }
     }
@@ -119,6 +141,7 @@ private fun RecommendedRow(
     progress: Pair<Int, Int>?,
     isInstalled: Boolean,
     onDownload: () -> Unit,
+    onOpenPage: () -> Unit,
 ) {
     ModelCard {
         Row(
@@ -134,6 +157,7 @@ private fun RecommendedRow(
             DownloadControl(isDownloading, progress, isInstalled, onDownload)
         }
         DownloadProgress(isDownloading, progress)
+        OpenPageLink(onOpenPage)
     }
 }
 
@@ -144,6 +168,7 @@ private fun ModelRow(
     progress: Pair<Int, Int>?,
     isInstalled: Boolean,
     onDownload: () -> Unit,
+    onOpenPage: () -> Unit,
 ) {
     ModelCard {
         Row(
@@ -163,7 +188,14 @@ private fun ModelRow(
             DownloadControl(isDownloading, progress, isInstalled, onDownload)
         }
         DownloadProgress(isDownloading, progress)
+        OpenPageLink(onOpenPage)
     }
+}
+
+/** Opens the model's Hugging Face page (its README / model card / files) in the browser. */
+@Composable
+private fun OpenPageLink(onOpenPage: () -> Unit) {
+    TextButton(onClick = onOpenPage) { Text("View on Hugging Face ↗") }
 }
 
 /** A model card's Delete/Download row is followed by a progress bar when a download is in flight. */
