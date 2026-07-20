@@ -68,23 +68,11 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         if (state.loading) CircularProgressIndicator()
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.results, key = { "hf:${it.id}" }) { model ->
-                ModelRow(
-                    model = model,
-                    isDownloading = state.downloadingId == model.id,
-                    progress = state.progress.takeIf { state.downloadingId == model.id },
-                    isInstalled = viewModel.isInstalled(model.id),
-                    onDownload = { viewModel.download(model) },
-                    onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.id)) },
-                )
-            }
-
+            // Recommended one-tap models come first — they're the curated, known-good downloads most
+            // users want; the broader Hugging Face results follow under their own header.
             if (viewModel.recommended.isNotEmpty()) {
                 item(key = "recommended-header") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        HorizontalDivider()
-                        Text("Recommended (one-tap)", fontWeight = FontWeight.Bold)
-                    }
+                    Text("Recommended (one-tap)", fontWeight = FontWeight.Bold)
                 }
                 items(viewModel.recommended, key = { "rec:${it.id}" }) { model ->
                     RecommendedRow(
@@ -96,6 +84,25 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                         onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.repoId)) },
                     )
                 }
+            }
+
+            if (state.results.isNotEmpty()) {
+                item(key = "results-header") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HorizontalDivider()
+                        Text("More from Hugging Face", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            items(state.results, key = { "hf:${it.id}" }) { model ->
+                ModelRow(
+                    model = model,
+                    isDownloading = state.downloadingId == model.id,
+                    progress = state.progress.takeIf { state.downloadingId == model.id },
+                    isInstalled = viewModel.isInstalled(model.id),
+                    onDownload = { viewModel.download(model) },
+                    onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.id)) },
+                )
             }
         }
     }

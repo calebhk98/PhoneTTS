@@ -35,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.phonetts.app.benchmark.BenchmarkScreen
+import com.phonetts.app.benchmark.BenchmarkViewModel
 import com.phonetts.app.hf.HfBrowseScreen
 import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.manage.ModelManagementScreen
@@ -45,7 +47,7 @@ import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
 import com.phonetts.app.ui.theme.PhoneTtsTheme
 
-private enum class Screen { MAIN, BROWSE, MANAGE, HELP }
+private enum class Screen { MAIN, BROWSE, MANAGE, BENCHMARK, HELP }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -156,6 +158,7 @@ private fun AppNav(
                 viewModel = ttsViewModel,
                 onBrowseModels = { screen = Screen.BROWSE },
                 onManageModels = { screen = Screen.MANAGE },
+                onBenchmarks = { screen = Screen.BENCHMARK },
                 onHelp = { screen = Screen.HELP },
                 appVersion = BuildConfig.VERSION_NAME,
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
@@ -187,6 +190,13 @@ private fun AppNav(
                 ttsViewModel.refreshModels() // a delete removes it from the model dropdown too
                 screen = Screen.MAIN
             }) { ModelManagementScreen(manageViewModel) }
+        }
+        Screen.BENCHMARK -> {
+            val benchmarkViewModel: BenchmarkViewModel =
+                viewModel(factory = viewModelFactory { initializer { BenchmarkViewModel(graph) } })
+            BackScaffold(title = "Benchmarks", onBack = { screen = Screen.MAIN }) {
+                BenchmarkScreen(benchmarkViewModel)
+            }
         }
         Screen.HELP -> {
             val ttsState by ttsViewModel.state.collectAsState()

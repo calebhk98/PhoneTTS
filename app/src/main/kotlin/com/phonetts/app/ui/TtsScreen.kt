@@ -76,6 +76,7 @@ fun TtsScreen(
     viewModel: TtsViewModel,
     onBrowseModels: () -> Unit,
     onManageModels: () -> Unit,
+    onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
@@ -123,6 +124,7 @@ fun TtsScreen(
                 onBrowseModels = { navigate(onBrowseModels) },
                 onManageModels = { navigate(onManageModels) },
                 onSideload = { navigate { sideloadLauncher.launch(null) } },
+                onBenchmarks = { navigate(onBenchmarks) },
                 onHelp = { navigate(onHelp) },
             )
         },
@@ -209,6 +211,7 @@ private fun AppDrawer(
     onBrowseModels: () -> Unit,
     onManageModels: () -> Unit,
     onSideload: () -> Unit,
+    onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
 ) {
     ModalDrawerSheet {
@@ -225,6 +228,7 @@ private fun AppDrawer(
             DrawerLink("Browse models", onBrowseModels)
             DrawerLink("Manage models", onManageModels)
             DrawerLink("Sideload folder", onSideload)
+            DrawerLink("Benchmarks", onBenchmarks)
             DrawerLink("Help", onHelp)
         }
     }
