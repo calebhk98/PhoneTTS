@@ -157,6 +157,7 @@ private fun AppNav(
                 onBrowseModels = { screen = Screen.BROWSE },
                 onManageModels = { screen = Screen.MANAGE },
                 onHelp = { screen = Screen.HELP },
+                appVersion = BuildConfig.VERSION_NAME,
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
         Screen.BROWSE -> {
