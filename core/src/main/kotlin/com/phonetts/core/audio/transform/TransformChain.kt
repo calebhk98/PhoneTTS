@@ -30,6 +30,23 @@ class TransformChain(entries: List<TransformEntry>) {
 
     fun isEnabled(id: String): Boolean = entries.any { it.transform.id == id && it.enabled }
 
+    /** The enabled transforms, in order — the ones a streaming export actually has to run. */
+    fun enabledTransforms(): List<AudioTransform> = entries.filter { it.enabled }.map { it.transform }
+
+    /**
+     * Build a bounded-memory streaming [TransformPipeline] over the enabled transforms, terminating
+     * at [sink]. Transforms that support streaming (implement [IncrementalTransform]) run
+     * incrementally; the rest fall back to a [BufferingStage]. This is the export path's equivalent
+     * of [apply] — same order and result, without ever holding the whole utterance in RAM.
+     */
+    fun pipeline(
+        sampleRate: Int,
+        sink: (FloatArray) -> Unit,
+    ): TransformPipeline = TransformPipeline(enabledTransforms().map { it.toStage(sampleRate) }, sink)
+
+    private fun AudioTransform.toStage(sampleRate: Int): TransformStage =
+        if (this is IncrementalTransform) openStage(sampleRate) else BufferingStage(this, sampleRate)
+
     /** Return a new chain with the transform [id] set to [enabled] (immutable toggle). */
     fun withEnabled(
         id: String,
