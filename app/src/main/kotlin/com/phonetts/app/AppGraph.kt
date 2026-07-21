@@ -13,6 +13,7 @@ import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
+import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.resolver.DetectionFailureExplainer
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
@@ -91,6 +92,7 @@ class AppGraph(context: Context) {
     private val preferenceStore = PrefsPreferenceStore(appContext)
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
+    val readingTextPreferences = ReadingTextPreferences(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
 
     // The export-format registry (WAV always; AAC always; Opus on API 29+). The picker reads
