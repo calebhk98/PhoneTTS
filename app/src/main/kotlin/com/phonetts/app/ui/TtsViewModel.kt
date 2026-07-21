@@ -142,6 +142,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private val mutableState = MutableStateFlow(UiState(exportFormat = exportFormats.first()))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
+    // Set by the Activity while it is bound to the playback service (null when unbound). Every in-app
+    // barge-in ([stop]) invokes it so the service knows the resulting stop was user-initiated and does
+    // NOT fire the end-of-document cue (issue #32). Natural completion never calls [stop] — the play
+    // coroutine just finishes — so the cue still fires only on a genuine end of document.
+    var onUserStopRequested: (() -> Unit)? = null
+
     private val sink = AudioTrackSink()
     // A fresh BufferedPlayback per play session — see play(): the class is documented/tested
     // (core BufferedAudioTest) as single-use, since stop() latches its internal "stopped" flag
@@ -537,6 +543,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
      * Then it clears the UI flags. Every switch (below) routes through here so the discipline holds.
      */
     fun stop() {
+        // Tell the service (if bound) this stop is user-initiated, so it doesn't misread the
+        // resulting playing→stopped edge as a natural end-of-document and chime (issue #32).
+        onUserStopRequested?.invoke()
         playback.stop() // step 2a: stop draining the generated-audio buffer
         playJob?.cancel()
         genJob?.cancel() // step 1: cancel synthesis

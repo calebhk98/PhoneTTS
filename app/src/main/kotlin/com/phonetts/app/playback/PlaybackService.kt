@@ -68,6 +68,17 @@ class PlaybackService : Service() {
             this@PlaybackService.controller = null
         }
 
+        /**
+         * Tell the service the stop about to be reflected in state was user-initiated (issue #32).
+         * The in-app Stop button drives `TtsViewModel.stop()` directly, bypassing the service's own
+         * stop routing, so without this flag the service would misread that manual Stop as a natural
+         * end-of-document and fire the completion cue. Called before the `playing -> stopped` state
+         * change reaches [onStateChanged].
+         */
+        fun notifyUserStop() {
+            this@PlaybackService.userStopRequested = true
+        }
+
         /** Call whenever playback state changes, to keep the notification/session/focus in sync. */
         fun onStateChanged(
             playing: Boolean,
@@ -144,6 +155,10 @@ class PlaybackService : Service() {
             return
         }
         wasPlaying = true
+        // A fresh (or resumed) play clears any stale user-stop flag left by a barge-in restart
+        // (select model / skip paragraph both stop() then immediately start again), so a later
+        // natural completion of THIS run is still classified correctly and can fire the cue.
+        userStopRequested = false
         audioFocus.request()
         updateSession(paused, title)
         val notification = notifications.build(paused, title, mediaSession?.sessionToken, controller?.progress)

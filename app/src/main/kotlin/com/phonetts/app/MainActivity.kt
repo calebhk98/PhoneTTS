@@ -71,10 +71,14 @@ class MainActivity : ComponentActivity() {
                 val localBinder = service as? PlaybackService.LocalBinder ?: return
                 binderState.value = localBinder
                 localBinder.attachController(ttsViewModel.playbackController)
+                // In-app Stop bypasses the service, so route it a "this stop is user-initiated"
+                // signal, otherwise a manual Stop reads as natural completion and chimes (issue #32).
+                ttsViewModel.onUserStopRequested = { localBinder.notifyUserStop() }
                 forwardState(localBinder)
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
+                ttsViewModel.onUserStopRequested = null
                 binderState.value = null
             }
         }
@@ -112,6 +116,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        ttsViewModel.onUserStopRequested = null
         binderState.value?.detachController()
         unbindService(connection)
         binderState.value = null
