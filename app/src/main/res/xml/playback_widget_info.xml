@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AppWidgetProviderInfo for the playback widget (issue #25). Roughly a 2x1 cell; updated on
+     demand by PlaybackService via PlaybackWidgetProvider.refresh(), so updatePeriodMillis stays 0
+     (no wasteful periodic wakeups on a budget phone). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/playback_widget"
+    android:resizeMode="horizontal"
+    android:widgetCategory="home_screen" />
