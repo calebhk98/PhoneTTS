@@ -81,6 +81,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                         progress = state.progress.takeIf { state.downloadingId == model.id },
                         isInstalled = viewModel.isInstalled(model.id),
                         onDownload = { viewModel.downloadBuiltIn(model) },
+                        onCancel = viewModel::cancelDownload,
                         onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.repoId)) },
                     )
                 }
@@ -101,6 +102,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                     progress = state.progress.takeIf { state.downloadingId == model.id },
                     isInstalled = viewModel.isInstalled(model.id),
                     onDownload = { viewModel.download(model) },
+                    onCancel = viewModel::cancelDownload,
                     onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.id)) },
                 )
             }
@@ -148,6 +150,7 @@ private fun RecommendedRow(
     progress: Pair<Int, Int>?,
     isInstalled: Boolean,
     onDownload: () -> Unit,
+    onCancel: () -> Unit,
     onOpenPage: () -> Unit,
 ) {
     ModelCard {
@@ -161,7 +164,7 @@ private fun RecommendedRow(
                 Text("~${model.approxSizeMb} MB", style = MaterialTheme.typography.bodyMedium)
                 model.note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
-            DownloadControl(isDownloading, progress, isInstalled, onDownload)
+            DownloadControl(isDownloading, progress, isInstalled, onDownload, onCancel)
         }
         DownloadProgress(isDownloading, progress)
         OpenPageLink(onOpenPage)
@@ -175,6 +178,7 @@ private fun ModelRow(
     progress: Pair<Int, Int>?,
     isInstalled: Boolean,
     onDownload: () -> Unit,
+    onCancel: () -> Unit,
     onOpenPage: () -> Unit,
 ) {
     ModelCard {
@@ -192,7 +196,7 @@ private fun ModelRow(
                 val subtitle = tags.joinToString(" · ")
                 if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall)
             }
-            DownloadControl(isDownloading, progress, isInstalled, onDownload)
+            DownloadControl(isDownloading, progress, isInstalled, onDownload, onCancel)
         }
         DownloadProgress(isDownloading, progress)
         OpenPageLink(onOpenPage)
@@ -240,13 +244,18 @@ private fun DownloadControl(
     progress: Pair<Int, Int>?,
     isInstalled: Boolean,
     onDownload: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     if (isInstalled) {
         Text("Installed", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         return
     }
     if (isDownloading) {
-        Text(progress?.let { (done, total) -> "$done/$total files" } ?: "Starting…")
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(progress?.let { (done, total) -> "$done/$total files" } ?: "Starting…")
+            // Cancel stops the fetch and leaves any partial file on disk, so re-tapping Download resumes.
+            OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        }
         return
     }
     Button(onClick = onDownload) { Text("Download") }
