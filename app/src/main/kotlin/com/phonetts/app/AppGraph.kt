@@ -11,6 +11,7 @@ import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
 import com.phonetts.core.resolver.DetectionFailureExplainer
@@ -91,6 +92,9 @@ class AppGraph(context: Context) {
     private val preferenceStore = PrefsPreferenceStore(appContext)
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
+    // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
+    // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
+    val blendedVoices = BlendedVoiceStore(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
 
     // The export-format registry (WAV always; AAC always; Opus on API 29+). The picker reads

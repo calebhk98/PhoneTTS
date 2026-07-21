@@ -42,12 +42,14 @@ import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.manage.ModelManagementScreen
 import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.ui.HelpScreen
+import com.phonetts.app.ui.MixVoicesScreen
+import com.phonetts.app.ui.MixVoicesViewModel
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
 import com.phonetts.app.ui.theme.PhoneTtsTheme
 
-private enum class Screen { MAIN, BROWSE, MANAGE, BENCHMARK, HELP }
+private enum class Screen { MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -160,6 +162,7 @@ private fun AppNav(
                 onManageModels = { screen = Screen.MANAGE },
                 onBenchmarks = { screen = Screen.BENCHMARK },
                 onHelp = { screen = Screen.HELP },
+                onMixVoices = { screen = Screen.MIX },
                 appVersion = BuildConfig.VERSION_NAME,
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
@@ -197,6 +200,18 @@ private fun AppNav(
             BackScaffold(title = "Benchmarks", onBack = { screen = Screen.MAIN }) {
                 BenchmarkScreen(benchmarkViewModel)
             }
+        }
+        Screen.MIX -> {
+            val ttsState by ttsViewModel.state.collectAsState()
+            val mixViewModel: MixVoicesViewModel =
+                viewModel(
+                    key = ttsState.selected?.modelId,
+                    factory = viewModelFactory { initializer { MixVoicesViewModel(graph, ttsState.selected) } },
+                )
+            BackScaffold(title = "Mix voices", onBack = {
+                ttsViewModel.refreshModels() // a saved mix may have become selectable
+                screen = Screen.MAIN
+            }) { MixVoicesScreen(mixViewModel) }
         }
         Screen.HELP -> {
             val ttsState by ttsViewModel.state.collectAsState()
