@@ -16,16 +16,21 @@ import com.phonetts.core.audio.transform.TransformChain
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.metrics.GenerationStats
+import com.phonetts.core.metrics.ListeningTimeEstimator
 import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.WordCounter
 import com.phonetts.core.metrics.trackGeneration
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.prefs.DocumentPosition
+import com.phonetts.core.prefs.ReadingTextPreferences
+import com.phonetts.core.text.TextChunker
 import com.phonetts.core.update.UpdateStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -78,9 +83,24 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // Transient result line for a manual "Check for updates" tap ("Checking…", "Up to date (v…)",
         // or a failure note). Null except right after a manual check; the launch check stays silent.
         val updateCheckStatus: String? = null,
+        // Sentence index to resume from after a generation/export failure (issue #28), or null when
+        // there's nothing to resume. Non-null drives the "Resume from where it stopped" action.
+        val resumeSentenceIndex: Int? = null,
+        // Font scale for the reading/editing text field (issue #29, the A− / A+ control). A display
+        // preference only — persisted via ReadingTextPreferences; scales no model fact.
+        val readingScale: Float = ReadingTextPreferences.DEFAULT_SCALE,
     ) {
         /** The chosen parameter values, as the [SynthesisParams] bag the one generation path consumes. */
         val params: SynthesisParams get() = SynthesisParams(paramValues)
+
+        /**
+         * Estimated time to *listen* to the current text at the current speed (issue #23), from a real
+         * [WordCounter] count — not a measurement of the engine (that's [GenerationStats]). Recomputes
+         * for free whenever the text or speed changes, so the UI updates without any synthesis. Zero
+         * for empty text; the UI shows nothing in that case.
+         */
+        val estimatedListeningSeconds: Double
+            get() = ListeningTimeEstimator.estimateSeconds(WordCounter.count(text), params.speed)
     }
 
     /** The export encoders available on this device (WAV always; AAC always; Opus on API 29+). */
@@ -131,6 +151,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     init {
         refreshModels()
+        mutableState.update { it.copy(readingScale = graph.readingTextPreferences.scale()) }
         checkForUpdate(announce = false)
     }
 
@@ -229,7 +250,25 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         value: Float,
     ) = mutableState.update { it.copy(paramValues = it.paramValues + (id to value)) }
 
-    fun setText(text: String) = mutableState.update { it.copy(text = text) }
+    fun setText(text: String) =
+        mutableState.update { it.copy(text = text, resumeSentenceIndex = resumeIndexFor(text)) }
+
+    // The saved resume point for this text, if any (issue #28) — surfaced only when it's past the
+    // start (index 0 would just be "press Play"). Reads the per-document memory keyed by text content.
+    private fun resumeIndexFor(text: String): Int? {
+        if (text.isBlank()) return null
+        return graph.documentMemory.resume(documentIdFor(text))?.sentenceIndex?.takeIf { it > 0 }
+    }
+
+    // A stable id for the current text so DocumentMemory can key its resume position to this document
+    // (issues #24/#28). Content-derived: editing the text starts a fresh document, as expected.
+    private fun documentIdFor(text: String): String = text.hashCode().toString()
+
+    /** A+ : one step larger reading font (issue #29), persisted immediately. */
+    fun increaseTextScale() = mutableState.update { it.copy(readingScale = graph.readingTextPreferences.increased()) }
+
+    /** A− : one step smaller reading font (issue #29), persisted immediately. */
+    fun decreaseTextScale() = mutableState.update { it.copy(readingScale = graph.readingTextPreferences.decreased()) }
 
     fun setTrimSilence(on: Boolean) = mutableState.update { it.copy(trimSilence = on) }
 
@@ -272,10 +311,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         stop()
         mutableState.update { it.copy(busy = true, status = "Generating…", stats = null) }
         val audio = GeneratedAudio()
+        val documentId = documentIdFor(s.text)
         val key = GenKey(descriptor.modelId, voiceId, s.text, s.paramValues)
         genJob =
             viewModelScope.launch {
-                val ok = generate(descriptor, voiceId, s.params, s.text, audio)
+                val ok = generate(descriptor, voiceId, s.params, s.text, audio, startSentenceIndex = 0, documentId = documentId)
                 if (ok) {
                     cachedAudio = audio
                     cachedKey = key
@@ -285,11 +325,32 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             }
     }
 
-    fun play() {
+    /** Play from the top — the primary Play button (a method reference, so kept parameterless). */
+    fun play() = startPlaybackFrom(0)
+
+    /**
+     * "Read from here" (issue #24): start playback from the sentence containing character [charOffset]
+     * of the current text. The char→sentence mapping is [TextChunker.sentenceIndexAt] (a :core seam),
+     * so tapping anywhere in a sentence begins there instead of at the top.
+     */
+    fun playFromCursor(charOffset: Int) =
+        startPlaybackFrom(TextChunker.sentenceIndexAt(mutableState.value.text, charOffset))
+
+    /** "Resume from where it stopped" (issue #28): replay from the last saved resume point. */
+    fun resumeFromSaved() {
+        val index = mutableState.value.resumeSentenceIndex ?: return
+        startPlaybackFrom(index)
+    }
+
+    private fun startPlaybackFrom(startSentenceIndex: Int) {
         val s = mutableState.value
         val descriptor = s.selected ?: return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
-        val key = GenKey(descriptor.modelId, voiceId, s.text, s.paramValues)
+        // Slice the sentence list at [startSentenceIndex] and feed only that onward through the SAME
+        // one generation path (spec §6.1) — no second synthesis path. Index 0 keeps the full text.
+        val effectiveText = sentencesFrom(s.text, startSentenceIndex)
+        val documentId = documentIdFor(s.text)
+        val key = GenKey(descriptor.modelId, voiceId, effectiveText, s.paramValues)
         stop()
         // A fresh instance per session (see the field doc above) — stop() above just latched the
         // previous one's "stopped" flag for good.
@@ -318,7 +379,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val audio = GeneratedAudio()
         genJob =
             viewModelScope.launch {
-                val ok = generate(descriptor, voiceId, s.params, s.text, audio)
+                val ok = generate(descriptor, voiceId, s.params, effectiveText, audio, startSentenceIndex, documentId)
                 if (ok) {
                     cachedAudio = audio
                     cachedKey = key
@@ -333,15 +394,32 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             }
     }
 
+    // The text from sentence [startIndex] onward, re-joined for the one generation path. Index 0 (or
+    // any out-of-range value) yields the whole text unchanged. Each sentence keeps its terminator, so
+    // the engine re-chunks it into the same sentences it would have anyway (spec §8).
+    private fun sentencesFrom(
+        text: String,
+        startIndex: Int,
+    ): String {
+        if (startIndex <= 0) return text
+        val remaining = TextChunker.intoSentences(text).drop(startIndex)
+        return remaining.joinToString(" ").ifBlank { text }
+    }
+
     // Run the ONE generation flow into [audio] as fast as the model produces, updating live stats.
     // Returns false (audio left as whatever was collected before the failure) if generation threw.
+    // On failure it records the last successfully-collected sentence into DocumentMemory so the UI
+    // can offer "Resume from where it stopped" (issue #28); on success it clears any saved resume.
     private suspend fun generate(
         descriptor: ModelDescriptor,
         voiceId: String,
         params: SynthesisParams,
         text: String,
         audio: GeneratedAudio,
+        startSentenceIndex: Int,
+        documentId: String,
     ): Boolean {
+        var chunksDone = 0
         val result =
             runCatching {
                 graph.engineManager.switchTo(descriptor.engineId, descriptor)
@@ -351,14 +429,47 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                     .trackGeneration(descriptor.sampleRate, totalWords = totalWords)
                     .collect { (chunk, stats) ->
                         audio.append(chunk)
+                        chunksDone = stats.chunksDone
                         // "Loading voice…"/"Generating…" only cover the gap before audio exists;
                         // once the first chunk lands, the live GenerationStatsView (rendered off
                         // `stats`) takes over.
                         mutableState.update { it.copy(stats = stats, status = null) }
                     }
-            }.onFailure { e -> mutableState.update { it.copy(status = "Generation failed: ${e.message}") } }
+            }.onFailure { e ->
+                // One chunk == one sentence (AbstractVoiceEngine emits per TextChunker sentence), so
+                // the next sentence to (re)try is startSentenceIndex + the chunks that fully landed.
+                recordStop(descriptor, voiceId, params, documentId, startSentenceIndex + chunksDone, e)
+            }
         audio.markComplete()
+        if (result.isSuccess) clearResume(documentId)
         return result.isSuccess
+    }
+
+    // Persist the resume point and surface a "Resume from where it stopped" offer instead of a
+    // dead-end error (issue #28). Only advertises a resume past the start — index 0 is just "Play".
+    private fun recordStop(
+        descriptor: ModelDescriptor,
+        voiceId: String,
+        params: SynthesisParams,
+        documentId: String,
+        resumeIndex: Int,
+        error: Throwable,
+    ) {
+        graph.documentMemory.record(
+            DocumentPosition(documentId, descriptor.engineId, voiceId, params.speed, resumeIndex),
+        )
+        mutableState.update {
+            it.copy(
+                status = "Stopped: ${error.message}",
+                resumeSentenceIndex = resumeIndex.takeIf { idx -> idx > 0 },
+            )
+        }
+    }
+
+    // A clean, fully-generated document has no resume point — forget any saved one and clear the offer.
+    private fun clearResume(documentId: String) {
+        graph.documentMemory.forget(documentId)
+        mutableState.update { it.copy(resumeSentenceIndex = null) }
     }
 
     /** Pause audio playback; generation keeps running and filling the buffer. */
@@ -490,24 +601,36 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val descriptor = s.selected ?: return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         val transforms = buildTransforms(s)
+        val documentId = documentIdFor(s.text)
+        var chunksDone = 0
         mutableState.update { it.copy(busy = true, status = null) }
         viewModelScope.launch {
             runCatching {
                 graph.engineManager.switchTo(descriptor.engineId, descriptor)
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
+                // onEach counts fully-emitted sentences (one chunk == one sentence) without altering
+                // the flow the encoder consumes — the same resume-point tracking generate() does.
+                val tracked = engine.synthesize(s.text, voiceId, s.params).onEach { chunksDone++ }
                 withContext(Dispatchers.IO) {
-                    output.use {
-                        s.exportFormat.encode(
-                            engine.synthesize(s.text, voiceId, s.params),
-                            descriptor.sampleRate,
-                            it,
-                            transforms,
+                    output.use { s.exportFormat.encode(tracked, descriptor.sampleRate, it, transforms) }
+                }
+            }
+                .onSuccess {
+                    clearResume(documentId)
+                    mutableState.update { it.copy(busy = false, status = "Saved audio file") }
+                }
+                .onFailure { e ->
+                    graph.documentMemory.record(
+                        DocumentPosition(documentId, descriptor.engineId, voiceId, s.params.speed, chunksDone),
+                    )
+                    mutableState.update {
+                        it.copy(
+                            busy = false,
+                            status = "Export stopped: ${e.message}",
+                            resumeSentenceIndex = chunksDone.takeIf { idx -> idx > 0 },
                         )
                     }
                 }
-            }
-                .onSuccess { mutableState.update { it.copy(busy = false, status = "Saved audio file") } }
-                .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Export failed: ${e.message}") } }
         }
     }
 

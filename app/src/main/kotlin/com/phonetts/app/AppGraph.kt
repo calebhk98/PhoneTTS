@@ -15,6 +15,7 @@ import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
 import com.phonetts.core.prefs.OnboardingState
+import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.resolver.DetectionFailureExplainer
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
@@ -93,6 +94,7 @@ class AppGraph(context: Context) {
     private val preferenceStore = PrefsPreferenceStore(appContext)
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
+    val readingTextPreferences = ReadingTextPreferences(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
 
     // UI-preference seams over the same store: the chosen color theme (reading/OLED schemes) and

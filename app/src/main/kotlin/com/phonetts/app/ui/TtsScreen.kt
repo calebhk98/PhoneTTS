@@ -53,13 +53,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
+import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.engine.Voice
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.ceil
 
 /**
  * The main screen. Model list, voice list and speed bounds are read entirely from the
@@ -271,7 +275,12 @@ private fun VoiceCard(
     }
 }
 
-/** The text to read, plus the import-from-file affordance right where the text lives. */
+/**
+ * The text to read, plus the import-from-file affordance right where the text lives. The field
+ * tracks its caret ([TextFieldValue]) so "Read from cursor" (issue #24) can start playback at the
+ * sentence under the cursor, and its font scales with the A− / A+ control (issue #29).
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TextCard(
     state: TtsViewModel.UiState,
@@ -279,15 +288,52 @@ private fun TextCard(
     onImport: () -> Unit,
 ) {
     SectionCard("Text") {
+        var fieldValue by remember { mutableStateOf(TextFieldValue(state.text)) }
+        // Reflect external text changes (e.g. Import) into the field without stomping the caret while
+        // the user is typing — an edit sets state.text before this recomposes, so the guard is false then.
+        if (fieldValue.text != state.text) {
+            fieldValue = fieldValue.copy(text = state.text, selection = TextRange(state.text.length))
+        }
+        val baseStyle = MaterialTheme.typography.bodyLarge
         OutlinedTextField(
-            value = state.text,
-            onValueChange = viewModel::setText,
+            value = fieldValue,
+            onValueChange = {
+                fieldValue = it
+                if (it.text != state.text) viewModel.setText(it.text)
+            },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Text to speak") },
+            textStyle = baseStyle.copy(fontSize = baseStyle.fontSize * state.readingScale),
             minLines = 3,
         )
-        OutlinedButton(onClick = onImport) { Text("Import from file") }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(onClick = onImport) { Text("Import from file") }
+            OutlinedButton(
+                onClick = { viewModel.playFromCursor(fieldValue.selection.start) },
+                enabled = state.selected != null && !state.playing && state.text.isNotBlank(),
+            ) { Text("Read from cursor") }
+            FontSizeControls(state, viewModel)
+        }
     }
+}
+
+/** A− / A+ reading font size (issue #29); bounds come from [ReadingTextPreferences] (SSOT for them). */
+@Composable
+private fun FontSizeControls(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    OutlinedButton(
+        onClick = viewModel::decreaseTextScale,
+        enabled = state.readingScale > ReadingTextPreferences.MIN_SCALE,
+    ) { Text("A−") }
+    OutlinedButton(
+        onClick = viewModel::increaseTextScale,
+        enabled = state.readingScale < ReadingTextPreferences.MAX_SCALE,
+    ) { Text("A+") }
 }
 
 /**
@@ -310,6 +356,26 @@ private fun PlaybackCard(
             enabled = selected != null && !state.playing,
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (state.playing) "Playing…" else "Play") }
+
+        // Estimated listening time (issue #23): a synthesis-free "~6 min at 1.25×" that updates live
+        // as the text or speed changes. Hidden for empty text (estimate is zero then).
+        if (state.estimatedListeningSeconds > 0) {
+            Text(
+                formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        // "Resume from where it stopped" (issue #28): shown only when a prior run left a resume point,
+        // replacing the old dead-end error with a one-tap continuation from that sentence.
+        if (state.resumeSentenceIndex != null && !state.playing) {
+            OutlinedButton(
+                onClick = viewModel::resumeFromSaved,
+                enabled = selected != null && !state.busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Resume from where it stopped") }
+        }
 
         // Transport controls only matter mid-playback, so they only appear then.
         if (state.playing) {
@@ -613,6 +679,21 @@ private fun ChoiceControl(
 }
 
 private val SPEED_PRESETS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+
+// "~6 min at 1.25×" — the estimate itself (seconds) comes from ListeningTimeEstimator (:core, SSOT
+// for the reading rate); this only rounds up to whole minutes and formats the speed for display.
+private fun formatListeningEstimate(
+    seconds: Double,
+    speed: Float,
+): String {
+    val minutes = ceil(seconds / SECONDS_PER_MINUTE).toInt().coerceAtLeast(1)
+    return "~$minutes min at ${formatSpeed(speed)}"
+}
+
+private fun formatSpeed(speed: Float): String {
+    val trimmed = "%.2f".format(speed).trimEnd('0').trimEnd('.')
+    return "${trimmed}×"
+}
 
 private val IMPORT_MIME_TYPES =
     arrayOf(
