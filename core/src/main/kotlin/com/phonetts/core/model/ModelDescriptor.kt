@@ -41,6 +41,14 @@ data class ModelDescriptor(
      * WHICH names an engine looks up is the engine's own business, never shared code's.
      */
     val assetPaths: Map<String, String> = emptyMap(),
+    /**
+     * Approximate resource footprint (peak RAM) of this model — the engine's a-priori estimate,
+     * discovered when it inspects the model (issue #38). Surfaced as an inline, non-blocking hint so
+     * the user can still ATTEMPT a heavy model on a small phone; refined at runtime from observed
+     * peak RAM of previous loads. Defaults to [ResourceCost.UNKNOWN] so a model that declares nothing
+     * simply shows "unknown".
+     */
+    val resourceCost: ResourceCost = ResourceCost.UNKNOWN,
 ) {
     /** The speed knob if this model has one, else null (e.g. CosyVoice3 exposes no speed parameter). */
     val speedParameter: ModelParameter?

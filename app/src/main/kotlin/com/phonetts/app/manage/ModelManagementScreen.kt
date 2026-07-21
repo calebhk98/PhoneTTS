@@ -42,6 +42,10 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Storage used: ${formatBytes(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "Device free RAM: ${formatBytes(state.availableRamBytes)}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
 
         state.error?.let { Text("Error: $it") }
 
@@ -53,6 +57,8 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
             items(state.usage, key = { it.descriptor.modelId }) { usage ->
                 ModelUsageRow(
                     usage = usage,
+                    peakRamBytes = state.peakRamByModelId[usage.descriptor.modelId],
+                    freeRamBytes = state.availableRamBytes,
                     isDeleting = state.deletingId == usage.descriptor.modelId,
                     onDelete = { viewModel.delete(usage.descriptor.modelId) },
                 )
@@ -65,6 +71,8 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
 @Composable
 private fun ModelUsageRow(
     usage: ModelUsage,
+    peakRamBytes: Long?,
+    freeRamBytes: Long,
     isDeleting: Boolean,
     onDelete: () -> Unit,
 ) {
@@ -76,9 +84,19 @@ private fun ModelUsageRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold)
             Text(originLabel(usage.descriptor.origin) + " · " + formatBytes(usage.sizeBytes))
+            Text(ramHint(peakRamBytes, freeRamBytes), style = MaterialTheme.typography.bodySmall)
         }
         DeleteControl(isDeleting, onDelete)
     }
+}
+
+// Inline, non-blocking hint (issue #38): shows the estimated peak RAM and, when it exceeds free RAM,
+// a gentle "may not fit" note — the user can still attempt it. "unknown" when no estimate exists.
+private fun ramHint(peakRamBytes: Long?, freeRamBytes: Long): String {
+    if (peakRamBytes == null) return "Est. RAM: unknown"
+    val base = "Est. RAM: ~${formatBytes(peakRamBytes)}"
+    if (freeRamBytes in 1 until peakRamBytes) return "$base · may not fit — you can still try"
+    return base
 }
 
 @Composable

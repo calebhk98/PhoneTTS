@@ -8,6 +8,7 @@ import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
+import com.phonetts.core.model.ResourceCost
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
 import com.phonetts.engines.common.AbstractVoiceEngine
@@ -163,6 +164,9 @@ internal class KittenEngine(
                     CONFIG_ASSET_KEY to joinAssetPath(bundle, CONFIG_FILE),
                     VOICES_ASSET_KEY to joinAssetPath(bundle, VOICES_FILE),
                 ),
+            // Approximate peak-RAM estimate (issue #38): KittenTTS is the tiny ~15M-param model, the
+            // lightest engine here. A-priori only — refined by observed peak RAM.
+            resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
     }
 
@@ -174,6 +178,9 @@ internal class KittenEngine(
         const val RUNTIME_ID = "onnx"
 
         const val SAMPLE_RATE = 24_000
+
+        // Approximate peak resident RAM (MiB) while loaded + generating — the lightest model here.
+        private const val PEAK_RAM_MIB = 80L
 
         // VALIDATED (docs/research/onnx-io.md): the ONNX graph takes a native "speed" scalar, same
         // family/range convention as the sibling ONNX engines.

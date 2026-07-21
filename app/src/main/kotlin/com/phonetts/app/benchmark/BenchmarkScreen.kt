@@ -16,6 +16,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -58,6 +59,30 @@ fun BenchmarkScreen(viewModel: BenchmarkViewModel) {
         state.status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
 
         if (state.rows.isNotEmpty()) ResultsTable(state.rows)
+
+        // Power-user, OFF by default (issue #39): a hidden toggle reveals the persisted speed-trend /
+        // thermal-throttling note so casual users aren't confused by normal run-to-run variance.
+        TextButton(onClick = viewModel::toggleHistory) {
+            Text(if (state.showHistory) "Hide speed-trend (advanced)" else "Show speed-trend (advanced)")
+        }
+        if (state.showHistory) SpeedTrendSection(state.rows)
+    }
+}
+
+@Composable
+private fun SpeedTrendSection(rows: List<BenchmarkViewModel.Row>) {
+    val notes = rows.mapNotNull { row -> row.regressionNote?.let { row.displayName to it } }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "Speed trend vs your last benchmark on this device. A big slowdown usually means thermal " +
+                "throttling on a phone with no dedicated AI chip — let it cool and try again.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        if (notes.isEmpty()) {
+            Text("No regressions — speeds are in line with last time (or this is the first run).")
+            return@Column
+        }
+        notes.forEach { (model, note) -> Text("$model: $note", style = MaterialTheme.typography.bodyMedium) }
     }
 }
 
@@ -66,13 +91,13 @@ private fun ResultsTable(rows: List<BenchmarkViewModel.Row>) {
     // The table can be wider than the screen (long model names); let it scroll sideways on its own
     // rather than forcing the page to.
     Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-        TableRow("Model", "RTF", "Audio s", "Wall s", header = true)
+        TableRow("Model", "RTF", "Audio s", "Wall s", "Est. RAM", header = true)
         HorizontalDivider()
         rows.forEach { row ->
             if (row.ok) {
-                TableRow(row.displayName, fmt(row.realTimeFactor), fmt(row.audioSeconds), fmt(row.wallSeconds))
+                TableRow(row.displayName, fmt(row.realTimeFactor), fmt(row.audioSeconds), fmt(row.wallSeconds), ram(row.peakRamBytes))
             } else {
-                TableRow(row.displayName, "failed", "—", "—")
+                TableRow(row.displayName, "failed", "—", "—", ram(row.peakRamBytes))
             }
         }
     }
@@ -84,6 +109,7 @@ private fun TableRow(
     rtf: String,
     audio: String,
     wall: String,
+    ram: String,
     header: Boolean = false,
 ) {
     val weight = if (header) FontWeight.Bold else FontWeight.Normal
@@ -95,6 +121,7 @@ private fun TableRow(
         Cell(rtf, NUM_COL_WIDTH, weight)
         Cell(audio, NUM_COL_WIDTH, weight)
         Cell(wall, NUM_COL_WIDTH, weight)
+        Cell(ram, NUM_COL_WIDTH, weight)
     }
 }
 
@@ -109,5 +136,8 @@ private fun Cell(
 
 private fun fmt(value: Double): String = "%.2f".format(value)
 
+private fun ram(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "?"
+
+private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
 private val MODEL_COL_WIDTH = 200.dp
 private val NUM_COL_WIDTH = 72.dp

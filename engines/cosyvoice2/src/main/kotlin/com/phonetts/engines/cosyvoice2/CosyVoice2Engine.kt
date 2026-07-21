@@ -7,6 +7,7 @@ import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.Origin
+import com.phonetts.core.model.ResourceCost
 import com.phonetts.core.runtime.NativeTtsRequest
 import com.phonetts.core.runtime.NativeTtsRuntime
 import com.phonetts.core.runtime.NativeTtsSession
@@ -149,6 +150,9 @@ internal class CosyVoice2Engine(
             // control (rather than a fake one that would need resampling, CLAUDE.md rule 2).
             parameters = emptyList(),
             assetPaths = buildAssetPaths(bundle),
+            // Approximate peak-RAM estimate (issue #38): the 0.5B ggml LLM plus flow/hift stages are
+            // the heaviest model here. A-priori only — the app refines it from observed peak RAM.
+            resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
 
     // Only the LLM path is needed at load() (its parent dir is the model dir the native runtime
@@ -176,6 +180,9 @@ internal class CosyVoice2Engine(
         const val NATIVE_RUNTIME_ID = "cosyvoice"
 
         private const val SAMPLE_RATE_HZ = 24_000
+
+        // Approximate peak resident RAM (MiB) while loaded + generating — the largest model here.
+        private const val PEAK_RAM_MIB = 1800L
 
         // CosyVoice3 is multilingual and reads any language directly, so this default is cosmetic
         // (the native BPE tokenizer, not the Kotlin phonemizer, handles text). zero_shot is the

@@ -2,6 +2,7 @@ package com.phonetts.app
 
 import android.content.Context
 import com.phonetts.app.audio.export.ExportFormats
+import com.phonetts.app.device.DeviceInfo
 import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
 import com.phonetts.app.runtime.NativeCosyVoiceRuntime
@@ -11,8 +12,10 @@ import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
+import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.resolver.DetectionFailureExplainer
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
@@ -92,6 +95,21 @@ class AppGraph(context: Context) {
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
+
+    // Resource-cost hinting (issue #38): the descriptor carries each engine's a-priori peak-RAM
+    // estimate; this store refines it from peak RAM previous loads actually cost. Persisted benchmark
+    // history (issue #39, off-by-default power-user view) rides the same preference store.
+    val resourceUsageStore = ResourceUsageStore(preferenceStore)
+    val benchmarkHistory = BenchmarkHistory(preferenceStore)
+
+    /** Device free RAM right now, in bytes — the reference point the resource-cost hints display against. */
+    fun availableRamBytes(): Long = DeviceInfo.availableRamBytes(appContext)
+
+    /** This process's current footprint, in bytes — recorded after a load to refine RAM estimates. */
+    fun processMemoryBytes(): Long = DeviceInfo.processMemoryBytes()
+
+    /** A stable name for this device, used to compare benchmark history like-for-like (issue #39). */
+    val deviceName: String get() = DeviceInfo.name
 
     // The export-format registry (WAV always; AAC always; Opus on API 29+). The picker reads
     // display names/extensions/MIME from here — no format string is hardcoded in the UI (SSOT).

@@ -2,6 +2,7 @@ package com.phonetts.app.manage
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.ModelUsage
 import kotlinx.coroutines.Dispatchers
@@ -17,11 +18,24 @@ import kotlinx.coroutines.withContext
  * the user delete one. All the actual removal logic (catalog, files, saved override, live unload)
  * is [ModelManager]'s job (spec §1.1.6, "removable models"); this class only holds UI state and
  * keeps the (potentially slow, recursive-delete) work off the main thread.
+ *
+ * It also surfaces the resource-cost hint (issue #38): each row shows an estimated peak RAM (the
+ * engine's a-priori estimate from the descriptor, refined by observed peaks in [resourceUsage]), and
+ * the screen shows the device's current free RAM at the top. This is an INLINE hint, never a
+ * blocking pop-up — the user can still attempt a heavy model on a small phone.
  */
-class ModelManagementViewModel(private val modelManager: ModelManager) : ViewModel() {
+class ModelManagementViewModel(
+    private val modelManager: ModelManager,
+    private val resourceUsage: ResourceUsageStore,
+    private val availableRamBytes: () -> Long,
+) : ViewModel() {
     data class UiState(
         val usage: List<ModelUsage> = emptyList(),
         val totalBytes: Long = 0L,
+        /** modelId → estimated peak RAM in bytes (null = unknown), shown inline next to each model. */
+        val peakRamByModelId: Map<String, Long?> = emptyMap(),
+        /** Device free RAM right now, shown at the top so the estimates have a reference point. */
+        val availableRamBytes: Long = 0L,
         val deletingId: String? = null,
         val error: String? = null,
     )
@@ -33,10 +47,19 @@ class ModelManagementViewModel(private val modelManager: ModelManager) : ViewMod
         refresh()
     }
 
-    /** Re-read the catalog + sizes — call after a delete, or whenever the screen becomes visible. */
+    /** Re-read the catalog + sizes + RAM estimates — call after a delete, or when the screen shows. */
     fun refresh() {
         val usage = modelManager.usage()
-        mutableState.update { it.copy(usage = usage, totalBytes = usage.sumOf { row -> row.sizeBytes }, error = null) }
+        val estimates = usage.associate { it.descriptor.modelId to resourceUsage.peakRamEstimate(it.descriptor) }
+        mutableState.update {
+            it.copy(
+                usage = usage,
+                totalBytes = usage.sumOf { row -> row.sizeBytes },
+                peakRamByModelId = estimates,
+                availableRamBytes = availableRamBytes(),
+                error = null,
+            )
+        }
     }
 
     fun delete(modelId: String) {
