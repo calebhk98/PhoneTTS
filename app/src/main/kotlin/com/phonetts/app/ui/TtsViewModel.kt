@@ -9,6 +9,7 @@ import com.phonetts.app.audio.AudioTrackSink
 import com.phonetts.core.audio.AudioSink
 import com.phonetts.core.audio.TransformingSink
 import com.phonetts.core.audio.buffer.BufferedPlayback
+import com.phonetts.core.audio.buffer.ChunkSpill
 import com.phonetts.core.audio.buffer.GeneratedAudio
 import com.phonetts.core.audio.export.AudioEncoder
 import com.phonetts.core.audio.transform.BassCut
@@ -88,6 +89,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // default, applied only on the playback sink, never to generation or export.
         val tempoBoost: Boolean = false,
         val tempoFactor: Float = DEFAULT_TEMPO_FACTOR,
+        // Long-document mode (issue #34): when on, a generation's GeneratedAudio spills older chunks
+        // to a disk scratch file past a live window, bounding RAM for book-length synthesis. Off by
+        // default; when off, generation is byte-for-byte the in-RAM behaviour it always was.
+        val longDocumentMode: Boolean = false,
         val stats: GenerationStats? = null,
         // The modelId currently loaded into EngineManager (or null if none). Compared against
         // `selected?.modelId` by the UI to show "loaded" vs "load model" — set by loadModel() and
@@ -186,7 +191,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     init {
         refreshModels()
-        mutableState.update { it.copy(readingScale = graph.readingTextPreferences.scale()) }
+        mutableState.update {
+            it.copy(
+                readingScale = graph.readingTextPreferences.scale(),
+                longDocumentMode = graph.longDocumentPreferences.enabled(),
+            )
+        }
         checkForUpdate(announce = false)
     }
 
@@ -349,6 +359,13 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             it.copy(tempoFactor = factor.coerceIn(TempoStretch.MIN_FACTOR, TempoStretch.MAX_FACTOR))
         }
 
+    /** Toggle long-document (spill-to-disk) mode (issue #34), persisted immediately. Off by default. */
+    fun setLongDocumentMode(on: Boolean) =
+        mutableState.update {
+            graph.longDocumentPreferences.setEnabled(on)
+            it.copy(longDocumentMode = on)
+        }
+
     fun setExportFormat(encoder: AudioEncoder) = mutableState.update { it.copy(exportFormat = encoder) }
 
     /**
@@ -384,19 +401,38 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         stop()
         mutableState.update { it.copy(busy = true, status = "Generating…", stats = null) }
-        val audio = GeneratedAudio()
+        val audio = newGeneratedAudio(descriptor)
         val documentId = documentIdFor(s.text)
         val key = GenKey(descriptor.modelId, voiceId, s.text, s.paramValues)
         genJob =
             viewModelScope.launch {
                 val ok = generate(descriptor, voiceId, s.params, s.text, audio, startSentenceIndex = 0, documentId = documentId)
                 if (ok) {
-                    cachedAudio = audio
-                    cachedKey = key
+                    cache(audio, key)
                 }
                 val loaded = if (ok) descriptor.modelId else null
                 mutableState.update { it.copy(busy = false, loadedModelId = loaded ?: it.loadedModelId) }
             }
+    }
+
+    // A GeneratedAudio for this descriptor: plain (everything in RAM) unless long-document mode is on
+    // (issue #34), in which case it is backed by a ChunkSpill so older chunks spill to a cache-dir
+    // scratch file past a live window. The ceiling is the model's own sampleRate (SSOT) × a fixed
+    // policy duration; when off, the buffer is byte-for-byte the in-RAM one it always was.
+    private fun newGeneratedAudio(descriptor: ModelDescriptor): GeneratedAudio {
+        if (!mutableState.value.longDocumentMode) return GeneratedAudio()
+        return GeneratedAudio(ChunkSpill(graph.newSpillFile(), descriptor.sampleRate * SPILL_WINDOW_SECONDS))
+    }
+
+    // Cache a freshly-generated buffer for instant replay, releasing the previous cache's spill file
+    // (a no-op for a non-spilled buffer) so long-document scratch files don't accumulate.
+    private fun cache(
+        audio: GeneratedAudio,
+        key: GenKey,
+    ) {
+        cachedAudio?.close()
+        cachedAudio = audio
+        cachedKey = key
     }
 
     /** Play from the top — the primary Play button (a method reference, so kept parameterless). */
@@ -454,13 +490,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // budget phone). Cleared the moment the first chunk arrives, in generate() below.
         mutableState.update { it.copy(playing = true, paused = false, status = "Loading voice…", stats = null) }
 
-        val audio = GeneratedAudio()
+        val audio = newGeneratedAudio(descriptor)
         genJob =
             viewModelScope.launch {
                 val ok = generate(descriptor, voiceId, s.params, effectiveText, audio, startSentenceIndex, documentId)
                 if (ok) {
-                    cachedAudio = audio
-                    cachedKey = key
+                    cache(audio, key)
                     mutableState.update { it.copy(loadedModelId = descriptor.modelId) }
                 }
             }
@@ -759,6 +794,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     override fun onCleared() {
         stop()
+        cachedAudio?.close() // release the last buffer's spill scratch file, if any (issue #34)
     }
 
     private companion object {
@@ -767,6 +803,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // Default beyond-native tempo factor when the (off-by-default) boost is first enabled — a
         // mild speed-up the user then adjusts. Not a native model parameter; see UiState.tempoFactor.
         const val DEFAULT_TEMPO_FACTOR = 1.5f
+
+        // Seconds of audio kept resident in RAM before long-document mode spills older chunks to disk
+        // (issue #34). A memory-policy number (not a model fact): the per-buffer sample ceiling is
+        // this × the model's own sampleRate. Generous enough that pause/resume near the live edge
+        // never hits disk, small enough to bound a book-length synthesis.
+        const val SPILL_WINDOW_SECONDS = 30
 
         // Characters not safe in a saved file name; the "sample every model" names are derived from
         // model display names, which can contain slashes/colons.

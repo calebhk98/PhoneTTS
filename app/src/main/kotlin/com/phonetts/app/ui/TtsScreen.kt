@@ -497,6 +497,9 @@ private fun TransformToggles(
     ToggleRow(PresenceBoost().displayName, state.presenceBoost, viewModel::setPresenceBoost)
     ToggleRow(DeEsser().displayName, state.deEss, viewModel::setDeEss)
     TempoBoostControl(state, viewModel)
+    // Long-document mode (issue #34): opt-in memory ceiling — older audio spills to disk during a
+    // book-length synthesis. Off by default; when off, generation is unchanged.
+    ToggleRow("Long-document mode (spill audio to disk)", state.longDocumentMode, viewModel::setLongDocumentMode)
 }
 
 /**

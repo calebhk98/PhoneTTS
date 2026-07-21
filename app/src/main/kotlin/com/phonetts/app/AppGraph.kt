@@ -17,6 +17,7 @@ import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
+import com.phonetts.core.prefs.LongDocumentPreferences
 import com.phonetts.core.prefs.OnboardingState
 import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.prefs.ResourceUsageStore
@@ -103,6 +104,10 @@ class AppGraph(context: Context) {
     // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
     // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
     val blendedVoices = BlendedVoiceStore(preferenceStore)
+
+    // Long-document (spill-to-disk) mode (issue #34): an opt-in toggle only; the actual scratch file
+    // is minted by [newSpillFile] so :core stays Android-free (it takes a plain java.io.File).
+    val longDocumentPreferences = LongDocumentPreferences(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
 
     // UI-preference seams over the same store: the chosen color theme (reading/OLED schemes) and
@@ -116,6 +121,13 @@ class AppGraph(context: Context) {
     // history (issue #39, off-by-default power-user view) rides the same preference store.
     val resourceUsageStore = ResourceUsageStore(preferenceStore)
     val benchmarkHistory = BenchmarkHistory(preferenceStore)
+
+    /**
+     * A fresh scratch file in app cache for a [com.phonetts.core.audio.buffer.ChunkSpill] (issue #34).
+     * Lives in `cacheDir` so the OS can reclaim it under storage pressure; [ChunkSpill.close] deletes
+     * it when the buffer is released.
+     */
+    fun newSpillFile(): java.io.File = java.io.File.createTempFile("phonetts_spill_", ".pcm", appContext.cacheDir)
 
     /** Device free RAM right now, in bytes — the reference point the resource-cost hints display against. */
     fun availableRamBytes(): Long = DeviceInfo.availableRamBytes(appContext)
