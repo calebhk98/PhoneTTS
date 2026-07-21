@@ -273,7 +273,8 @@ private fun VoiceCard(
         ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
         val descriptor = state.selected ?: return@SectionCard
         VoicePicker(
-            voices = descriptor.voices,
+            // Descriptor voices (SSOT) plus any saved mixes re-applied to the loaded engine (#42).
+            voices = state.voices,
             selectedVoiceId = state.voiceId,
             favoriteVoiceIds = state.favoriteVoiceIds,
             onSelect = viewModel::setVoice,

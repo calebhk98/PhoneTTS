@@ -19,6 +19,7 @@ import com.phonetts.core.audio.transform.PresenceBoost
 import com.phonetts.core.audio.transform.SilenceTrim
 import com.phonetts.core.audio.transform.TempoStretch
 import com.phonetts.core.audio.transform.TransformChain
+import com.phonetts.core.engine.BlendedVoiceCatalog
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.metrics.GenerationStats
@@ -60,6 +61,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val models: List<ModelDescriptor> = emptyList(),
         val selected: ModelDescriptor? = null,
         val voiceId: String? = null,
+        // Saved voice mixes (issue #42) re-applied to the loaded engine for the selected model, so a
+        // mix is selectable in the main voice dropdown like any built-in voice. Populated only for a
+        // blendable model once its engine is loaded; empty otherwise. The picker reads [voices].
+        val blendedVoices: List<Voice> = emptyList(),
         // The user's chosen value for each parameter the selected model declares (keyed by
         // ModelParameter.id). Dynamic: whatever parameters a model advertises get an entry here, so a
         // model that adds e.g. an emotion knob needs no new field. The generation path reads [params].
@@ -108,6 +113,14 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     ) {
         /** The chosen parameter values, as the [SynthesisParams] bag the one generation path consumes. */
         val params: SynthesisParams get() = SynthesisParams(paramValues)
+
+        /**
+         * The voice list the dropdown shows for the selected model: its own voices (SSOT) plus any
+         * saved mixes re-applied to the loaded engine (issue #42), merged so a mix never duplicates a
+         * built-in. Empty until a model is selected.
+         */
+        val voices: List<Voice>
+            get() = selected?.let { BlendedVoiceCatalog.merge(it.voices, blendedVoices) } ?: emptyList()
 
         /**
          * Estimated time to *listen* to the current text at the current speed (issue #23), from a real
@@ -219,6 +232,27 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 favoriteVoiceIds = graph.favoriteVoices.favoriteIds(),
             )
         }
+        // If the selected model is the loaded one, re-surface its saved mixes — this is what makes a
+        // mix saved on the Mix page appear in the dropdown on return (that page applied it to the
+        // loaded engine already). A no-op before any engine is loaded (issue #42).
+        mutableState.value.selected
+            ?.takeIf { graph.engineManager.currentDescriptor?.modelId == it.modelId }
+            ?.let(::refreshBlendedVoices)
+    }
+
+    // Re-apply any saved voice mixes for [descriptor] to the just-loaded engine and expose the
+    // resulting blended voices, so the main voice dropdown lists them alongside the built-ins
+    // (issue #42). Gated on the descriptor's own supportsVoiceBlend fact (SSOT) — a non-blendable
+    // model attempts nothing; specs whose source voices are missing are skipped by the applier
+    // (fail-soft). Reads currentEngine, so call it after a successful switchTo/load.
+    private fun refreshBlendedVoices(descriptor: ModelDescriptor) {
+        if (!descriptor.supportsVoiceBlend) {
+            mutableState.update { it.copy(blendedVoices = emptyList()) }
+            return
+        }
+        val specs = graph.blendedVoices.forModel(descriptor.modelId)
+        val voices = BlendedVoiceCatalog.apply(graph.engineManager.currentEngine, specs)
+        mutableState.update { it.copy(blendedVoices = voices) }
     }
 
     fun selectModel(descriptor: ModelDescriptor) {
@@ -230,6 +264,8 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 selected = descriptor,
                 voiceId = defaultVoiceIdFor(descriptor),
                 paramValues = defaultParamValues(descriptor),
+                // A different model's mixes never apply here; the new engine repopulates them on load.
+                blendedVoices = emptyList(),
             )
         }
     }
@@ -327,6 +363,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         viewModelScope.launch {
             runCatching { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
                 .onSuccess {
+                    refreshBlendedVoices(descriptor)
                     mutableState.update {
                         it.copy(busy = false, status = "Model loaded", loadedModelId = descriptor.modelId)
                     }
@@ -472,6 +509,8 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             runCatching {
                 graph.engineManager.switchTo(descriptor.engineId, descriptor)
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
+                // Register saved mixes on the loaded engine so a blended voiceId resolves here (#42).
+                refreshBlendedVoices(descriptor)
                 val totalWords = WordCounter.count(text)
                 engine.synthesize(text, voiceId, params)
                     .trackGeneration(descriptor.sampleRate, totalWords = totalWords)
