@@ -75,6 +75,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val playing: Boolean = false,
         val paused: Boolean = false,
         val status: String? = null,
+        // Lock-screen/notification progress (issue #26): elapsed reflects audio actually delivered to
+        // the sink; total is the synthesis-free listening estimate for the text being played. Both in
+        // millis, both 0 outside a play session. Surfaced to the media session via playbackController.
+        val playbackElapsedMillis: Long = 0,
+        val playbackTotalMillis: Long = 0,
         // Non-destructive post-processing toggles (applied to export; raw audio is never altered).
         val trimSilence: Boolean = false,
         val normalizeVolume: Boolean = false,
@@ -150,11 +155,24 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             override val isPlaying: Boolean get() = mutableState.value.playing
             override val isPaused: Boolean get() = mutableState.value.paused
 
+            // Elapsed/total for the lock-screen scrubber (issue #26); null when nothing is playing so
+            // the session omits the scrubber rather than showing a stale one.
+            override val progress: com.phonetts.app.playback.PlaybackProgress?
+                get() {
+                    val s = mutableState.value
+                    if (!s.playing) return null
+                    return com.phonetts.app.playback.PlaybackProgress(s.playbackElapsedMillis, s.playbackTotalMillis)
+                }
+
             override fun pause() = pausePlayback()
 
             override fun resume() = resumePlayback()
 
             override fun stop() = this@TtsViewModel.stop()
+
+            override fun skipForwardParagraph() = this@TtsViewModel.skipForwardParagraph()
+
+            override fun skipBackParagraph() = this@TtsViewModel.skipBackParagraph()
         }
 
     private val mutableState = MutableStateFlow(UiState(exportFormat = exportFormats.first()))
@@ -175,6 +193,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private var playback = BufferedPlayback()
     private var genJob: Job? = null
     private var playJob: Job? = null
+
+    // Progress tracking (issue #26): the sentence index the current flow started at (so an absolute
+    // "current sentence" = this + playback.playedChunks, which paragraph skips reason about), and the
+    // collector that maps played samples into UiState's elapsed position.
+    private var currentStartSentenceIndex = 0
+    private var progressJob: Job? = null
 
     // The most recently generated buffer, kept so a Play tap that exactly matches what was last
     // generated (same model/voice/text/params) replays instantly instead of re-synthesizing —
@@ -469,6 +493,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // real sink so each chunk is WSOLA-stretched on its way out. Generation and export never see
         // this — they use `sink`/the export chain directly, so the native Speed knob is untouched.
         val playSink = playbackSink(s)
+        // Track position for the lock-screen scrubber and anchor paragraph skips to this start (#26).
+        currentStartSentenceIndex = startSentenceIndex
+        beginProgressTracking(descriptor, effectiveText, s.params.speed)
 
         val cached = cachedAudio?.takeIf { cachedKey == key }
         if (cached != null) {
@@ -504,6 +531,38 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 runCatching { playback.play(audio, descriptor.sampleRate, playSink) }
                     .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
                 mutableState.update { it.copy(playing = false, paused = false) }
+            }
+    }
+
+    /** Lock-screen "next paragraph" (issue #26): restart the one generation flow one paragraph on. */
+    fun skipForwardParagraph() =
+        startPlaybackFrom(TextChunker.nextParagraphStart(mutableState.value.text, currentPlaybackSentenceIndex()))
+
+    /** Lock-screen "previous paragraph" (issue #26): restart the one generation flow one paragraph back. */
+    fun skipBackParagraph() =
+        startPlaybackFrom(TextChunker.previousParagraphStart(mutableState.value.text, currentPlaybackSentenceIndex()))
+
+    // The absolute sentence playback is at now: where this flow started + the chunks (== sentences)
+    // already delivered to the sink. The paragraph-skip math reasons in these whole-document indices.
+    private fun currentPlaybackSentenceIndex(): Int = currentStartSentenceIndex + playback.playedChunks.value
+
+    // Publish progress for THIS play session (issue #26): reset elapsed, compute the synthesis-free
+    // listening total for the sliced text, and collect played samples into elapsed so the media
+    // session's scrubber advances as audio is heard. The collector rides the fresh `playback` above.
+    private fun beginProgressTracking(
+        descriptor: ModelDescriptor,
+        effectiveText: String,
+        speed: Float,
+    ) {
+        val seconds = ListeningTimeEstimator.estimateSeconds(WordCounter.count(effectiveText), speed)
+        val totalMillis = (seconds * MILLIS_PER_SECOND).toLong()
+        mutableState.update { it.copy(playbackElapsedMillis = 0, playbackTotalMillis = totalMillis) }
+        progressJob?.cancel()
+        progressJob =
+            viewModelScope.launch {
+                playback.playedSamples.collect { samples ->
+                    mutableState.update { it.copy(playbackElapsedMillis = samples * MILLIS_PER_SECOND / descriptor.sampleRate) }
+                }
             }
     }
 
@@ -623,10 +682,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         playback.stop() // step 2a: stop draining the generated-audio buffer
         playJob?.cancel()
         genJob?.cancel() // step 1: cancel synthesis
+        progressJob?.cancel() // stop mapping played samples into progress (issue #26)
         playJob = null
         genJob = null
+        progressJob = null
         sink.stop() // steps 2b + 3: flush queued PCM and stop the AudioTrack
-        mutableState.update { it.copy(playing = false, paused = false) }
+        mutableState.update { it.copy(playing = false, paused = false, playbackElapsedMillis = 0, playbackTotalMillis = 0) }
     }
 
     /**
@@ -809,6 +870,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // this × the model's own sampleRate. Generous enough that pause/resume near the live edge
         // never hits disk, small enough to bound a book-length synthesis.
         const val SPILL_WINDOW_SECONDS = 30
+
+        // Millis per second, for turning the listening-time estimate and played-sample counts into
+        // the millisecond positions the media session's scrubber wants (issue #26).
+        const val MILLIS_PER_SECOND = 1000
 
         // Characters not safe in a saved file name; the "sample every model" names are derived from
         // model display names, which can contain slashes/colons.

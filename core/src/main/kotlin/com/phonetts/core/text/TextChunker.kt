@@ -8,6 +8,57 @@ package com.phonetts.core.text
 object TextChunker {
     private val terminators = charArrayOf('.', '!', '?', '\n', '…', ';')
 
+    // A paragraph break: a blank line (one newline, optional whitespace, another newline). Because
+    // '\n' is itself a sentence terminator, splitting on this never falls mid-sentence — the sentences
+    // of each paragraph are exactly a contiguous slice of [intoSentences]'s flat result, so their
+    // counts sum back to it. That alignment is what lets [paragraphStartSentenceIndices] map paragraph
+    // boundaries onto sentence indices the one generation path already understands.
+    private val paragraphBreak = Regex("\\n\\s*\\n")
+
+    /**
+     * The sentence index at which each paragraph begins (issue #26), for jumping playback ±1
+     * paragraph. Always non-empty and starts at 0. A paragraph that contributes no sentences (a run
+     * of blank lines) is skipped, so no two entries collide. Indices line up with [intoSentences], so
+     * a returned value feeds straight into the same slice-and-resynthesize path "Read from here" uses.
+     */
+    fun paragraphStartSentenceIndices(text: String): List<Int> {
+        val starts = mutableListOf<Int>()
+        var sentenceIndex = 0
+        for (paragraph in text.split(paragraphBreak)) {
+            val count = intoSentences(paragraph).size
+            if (count == 0) continue
+            starts.add(sentenceIndex)
+            sentenceIndex += count
+        }
+        return starts.ifEmpty { listOf(0) }
+    }
+
+    /**
+     * The sentence index to jump to for "next paragraph" from [currentSentenceIndex]: the first
+     * paragraph start strictly after it, or the last paragraph's start if already in the final one
+     * (so a forward skip at the end is a harmless no-op rather than running off the text).
+     */
+    fun nextParagraphStart(
+        text: String,
+        currentSentenceIndex: Int,
+    ): Int {
+        val starts = paragraphStartSentenceIndices(text)
+        return starts.firstOrNull { it > currentSentenceIndex } ?: starts.last()
+    }
+
+    /**
+     * The sentence index to jump to for "previous paragraph" from [currentSentenceIndex]: the last
+     * paragraph start strictly before it (so mid-paragraph this restarts the current paragraph, and
+     * at a paragraph's start it steps to the previous one), or 0 when already at/near the top.
+     */
+    fun previousParagraphStart(
+        text: String,
+        currentSentenceIndex: Int,
+    ): Int {
+        val starts = paragraphStartSentenceIndices(text)
+        return starts.lastOrNull { it < currentSentenceIndex } ?: 0
+    }
+
     fun intoSentences(text: String): List<String> {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return emptyList()
