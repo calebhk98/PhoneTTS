@@ -6,9 +6,13 @@ import android.media.MediaMuxer
 import com.phonetts.core.audio.Pcm16
 import com.phonetts.core.audio.export.AudioEncoder
 import com.phonetts.core.audio.export.ExportFormat
+import com.phonetts.core.audio.export.SegmentWriter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.OutputStream
 
 private const val AAC_BIT_RATE = 128_000
@@ -17,44 +21,41 @@ private const val CHANNEL_COUNT = 1
 /**
  * AAC-LC audio in an .m4a (MPEG-4) container, via [MediaCodecFileEncoder] (MediaCodec +
  * MediaMuxer). Extends the same [AudioEncoder] base WavEncoder does, so it gets the shared
- * flow-drain + transform-chain logic (`AudioEncoder.encode`) for free — this class only owns the
- * AAC-specific byte encoding, per spec's "one generation path, many consumers" rule.
+ * bounded-memory flow-drain + transform-pipeline logic (`AudioEncoder.encode`) for free — this
+ * class only owns the AAC-specific byte encoding, per spec's "one generation path, many consumers"
+ * rule.
  *
  * Why a temp file: `MediaMuxer` writes to a file path or FD, not an arbitrary [OutputStream] — so
- * it cannot satisfy the core `writeEncoded(segments, sampleRate, out: OutputStream)` contract
- * directly the way WavEncoder (which just streams bytes) can. Rather than changing that contract
- * (which would break WavEncoder and every other consumer expecting an OutputStream), [writeEncoded]
- * buffers the encoded container to a temp file under [tempDir] and copies it into [out] afterwards.
- * That keeps `AudioEncoder.encode(flow, sampleRate, out, transforms)` working unchanged for AAC too.
+ * the [SegmentWriter] returned by [openWriter] streams PCM to a scratch file (bounded heap: one
+ * segment at a time), runs the codec into a temp container on close(), then copies that into [out].
  * Callers who already have a real destination `File` (e.g. a SAF export target opened as a file)
- * should call [encodeToFile] directly instead — it is an ADDITIVE path alongside the base contract,
- * not a replacement for it, and it skips the temp-file/copy detour entirely.
+ * should call [encodeToFile] instead — it skips the temp-container/copy detour and encodes straight
+ * to the target, still spilling PCM to disk rather than buffering the whole utterance.
  */
 class AacAudioEncoder(private val tempDir: File) : AudioEncoder() {
     override val format: ExportFormat = FORMAT
 
-    override suspend fun writeEncoded(
-        segments: List<FloatArray>,
+    override fun openWriter(
         sampleRate: Int,
         out: OutputStream,
-    ) {
-        val temp = File.createTempFile(TEMP_PREFIX, ".${format.fileExtension}", tempDir)
-        try {
-            encodeToFile(segments, sampleRate, temp)
-            temp.inputStream().use { it.copyTo(out) }
-        } finally {
-            temp.delete()
-        }
-    }
+    ): SegmentWriter =
+        MediaCodecSegmentWriter(sampleRate, out, tempDir, ENCODER, format.fileExtension, CHANNEL_COUNT) { }
 
-    /** Encode straight to [target], skipping the temp-file/copy [writeEncoded] needs for an OutputStream. */
+    /** Encode [flow] straight to [target], spilling PCM to a scratch file first (bounded memory). */
     suspend fun encodeToFile(
-        segments: List<FloatArray>,
+        flow: Flow<FloatArray>,
         sampleRate: Int,
         target: File,
     ) = withContext(Dispatchers.IO) {
-        val pcm = segments.fold(ByteArray(0)) { acc, segment -> acc + Pcm16.encode(segment) }
-        ENCODER.encode(pcm, sampleRate, CHANNEL_COUNT, target)
+        val pcm = File.createTempFile(TEMP_PREFIX, ".pcm", tempDir)
+        try {
+            BufferedOutputStream(FileOutputStream(pcm)).use { sink ->
+                flow.collect { segment -> sink.write(Pcm16.encode(segment)) }
+            }
+            ENCODER.encode(pcm, sampleRate, CHANNEL_COUNT, target)
+        } finally {
+            pcm.delete()
+        }
     }
 
     companion object {
