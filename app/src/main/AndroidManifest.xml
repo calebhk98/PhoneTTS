@@ -39,6 +39,22 @@
             </intent-filter>
         </activity>
 
+        <!-- Automation surface (issue #41): a headless, exported activity that runs one synthesis
+             job from an intent (Tasker / MacroDroid / `adb shell am start -a
+             com.phonetts.action.SYNTHESIZE`) and returns a result intent. A third consumer of the
+             one generation path — no new synthesis logic. -->
+        <activity
+            android:name=".automation.TtsAutomationActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="com.phonetts.action.SYNTHESIZE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- Foreground service driving background playback + the lock-screen media session
              (com.phonetts.app.playback.PlaybackService). Not exported: only this app binds to
              it. -->
