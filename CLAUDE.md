@@ -47,6 +47,13 @@ These come straight from the spec and are the whole point of the design:
    `speed`/duration arg), carried in the `SynthesisParams` bag. **Never** resample output audio to
    change speed — that shifts pitch. A model whose runtime exposes no speed knob advertises a
    locked range rather than faking one.
+   **One explicit, flagged exception (issue #43):** a beyond-native, pitch-*preserving*
+   time-stretch (`TempoStretch`, WSOLA — not resampling) is allowed **only** as a separately-named,
+   **off-by-default** `AudioTransform` ("Extra tempo boost — post-processed, not native", 0.1x–10x)
+   applied on the **playback path only** (via `TransformingSink`), completely separate from
+   generation/export. It **never** touches the "Speed" control or the native speed `ModelParameter`,
+   and it is **not** the resampling this rule forbids (that fakes speed by shifting pitch; WSOLA
+   preserves pitch). The no-resampling-for-Speed rule above stands unchanged.
 3. **One generation path.** `synthesize(text, voiceId, params: SynthesisParams)` returns
    `Flow<FloatArray>`. Real-time playback and file export are two *consumers* of that one flow. No
    second synthesis path.

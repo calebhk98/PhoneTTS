@@ -55,6 +55,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.phonetts.core.audio.transform.BassCut
+import com.phonetts.core.audio.transform.DeEsser
+import com.phonetts.core.audio.transform.PresenceBoost
+import com.phonetts.core.audio.transform.TempoStretch
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.engine.Voice
@@ -417,6 +421,35 @@ private fun TransformToggles(
     ToggleRow("Trim silence", state.trimSilence, viewModel::setTrimSilence)
     ToggleRow("Normalize volume", state.normalizeVolume, viewModel::setNormalizeVolume)
     ToggleRow("Crossfade joins", state.crossfadeJoins, viewModel::setCrossfadeJoins)
+    // EQ clarity presets (issue #40): timbre-only biquads, same non-destructive export chain.
+    ToggleRow(BassCut().displayName, state.bassCut, viewModel::setBassCut)
+    ToggleRow(PresenceBoost().displayName, state.presenceBoost, viewModel::setPresenceBoost)
+    ToggleRow(DeEsser().displayName, state.deEss, viewModel::setDeEss)
+    TempoBoostControl(state, viewModel)
+}
+
+/**
+ * Opt-in, PLAYBACK-ONLY beyond-native tempo (issue #43). Deliberately separate from the native
+ * "Speed" control: this is a post-processed, pitch-preserving WSOLA time-stretch that never touches
+ * the model's own speed parameter and never resamples for it (rule 2). Off by default; the factor
+ * slider only appears once enabled.
+ */
+@Composable
+private fun TempoBoostControl(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    ToggleRow("Extra tempo boost — post-processed, not native", state.tempoBoost, viewModel::setTempoBoost)
+    if (!state.tempoBoost) return
+    Text(
+        "Playback tempo ${"%.1f".format(state.tempoFactor)}x (pitch-preserving, not the model's Speed)",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Slider(
+        value = state.tempoFactor,
+        onValueChange = viewModel::setTempoFactor,
+        valueRange = TempoStretch.MIN_FACTOR..TempoStretch.MAX_FACTOR,
+    )
 }
 
 @Composable
