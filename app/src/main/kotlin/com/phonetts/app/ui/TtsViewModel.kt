@@ -6,12 +6,18 @@ import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
 import com.phonetts.app.BuildConfig
 import com.phonetts.app.audio.AudioTrackSink
+import com.phonetts.core.audio.AudioSink
+import com.phonetts.core.audio.TransformingSink
 import com.phonetts.core.audio.buffer.BufferedPlayback
 import com.phonetts.core.audio.buffer.GeneratedAudio
 import com.phonetts.core.audio.export.AudioEncoder
+import com.phonetts.core.audio.transform.BassCut
 import com.phonetts.core.audio.transform.Crossfade
+import com.phonetts.core.audio.transform.DeEsser
 import com.phonetts.core.audio.transform.LoudnessNormalize
+import com.phonetts.core.audio.transform.PresenceBoost
 import com.phonetts.core.audio.transform.SilenceTrim
+import com.phonetts.core.audio.transform.TempoStretch
 import com.phonetts.core.audio.transform.TransformChain
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
@@ -67,6 +73,16 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val trimSilence: Boolean = false,
         val normalizeVolume: Boolean = false,
         val crossfadeJoins: Boolean = false,
+        // EQ-flavored clarity presets (issue #40) — biquad transforms on the same non-destructive
+        // export chain as the toggles above; timbre only, native Speed untouched (rule 2).
+        val bassCut: Boolean = false,
+        val presenceBoost: Boolean = false,
+        val deEss: Boolean = false,
+        // Opt-in, PLAYBACK-ONLY beyond-native tempo (issue #43). A separate WSOLA time-stretch that
+        // is NOT the native "Speed" ModelParameter and never resamples for it (rule 2); off by
+        // default, applied only on the playback sink, never to generation or export.
+        val tempoBoost: Boolean = false,
+        val tempoFactor: Float = DEFAULT_TEMPO_FACTOR,
         val stats: GenerationStats? = null,
         // The modelId currently loaded into EngineManager (or null if none). Compared against
         // `selected?.modelId` by the UI to show "loaded" vs "load model" — set by loadModel() and
@@ -276,6 +292,21 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun setCrossfadeJoins(on: Boolean) = mutableState.update { it.copy(crossfadeJoins = on) }
 
+    fun setBassCut(on: Boolean) = mutableState.update { it.copy(bassCut = on) }
+
+    fun setPresenceBoost(on: Boolean) = mutableState.update { it.copy(presenceBoost = on) }
+
+    fun setDeEss(on: Boolean) = mutableState.update { it.copy(deEss = on) }
+
+    /** Toggle the opt-in, playback-only beyond-native tempo boost (issue #43). Off by default. */
+    fun setTempoBoost(on: Boolean) = mutableState.update { it.copy(tempoBoost = on) }
+
+    /** Set the beyond-native tempo factor (clamped to [TempoStretch]'s advertised 0.1x–10x range). */
+    fun setTempoFactor(factor: Float) =
+        mutableState.update {
+            it.copy(tempoFactor = factor.coerceIn(TempoStretch.MIN_FACTOR, TempoStretch.MAX_FACTOR))
+        }
+
     fun setExportFormat(encoder: AudioEncoder) = mutableState.update { it.copy(exportFormat = encoder) }
 
     /**
@@ -355,6 +386,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // A fresh instance per session (see the field doc above) — stop() above just latched the
         // previous one's "stopped" flag for good.
         playback = BufferedPlayback()
+        // Beyond-native tempo (#43) lives on the PLAYBACK sink only: if the user opted in, wrap the
+        // real sink so each chunk is WSOLA-stretched on its way out. Generation and export never see
+        // this — they use `sink`/the export chain directly, so the native Speed knob is untouched.
+        val playSink = playbackSink(s)
 
         val cached = cachedAudio?.takeIf { cachedKey == key }
         if (cached != null) {
@@ -363,7 +398,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             mutableState.update { it.copy(playing = true, paused = false, status = null) }
             playJob =
                 viewModelScope.launch {
-                    runCatching { playback.play(cached, descriptor.sampleRate, sink) }
+                    runCatching { playback.play(cached, descriptor.sampleRate, playSink) }
                         .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
                     mutableState.update { it.copy(playing = false, paused = false) }
                 }
@@ -388,7 +423,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             }
         playJob =
             viewModelScope.launch {
-                runCatching { playback.play(audio, descriptor.sampleRate, sink) }
+                runCatching { playback.play(audio, descriptor.sampleRate, playSink) }
                     .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
                 mutableState.update { it.copy(playing = false, paused = false) }
             }
@@ -404,6 +439,13 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         if (startIndex <= 0) return text
         val remaining = TextChunker.intoSentences(text).drop(startIndex)
         return remaining.joinToString(" ").ifBlank { text }
+    }
+
+    // The sink playback drains into: the raw AudioTrack sink, wrapped with the opt-in beyond-native
+    // tempo transform when enabled. PLAYBACK ONLY — export/generation never call this (issue #43).
+    private fun playbackSink(s: UiState): AudioSink {
+        if (!s.tempoBoost) return sink
+        return TransformingSink(sink, TempoStretch(s.tempoFactor))
     }
 
     // Run the ONE generation flow into [audio] as fast as the model produces, updating live stats.
@@ -637,10 +679,14 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     // Build the transform chain from the current toggles. Off by default and applied to a copy of
     // the audio, so the export is post-processed while the model's raw output is never altered.
     private fun buildTransforms(s: UiState): TransformChain =
-        TransformChain.of(listOf(SilenceTrim(), LoudnessNormalize(), Crossfade()))
+        TransformChain
+            .of(listOf(SilenceTrim(), LoudnessNormalize(), Crossfade(), BassCut(), PresenceBoost(), DeEsser()))
             .withEnabled(SilenceTrim.ID, s.trimSilence)
             .withEnabled(LoudnessNormalize.ID, s.normalizeVolume)
             .withEnabled(Crossfade.ID, s.crossfadeJoins)
+            .withEnabled(BassCut.ID, s.bassCut)
+            .withEnabled(PresenceBoost.ID, s.presenceBoost)
+            .withEnabled(DeEsser.ID, s.deEss)
 
     fun sideloadFolder(uri: Uri) {
         mutableState.update { it.copy(busy = true, status = null) }
@@ -669,6 +715,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     private companion object {
         const val VOICE_SAMPLE_PHRASE = "The quick brown fox jumps over the lazy dog."
+
+        // Default beyond-native tempo factor when the (off-by-default) boost is first enabled — a
+        // mild speed-up the user then adjusts. Not a native model parameter; see UiState.tempoFactor.
+        const val DEFAULT_TEMPO_FACTOR = 1.5f
 
         // Characters not safe in a saved file name; the "sample every model" names are derived from
         // model display names, which can contain slashes/colons.

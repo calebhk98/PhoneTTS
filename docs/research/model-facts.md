@@ -255,6 +255,15 @@
 
 Resampling after synthesis degrades audio quality and defeats the purpose of fine-grained speed control.
 
+**Explicit, flagged exception (issue #43) — beyond-native tempo, playback-only:** for a user who
+wants faster (or slower) than a model natively allows, the app offers `TempoStretch`, a separate,
+**off-by-default** `AudioTransform` that does a pitch-*preserving* WSOLA time-stretch (0.1x–10x) on
+the **playback path only** (via `TransformingSink`), never blended with the native Speed parameter
+and never applied to generation/export. This is *not* the resampling forbidden above — resampling
+shifts pitch to fake speed; WSOLA preserves pitch. The native-speed rule for the Speed control is
+unchanged; this is a clearly-labeled, opt-in post-processing step ("Extra tempo boost — post-
+processed, not native").
+
 ### Text Frontend Dependencies
 
 | Model | Frontend | Install | Note |

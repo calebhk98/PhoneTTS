@@ -16,7 +16,7 @@ It targets budget hardware (developed against a Samsung Galaxy A16, ~4GB RAM, no
 
 1. **Five models at launch:** CosyVoice2-0.5B, MeloTTS, Piper, KittenTTS, Kokoro-82M.
 2. **Two output modes:** real-time streaming playback, and export-to-file. Slow models are allowed — the user may choose to listen to one that can't keep up with playback; it will just be sluggish. File export is the escape hatch for anything too slow for real time.
-3. **Speed control** on every model, via the model's own native speed/duration parameter. **Never** by resampling output audio (that shifts pitch).
+3. **Speed control** on every model, via the model's own native speed/duration parameter. **Never** by resampling output audio (that shifts pitch). *Explicit, flagged exception (issue #43):* a separately-named, off-by-default, **playback-only** pitch-*preserving* time-stretch (`TempoStretch`, WSOLA — not resampling; 0.1x–10x) may exceed the native range. It never touches the native Speed parameter and is completely separate from generation/export; the no-resampling-for-Speed rule is unchanged.
 4. **Voice selection** per model.
 5. **Single source of truth:** to add a model, a voice, or a parameter, you edit *one* place. Dropdowns, labels, sliders, and playback config update themselves. No model fact is ever hardcoded in the UI or duplicated across files.
 6. **Removable models:** if a model's license ever becomes a problem, deleting its engine removes it cleanly, with no dangling references and no `when(modelType)` switch to hand-edit.
@@ -228,7 +228,7 @@ If adding a fake engine to the registry does **not** make it show up everywhere 
 
 - **All inference off the main thread.** Coroutines. Never block the UI thread.
 - **Chunk long text into sentences** and synthesize sequentially so playback (or file writing) can start before the whole thing is generated.
-- **Speed always routes to the model's native parameter.** Piper `length_scale`, Kokoro/Kitten/Melo `speed` arg, CosyVoice its own control. Never resample audio to change speed.
+- **Speed always routes to the model's native parameter.** Piper `length_scale`, Kokoro/Kitten/Melo `speed` arg, CosyVoice its own control. Never resample audio to change speed. *(Flagged exception, issue #43: the off-by-default, playback-only `TempoStretch` transform — a pitch-preserving WSOLA time-stretch, 0.1x–10x — is a separate opt-in named transform that never touches the native Speed parameter and never resamples for it.)*
 - **Never-nesting.** Guard clauses, early `return` / `continue`, in the frontends and the streaming loop. No deep `if` pyramids.
 - **No large files / no large functions.** Enforced by detekt (method + class size).
 - **Commented code** where intent isn't obvious from names — especially the `inspect()` fingerprints and any model-specific frontend quirks.
