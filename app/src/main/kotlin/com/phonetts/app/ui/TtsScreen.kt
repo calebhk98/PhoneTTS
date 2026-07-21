@@ -5,8 +5,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,14 +16,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -30,6 +39,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,22 +47,28 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.engine.Voice
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The main screen. Model list, voice list and speed bounds are read entirely from the
  * [com.phonetts.core.registry.ModelCatalog] + the selected [ModelDescriptor] — register a model and
  * it appears here with no UI change (spec §7). Play and Export are the two consumers of the one
  * generation path.
+ *
+ * Layout: a hamburger [ModalNavigationDrawer] holds the navigation destinations (browse / manage /
+ * sideload / help) so the body stays a clean stack of titled cards — voice, text, playback, output.
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -60,11 +76,15 @@ fun TtsScreen(
     viewModel: TtsViewModel,
     onBrowseModels: () -> Unit,
     onManageModels: () -> Unit,
+    onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
+    appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
 
     val importLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -78,124 +98,281 @@ fun TtsScreen(
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             uri?.let(viewModel::sideloadFolder)
         }
-
-    Scaffold(topBar = { TopAppBar(title = { Text("PhoneTTS") }) }) { innerPadding ->
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            state.update?.let { update ->
-                UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
+    // Pick a destination folder, then write one sample clip per model into it (named by model).
+    val sampleAllLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            val tree = uri?.let { DocumentFile.fromTreeUri(context, it) } ?: return@rememberLauncherForActivityResult
+            val mime = state.exportFormat.format.mimeType
+            viewModel.sampleAllModels { name ->
+                tree.createFile(mime, name)?.uri?.let { fileUri -> context.contentResolver.openOutputStream(fileUri) }
             }
+        }
 
-            if (state.models.isEmpty()) {
-                Text("No models yet. Browse Hugging Face or sideload a folder to add one.")
-            } else {
-                ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
-                state.selected?.let { descriptor ->
-                    VoicePicker(
-                        voices = descriptor.voices,
-                        selectedVoiceId = state.voiceId,
-                        favoriteVoiceIds = state.favoriteVoiceIds,
-                        onSelect = viewModel::setVoice,
-                        onToggleFavorite = viewModel::toggleFavoriteVoice,
-                    )
-                    ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
-                }
-            }
+    // Close the drawer, then run the destination's action. Navigation actions swap the whole screen
+    // out from under the drawer, so the close is mostly cosmetic — but sideload just fires a launcher
+    // and stays here, where the tidy close matters.
+    val navigate: (() -> Unit) -> Unit = { action ->
+        scope.launch { drawerState.close() }
+        action()
+    }
 
-            OutlinedTextField(
-                value = state.text,
-                onValueChange = viewModel::setText,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Text to speak") },
-                minLines = 3,
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            AppDrawer(
+                appVersion = appVersion,
+                onBrowseModels = { navigate(onBrowseModels) },
+                onManageModels = { navigate(onManageModels) },
+                onSideload = { navigate { sideloadLauncher.launch(null) } },
+                onBenchmarks = { navigate(onBenchmarks) },
+                onHelp = { navigate(onHelp) },
             )
-
-            val playbackCaption =
-                "Load model warms up the engine ahead of time. Generate previews the audio (with " +
-                    "stats) without playing it. Play generates it if needed and speaks it — tap " +
-                    "Play again afterward to replay instantly, no regeneration."
-            ButtonGroup("Playback", caption = playbackCaption) {
-                val selected = state.selected
-                val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
-                OutlinedButton(
-                    onClick = viewModel::loadModel,
-                    enabled = state.selected != null && !state.busy && !state.playing && !isModelLoaded,
-                ) { Text(if (isModelLoaded) "Model loaded" else "Load model") }
-                OutlinedButton(
-                    onClick = viewModel::generateAudio,
-                    enabled = state.selected != null && !state.busy && !state.playing,
-                ) { Text("Generate") }
-                Button(onClick = viewModel::play, enabled = state.selected != null && !state.playing) {
-                    // Play generates and streams playback in one action when nothing's been
-                    // generated yet (see TtsViewModel.play); this at least shows something is
-                    // happening for the whole time the button is disabled, not just once audible.
-                    Text(if (state.playing) "Playing…" else "Play")
-                }
-                // Pause the audio while generation keeps running; resume replays already-generated audio.
-                if (state.playing && !state.paused) {
-                    OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
-                }
-                if (state.playing && state.paused) {
-                    OutlinedButton(onClick = viewModel::resumePlayback) { Text("Resume") }
-                }
-                OutlinedButton(onClick = viewModel::stop, enabled = state.playing) { Text("Stop") }
-                OutlinedButton(
-                    onClick = viewModel::sampleVoice,
-                    enabled = state.selected != null && !state.busy,
-                ) { Text("Sample voice") }
-            }
-
-            ButtonGroup("Files") {
-                OutlinedButton(
-                    onClick = { exportLauncher.launch("speech.${state.exportFormat.format.fileExtension}") },
-                    enabled = state.selected != null && !state.busy,
-                ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
-                OutlinedButton(onClick = { importLauncher.launch(IMPORT_MIME_TYPES) }) { Text("Import file") }
-                OutlinedButton(onClick = { sideloadLauncher.launch(null) }) { Text("Sideload folder") }
-            }
-
-            ButtonGroup("Models & help") {
-                OutlinedButton(onClick = onBrowseModels) { Text("Browse models") }
-                OutlinedButton(onClick = onManageModels) { Text("Manage models") }
-                OutlinedButton(onClick = onHelp) { Text("Help") }
-            }
-
-            HorizontalDivider()
-
-            TransformToggles(state, viewModel)
-            if (viewModel.exportFormats.size > 1) {
-                ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
-            }
-            SleepTimerControls(sleepTimer)
-
-            if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            state.stats?.let { GenerationStatsView(it) }
-            state.status?.let { Text(it) }
+        },
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("PhoneTTS") },
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            // The repo avoids the material-icons dependency (see back arrow / stars),
+                            // so the menu affordance is the "trigram for heaven" hamburger glyph.
+                            Text("☰", style = MaterialTheme.typography.titleLarge)
+                        }
+                    },
+                )
+            },
+        ) { innerPadding ->
+            TtsBody(
+                state = state,
+                viewModel = viewModel,
+                sleepTimer = sleepTimer,
+                contentPadding = innerPadding,
+                onImport = { importLauncher.launch(IMPORT_MIME_TYPES) },
+                onExport = { exportLauncher.launch("speech.${state.exportFormat.format.fileExtension}") },
+                onSampleAll = { sampleAllLauncher.launch(null) },
+            )
         }
     }
 }
 
-/** A labeled cluster of related action buttons — keeps the button wall scannable at a glance. */
-@OptIn(ExperimentalLayoutApi::class)
+/** The scrollable content stack: one titled [SectionCard] per concern. */
 @Composable
-private fun ButtonGroup(
-    label: String,
-    caption: String? = null,
-    content: @Composable () -> Unit,
+private fun TtsBody(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+    sleepTimer: SleepTimerHandle,
+    contentPadding: PaddingValues,
+    onImport: () -> Unit,
+    onExport: () -> Unit,
+    onSampleAll: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        caption?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        state.update?.let { update ->
+            UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
+        }
+
+        VoiceCard(state, viewModel)
+        TextCard(state, viewModel, onImport)
+        PlaybackCard(state, viewModel)
+        OutputCard(state, viewModel, sleepTimer, onExport, onSampleAll)
+    }
+}
+
+/** A titled, elevated grouping — the unit that turns the old button wall into scannable sections. */
+@Composable
+private fun SectionCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
             content()
         }
+    }
+}
+
+/** Navigation destinations, tucked behind the hamburger so the main screen isn't a button wall. */
+@Composable
+private fun AppDrawer(
+    appVersion: String?,
+    onBrowseModels: () -> Unit,
+    onManageModels: () -> Unit,
+    onSideload: () -> Unit,
+    onBenchmarks: () -> Unit,
+    onHelp: () -> Unit,
+) {
+    ModalDrawerSheet {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("PhoneTTS", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                appVersion?.let { "Offline text-to-speech · v$it" } ?: "Offline text-to-speech",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        HorizontalDivider()
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            DrawerLink("Browse models", onBrowseModels)
+            DrawerLink("Manage models", onManageModels)
+            DrawerLink("Sideload folder", onSideload)
+            DrawerLink("Benchmarks", onBenchmarks)
+            DrawerLink("Help", onHelp)
+        }
+    }
+}
+
+@Composable
+private fun DrawerLink(
+    label: String,
+    onClick: () -> Unit,
+) {
+    NavigationDrawerItem(
+        label = { Text(label) },
+        selected = false,
+        onClick = onClick,
+        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+    )
+}
+
+/** Model + voice + tunable parameters — everything about *what* voice speaks. */
+@Composable
+private fun VoiceCard(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    SectionCard("Voice") {
+        if (state.models.isEmpty()) {
+            Text("No models yet. Open the menu to browse Hugging Face or sideload a folder.")
+            return@SectionCard
+        }
+        ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
+        val descriptor = state.selected ?: return@SectionCard
+        VoicePicker(
+            voices = descriptor.voices,
+            selectedVoiceId = state.voiceId,
+            favoriteVoiceIds = state.favoriteVoiceIds,
+            onSelect = viewModel::setVoice,
+            onToggleFavorite = viewModel::toggleFavoriteVoice,
+        )
+        ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
+    }
+}
+
+/** The text to read, plus the import-from-file affordance right where the text lives. */
+@Composable
+private fun TextCard(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+    onImport: () -> Unit,
+) {
+    SectionCard("Text") {
+        OutlinedTextField(
+            value = state.text,
+            onValueChange = viewModel::setText,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Text to speak") },
+            minLines = 3,
+        )
+        OutlinedButton(onClick = onImport) { Text("Import from file") }
+    }
+}
+
+/**
+ * Playback controls. Play is the single primary action (it generates on first tap, then replays
+ * instantly); everything else — load-ahead, preview-only generate, sample, transport — is a
+ * secondary button so the common path reads at a glance. Live progress/stats/status sit right here.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlaybackCard(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    SectionCard("Playback") {
+        val selected = state.selected
+        val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
+
+        Button(
+            onClick = viewModel::play,
+            enabled = selected != null && !state.playing,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (state.playing) "Playing…" else "Play") }
+
+        // Transport controls only matter mid-playback, so they only appear then.
+        if (state.playing) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!state.paused) {
+                    OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
+                } else {
+                    OutlinedButton(onClick = viewModel::resumePlayback) { Text("Resume") }
+                }
+                OutlinedButton(onClick = viewModel::stop) { Text("Stop") }
+            }
+        }
+
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = viewModel::loadModel,
+                enabled = selected != null && !state.busy && !state.playing && !isModelLoaded,
+            ) { Text(if (isModelLoaded) "Model loaded" else "Load model") }
+            OutlinedButton(
+                onClick = viewModel::generateAudio,
+                enabled = selected != null && !state.busy && !state.playing,
+            ) { Text("Generate") }
+            OutlinedButton(
+                onClick = viewModel::sampleVoice,
+                enabled = selected != null && !state.busy,
+            ) { Text("Sample voice") }
+        }
+
+        if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        state.stats?.let { GenerationStatsView(it) }
+        state.status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+/** Export + the non-destructive post-processing toggles + the sleep timer — the "on the way out" knobs. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OutputCard(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+    sleepTimer: SleepTimerHandle,
+    onExport: () -> Unit,
+    onSampleAll: () -> Unit,
+) {
+    SectionCard("Output") {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = onExport,
+                enabled = state.selected != null && !state.busy,
+            ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
+            // Audition every downloaded model at once: one sample clip per model, saved to a folder.
+            OutlinedButton(
+                onClick = onSampleAll,
+                enabled = state.models.isNotEmpty() && !state.busy && !state.playing,
+            ) { Text("Sample every model") }
+        }
+        if (viewModel.exportFormats.size > 1) {
+            ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
+        }
+        HorizontalDivider()
+        TransformToggles(state, viewModel)
+        HorizontalDivider()
+        SleepTimerControls(sleepTimer)
     }
 }
 
@@ -248,9 +425,13 @@ private fun ToggleRow(
     checked: Boolean,
     onChecked: (Boolean) -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Switch(checked = checked, onCheckedChange = onChecked)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
         Text(label)
+        Switch(checked = checked, onCheckedChange = onChecked)
     }
 }
 
@@ -261,7 +442,10 @@ private fun GenerationStatsView(stats: com.phonetts.core.metrics.GenerationStats
     val audio = "%.1f".format(stats.audioSecondsProduced)
     val eta = stats.estimatedRemainingSeconds?.let { " · ETA ${"%.0f".format(it)}s" } ?: ""
     val wps = if (stats.wordsPerSecond > 0) " · ${"%.1f".format(stats.wordsPerSecond)} words/s" else ""
-    Text("Generated ${audio}s audio · ${rtf}x real-time$wps$eta")
+    Text(
+        "Generated ${audio}s audio · ${rtf}x real-time$wps$eta",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

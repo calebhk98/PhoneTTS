@@ -100,9 +100,9 @@ android {
     }
 
     // NDK version is intentionally left to the installed default rather than pinned here: this
-    // module was authored without a local NDK to test against (no Android SDK in this dev
-    // environment). Any NDK new enough for CMake 3.22.1 (r23+) should work; pin this once a real
-    // build has been run and the resolved version is known-good.
+    // module was authored without a local NDK to test against. Any NDK new enough for CMake 3.22.1
+    // (r23+) works for the opt-in -PwithEspeak/-PwithCosyVoice native bridges; pin it once a real
+    // native build resolves a known-good version (see the "ship CosyVoice" issue for the blockers).
 
     buildFeatures {
         compose = true

@@ -34,6 +34,9 @@ object HfEndpoints {
      */
     fun modelInfoUrl(modelId: String): String = "$API_BASE/models/${encodePathSegments(modelId)}"
 
+    /** The model's Hugging Face page (its README/model card + files) — for an "open in browser" link. */
+    fun modelPageUrl(modelId: String): String = "$RESOLVE_BASE/${encodePathSegments(modelId)}"
+
     /** The download URL for one file. Owner/name and the file path keep their '/'; each segment is encoded. */
     fun resolveUrl(
         modelId: String,

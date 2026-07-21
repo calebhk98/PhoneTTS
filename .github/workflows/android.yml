@@ -9,7 +9,8 @@ name: Android CI + APK release
 # "install unknown apps" enabled — no keystore secret needed. It bundles ONNX Runtime for the
 # Tier-A/B engines; the espeak-ng and CosyVoice native bridges are opt-in native builds
 # (-PwithEspeak / -PwithCosyVoice) and are NOT included in this baseline APK (see docs/COSYVOICE2.md
-# and docs/espeak-ng-integration.md).
+# and docs/espeak-ng-integration.md). Shipping CosyVoice by default is tracked separately — the
+# CrispASR native tree needs real integration work to cross-compile (see the "ship CosyVoice" issue).
 
 on:
   push:
@@ -106,3 +107,4 @@ jobs:
 
             Debug-signed build (installs without a Play account). ONNX engines (Piper/Kokoro/Kitten/Melo)
             are included; espeak phonemization and CosyVoice are opt-in native builds — see the README.
+            Model weights download on first use into app-private storage.

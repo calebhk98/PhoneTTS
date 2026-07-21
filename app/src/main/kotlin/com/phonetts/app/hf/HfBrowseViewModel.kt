@@ -30,6 +30,10 @@ class HfBrowseViewModel(
     private val catalog: HfCatalog,
     private val downloader: HfDownloader,
     private val modelCatalog: ModelCatalog,
+    // True if the Runtime with the given id is available on this build. Used to hide a recommended
+    // model whose runtime isn't present (e.g. CosyVoice3 in a non-native build), so a one-tap
+    // download never lands a model that can't load. Defaults to "not available" — fail-closed.
+    private val isRuntimeAvailable: (String) -> Boolean = { false },
 ) : ViewModel() {
     data class UiState(
         val query: String = "",
@@ -58,8 +62,20 @@ class HfBrowseViewModel(
     private val mutableState = MutableStateFlow(UiState(installedIds = installedIdsSnapshot()))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
-    /** Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md). */
-    val recommended: List<BuiltInModel> = BuiltInCatalog.ALL
+    /**
+     * Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md), minus any whose
+     * required runtime isn't available on this build — so a standard APK shows the four ONNX models
+     * and a native (-PwithCosyVoice) build also shows CosyVoice3.
+     */
+    val recommended: List<BuiltInModel> =
+        BuiltInCatalog.ALL.filter { model -> model.requiresRuntimeId?.let(isRuntimeAvailable) ?: true }
+
+    // Populate the list immediately so the screen isn't just the handful of recommended models until
+    // the user types — a blank query lists the top TTS models (HfEndpoints.searchModelsUrl). Fail-
+    // closed: no network just leaves results empty with an error line, the recommended list still shows.
+    init {
+        search()
+    }
 
     /** True if [rawId] (an [HfModelSummary.id] or [BuiltInModel.id]) is already in the catalog. */
     fun isInstalled(rawId: String): Boolean = ModelStorage.sanitize(rawId) in mutableState.value.installedIds
