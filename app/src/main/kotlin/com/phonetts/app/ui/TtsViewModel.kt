@@ -178,7 +178,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    fun selectModel(descriptor: ModelDescriptor) =
+    fun selectModel(descriptor: ModelDescriptor) {
+        // Switching model mid-utterance is a barge-in: cancel synthesis, drop buffered chunks, and
+        // stop the AudioTrack (issue #45) before re-selecting. No-op cost when nothing is playing.
+        stop()
         mutableState.update {
             it.copy(
                 selected = descriptor,
@@ -186,6 +189,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 paramValues = defaultParamValues(descriptor),
             )
         }
+    }
 
     // Each declared parameter's default value, keyed by id — the starting point for the controls.
     private fun defaultParamValues(descriptor: ModelDescriptor): Map<String, Float> =
@@ -193,11 +197,15 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     // Remembering the user's manual pick as the per-language default (favoriteVoices.setDefaultVoice)
     // is what makes defaultVoiceIdFor's prefill useful next time this language comes up.
-    fun setVoice(voiceId: String) =
+    fun setVoice(voiceId: String) {
+        // Switching voice mid-utterance is the same barge-in as stop/skip (issue #45): cancel
+        // synthesis, drop buffered chunks, stop the AudioTrack before the new voice takes effect.
+        stop()
         mutableState.update { current ->
             current.selected?.voices?.firstOrNull { it.id == voiceId }?.let(graph.favoriteVoices::setDefaultVoice)
             current.copy(voiceId = voiceId)
         }
+    }
 
     /** Flips [voice]'s favorite state; the voice picker re-sorts/stars off [UiState.favoriteVoiceIds]. */
     fun toggleFavoriteVoice(voice: Voice) =
@@ -365,13 +373,23 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(paused = false) }
     }
 
+    /**
+     * The single barge-in path for stop / skip / switch-voice (issue #45) — a proper three-step
+     * cancel, not just a UI-state reset:
+     *   1. cancel the synthesis coroutine ([genJob]) so no further audio is generated;
+     *   2. drop any buffered-but-unplayed chunks — [BufferedPlayback.stop] stops draining the
+     *      [GeneratedAudio] buffer, and [AudioTrackSink.stop]'s flush discards PCM already queued
+     *      in the AudioTrack but not yet heard;
+     *   3. stop the AudioTrack ([sink] pause/flush/stop/release).
+     * Then it clears the UI flags. Every switch (below) routes through here so the discipline holds.
+     */
     fun stop() {
-        playback.stop()
+        playback.stop() // step 2a: stop draining the generated-audio buffer
         playJob?.cancel()
-        genJob?.cancel()
+        genJob?.cancel() // step 1: cancel synthesis
         playJob = null
         genJob = null
-        sink.stop()
+        sink.stop() // steps 2b + 3: flush queued PCM and stop the AudioTrack
         mutableState.update { it.copy(playing = false, paused = false) }
     }
 
