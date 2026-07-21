@@ -42,12 +42,14 @@ import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.manage.ModelManagementScreen
 import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.ui.HelpScreen
+import com.phonetts.app.ui.OnboardingScreen
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
 import com.phonetts.app.ui.theme.PhoneTtsTheme
+import com.phonetts.core.prefs.AppTheme
 
-private enum class Screen { MAIN, BROWSE, MANAGE, BENCHMARK, HELP }
+private enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -80,9 +82,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val sharedText = intent?.readSharedText()
         setContent {
-            PhoneTtsTheme {
+            // Theme choice is hoisted above PhoneTtsTheme so a pick in the picker recomposes the
+            // whole tree; persisted through AppThemePreference so it survives relaunch.
+            var theme by remember { mutableStateOf(graph.appThemePreference.selected()) }
+            PhoneTtsTheme(theme = theme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    AppNav(graph, ttsViewModel, sharedText, binderState)
+                    AppNav(
+                        graph = graph,
+                        ttsViewModel = ttsViewModel,
+                        sharedText = sharedText,
+                        binderState = binderState,
+                        theme = theme,
+                        onThemeSelected = { chosen ->
+                            theme = chosen
+                            graph.appThemePreference.select(chosen)
+                        },
+                    )
                 }
             }
         }
@@ -143,8 +158,14 @@ private fun AppNav(
     ttsViewModel: TtsViewModel,
     sharedText: String?,
     binderState: State<PlaybackService.LocalBinder?>,
+    theme: AppTheme,
+    onThemeSelected: (AppTheme) -> Unit,
 ) {
-    var screen by remember { mutableStateOf(Screen.MAIN) }
+    // First run lands on the walkthrough; every launch after it has been dismissed goes straight
+    // to the reader. remember{} reads the flag once so dismissing it mid-session sticks.
+    var screen by remember {
+        mutableStateOf(if (graph.onboardingState.hasSeenOnboarding()) Screen.MAIN else Screen.ONBOARDING)
+    }
     val binder by binderState
 
     // Load shared/handed-in text into the reader once, when the activity was opened via a share.
@@ -153,6 +174,13 @@ private fun AppNav(
     }
 
     when (screen) {
+        Screen.ONBOARDING ->
+            OnboardingScreen(
+                onFinish = {
+                    graph.onboardingState.markSeen()
+                    screen = Screen.MAIN
+                },
+            )
         Screen.MAIN ->
             TtsScreen(
                 viewModel = ttsViewModel,
@@ -206,6 +234,8 @@ private fun AppNav(
                     update = ttsState.update,
                     checkStatus = ttsState.updateCheckStatus,
                     onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
+                    currentTheme = theme,
+                    onThemeSelected = onThemeSelected,
                 )
             }
         }

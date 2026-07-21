@@ -11,8 +11,10 @@ import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
+import com.phonetts.core.prefs.OnboardingState
 import com.phonetts.core.resolver.DetectionFailureExplainer
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
@@ -92,6 +94,12 @@ class AppGraph(context: Context) {
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
+
+    // UI-preference seams over the same store: the chosen color theme (reading/OLED schemes) and
+    // the one-shot "has the first-run walkthrough been seen?" flag. Both hold only the user's
+    // choice — the theme's concrete colors live in the theme layer, the walkthrough copy in its UI.
+    val appThemePreference = AppThemePreference(preferenceStore)
+    val onboardingState = OnboardingState(preferenceStore)
 
     // The export-format registry (WAV always; AAC always; Opus on API 29+). The picker reads
     // display names/extensions/MIME from here — no format string is hardcoded in the UI (SSOT).

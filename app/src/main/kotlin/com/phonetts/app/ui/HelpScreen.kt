@@ -5,18 +5,23 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.builtin.BuiltInCatalog
+import com.phonetts.core.prefs.AppTheme
 import com.phonetts.core.update.UpdateStatus
 
 /**
@@ -31,12 +36,16 @@ fun HelpScreen(
     update: UpdateStatus?,
     checkStatus: String?,
     onCheckForUpdates: () -> Unit,
+    currentTheme: AppTheme,
+    onThemeSelected: (AppTheme) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates)
+
+        ThemeSection(currentTheme, onThemeSelected)
 
         Section("Getting a voice") {
             Bullet("Tap Browse models → the Recommended (one-tap) section for a working voice in one tap.")
@@ -102,6 +111,31 @@ private fun UpdatesSection(
             }
         }
         checkStatus?.let { Body(it) }
+    }
+}
+
+// The reading-friendly theme picker. Options are derived from AppTheme.entries (SSOT: the enum is
+// the single authority for which themes exist), so adding a scheme needs no edit here.
+@Composable
+private fun ThemeSection(
+    currentTheme: AppTheme,
+    onThemeSelected: (AppTheme) -> Unit,
+) {
+    Section("Appearance") {
+        Body("Pick a color theme — sepia and true-black are tuned for long reading / OLED battery.")
+        AppTheme.entries.forEach { theme ->
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .selectable(selected = theme == currentTheme, onClick = { onThemeSelected(theme) }),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RadioButton(selected = theme == currentTheme, onClick = { onThemeSelected(theme) })
+                Text(theme.displayName)
+            }
+        }
     }
 }
 
