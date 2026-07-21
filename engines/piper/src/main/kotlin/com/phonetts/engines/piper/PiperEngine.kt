@@ -8,6 +8,7 @@ import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
+import com.phonetts.core.model.ResourceCost
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Runtime
 import com.phonetts.core.runtime.Tensor
@@ -179,6 +180,9 @@ internal class PiperEngine(
             // advertises a speed knob (routed to length_scale — never resampled, CLAUDE.md rule 2).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths = assetPaths,
+            // Approximate peak-RAM estimate (issue #38): a small VITS graph, scaled by how many voice
+            // graphs this bundle loads at once. A-priori only — refined by observed peak RAM.
+            resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB_PER_VOICE * entries.size),
         )
     }
 
@@ -219,6 +223,9 @@ internal class PiperEngine(
 
         private val SPEED_RANGE = 0.5f..2.0f
         private const val DEFAULT_SPEED = 1.0f
+
+        // Approximate peak resident RAM (MiB) per loaded VITS voice graph.
+        private const val PEAK_RAM_MIB_PER_VOICE = 120L
     }
 }
 

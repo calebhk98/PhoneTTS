@@ -9,6 +9,7 @@ import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
+import com.phonetts.core.model.ResourceCost
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
 import com.phonetts.engines.common.AbstractVoiceEngine
@@ -247,6 +248,9 @@ internal class KokoroEngine(
                     VOICES_DIR_ASSET to joinAssetPath(bundle, VOICES_DIR),
                     TOKENIZER_ASSET to joinAssetPath(bundle, TOKENIZER_FILE),
                 ),
+            // Approximate peak-RAM estimate (issue #38): Kokoro is an ~82M-param StyleTTS2 model.
+            // A-priori only — refined by observed peak RAM.
+            resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
     }
 
@@ -265,12 +269,16 @@ internal class KokoroEngine(
             defaultVoiceId = fallbackVoice.id,
             parameters = listOf(ModelParameter.speed(FALLBACK_SPEED_MIN..FALLBACK_SPEED_MAX, FALLBACK_DEFAULT_SPEED)),
             assetPaths = mapOf(WEIGHTS_ASSET to joinAssetPath(bundle, weightsFile)),
+            resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
     }
 
     companion object {
         const val ENGINE_ID = "kokoro"
         const val DISPLAY_NAME = "Kokoro"
+
+        // Approximate peak resident RAM (MiB) while loaded + generating — ~82M-param StyleTTS2 model.
+        private const val PEAK_RAM_MIB = 380L
 
         // Companion-file names inspect()/forcedMatch() fingerprint a bundle by.
         private const val CONFIG_FILE = "config.json"

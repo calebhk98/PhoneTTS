@@ -213,7 +213,18 @@ private fun AppNav(
         }
         Screen.MANAGE -> {
             val manageViewModel: ModelManagementViewModel =
-                viewModel(factory = viewModelFactory { initializer { ModelManagementViewModel(graph.modelManager) } })
+                viewModel(
+                    factory =
+                        viewModelFactory {
+                            initializer {
+                                ModelManagementViewModel(
+                                    modelManager = graph.modelManager,
+                                    resourceUsage = graph.resourceUsageStore,
+                                    availableRamBytes = graph::availableRamBytes,
+                                )
+                            }
+                        },
+                )
             BackScaffold(title = "Downloaded models", onBack = {
                 ttsViewModel.refreshModels() // a delete removes it from the model dropdown too
                 screen = Screen.MAIN
