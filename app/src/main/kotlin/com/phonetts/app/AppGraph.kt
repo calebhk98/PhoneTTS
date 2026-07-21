@@ -14,6 +14,7 @@ import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.prefs.AppThemePreference
+import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
 import com.phonetts.core.prefs.OnboardingState
@@ -98,6 +99,10 @@ class AppGraph(context: Context) {
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
+
+    // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
+    // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
+    val blendedVoices = BlendedVoiceStore(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
 
     // UI-preference seams over the same store: the chosen color theme (reading/OLED schemes) and

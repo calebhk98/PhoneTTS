@@ -86,6 +86,7 @@ fun TtsScreen(
     onManageModels: () -> Unit,
     onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
+    onMixVoices: () -> Unit = {},
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
@@ -134,6 +135,7 @@ fun TtsScreen(
                 onSideload = { navigate { sideloadLauncher.launch(null) } },
                 onBenchmarks = { navigate(onBenchmarks) },
                 onHelp = { navigate(onHelp) },
+                onMixVoices = { navigate(onMixVoices) },
             )
         },
     ) {
@@ -221,6 +223,7 @@ private fun AppDrawer(
     onSideload: () -> Unit,
     onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
+    onMixVoices: () -> Unit = {},
 ) {
     ModalDrawerSheet {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -236,6 +239,7 @@ private fun AppDrawer(
             DrawerLink("Browse models", onBrowseModels)
             DrawerLink("Manage models", onManageModels)
             DrawerLink("Sideload folder", onSideload)
+            DrawerLink("Mix voices", onMixVoices)
             DrawerLink("Benchmarks", onBenchmarks)
             DrawerLink("Help", onHelp)
         }
