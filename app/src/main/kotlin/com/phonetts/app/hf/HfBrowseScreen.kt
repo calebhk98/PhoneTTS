@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -52,6 +53,7 @@ import com.phonetts.core.download.hf.HfEndpoints
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
 import com.phonetts.core.download.hf.HfSizeEstimator
+import com.phonetts.core.download.hf.HfSizeParamFilter
 import com.phonetts.core.download.hf.HfSortOption
 import com.phonetts.core.download.hf.ModelSpeedEstimate
 import com.phonetts.core.download.hf.QuantizationFilter
@@ -118,6 +120,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         // which is exactly the unstable-lambda half of the bug #3 root cause described above).
         val onSortChange = remember(viewModel) { viewModel::onSortChange }
         val onTagFilterChange = remember(viewModel) { viewModel::onTagFilterChange }
+        val onSizeFilterChange = remember(viewModel) { viewModel::onSizeFilterChange }
         // Both keyed on only the fields they actually depend on — NOT recomputed on every
         // recomposition (e.g. a download-progress tick), which was the other half of bug #3.
         val availableTags = remember(state.results) { viewModel.availableTags(state) }
@@ -128,6 +131,9 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             availableTags = availableTags,
             onTagFilterChange = onTagFilterChange,
         )
+        // Size/param-count filter (issue: sort+filter by size/params) — a separate row from the
+        // sort/tag dropdowns above since it takes numeric bounds, not a single choice from a menu.
+        SizeParamFilterRow(filter = state.sizeFilter, onFilterChange = onSizeFilterChange)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             state.error?.let { message ->
@@ -147,8 +153,16 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         }
         if (state.loading) CircularProgressIndicator()
 
+        // Also keyed on sizeEstimates/sizeFilter (unlike the sort/tag-only keys before size/param
+        // sort+filter existed) so a size arriving after this composition — or the user setting a
+        // size/param bound — actually reorders/refilters the list. Safe perf-wise despite bug #3's
+        // "don't recompute on every tick" lesson: sizeEstimates changes at most once per row (each
+        // repo's size resolves once and is cached), never the many-times-a-second cadence a
+        // download's byte progress produces.
         val displayedResults =
-            remember(state.results, state.sort, state.tagFilter) { viewModel.displayedResults(state) }
+            remember(state.results, state.sort, state.tagFilter, state.sizeEstimates, state.sizeFilter) {
+                viewModel.displayedResults(state)
+            }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // Recommended one-tap models come first — they're the curated, known-good downloads most
             // users want; the broader Hugging Face results follow under their own header.
@@ -198,6 +212,15 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                             onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.id)) },
                         ),
                 )
+            }
+            // Pagination (issue: Browse "Load more"): appears once the last-fetched page came back
+            // full (state.canLoadMore — see HfBrowseViewModel.search/loadMore) and disappears once a
+            // short page proves the Hub has nothing further for this query. Its own row so it always
+            // sits after every fetched result, never interleaved mid-list.
+            if (state.canLoadMore || state.loadingMore) {
+                item(key = "load-more") {
+                    LoadMoreRow(loading = state.loadingMore, onLoadMore = viewModel::loadMore)
+                }
             }
         }
     }
@@ -296,7 +319,107 @@ private fun sortLabel(option: HfSortOption): String =
         HfSortOption.MOST_DOWNLOADS -> "Most downloads"
         HfSortOption.MOST_LIKES -> "Most likes"
         HfSortOption.NAME_ASC -> "Name (A-Z)"
+        HfSortOption.LARGEST_SIZE -> "Largest size"
+        HfSortOption.SMALLEST_SIZE -> "Smallest size"
+        HfSortOption.MOST_PARAMS -> "Most params (est.)"
+        HfSortOption.FEWEST_PARAMS -> "Fewest params (est.)"
     }
+
+/**
+ * Numeric min/max bounds for the size and estimated-parameter-count filter (issue: sort+filter by
+ * size/params — [HfSizeParamFilter]). Collapsed by default so the common case (no filter) doesn't
+ * add four text fields to the screen; expands once tapped, or if a filter from a previous session
+ * is already active. Values are entered in the same human units the rest of this screen already
+ * shows (MB, M params) and converted to raw bytes/count only on Apply — see [mbTextToBytes]/
+ * [mTextToParams] — so a blank field means "no bound", never a fabricated zero.
+ */
+@Composable
+private fun SizeParamFilterRow(
+    filter: HfSizeParamFilter,
+    onFilterChange: (HfSizeParamFilter) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(filter.isActive) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (filter.isActive) "Size / params filter (active) ▾" else "Size / params filter ▾")
+        }
+        if (!expanded) return@Column
+        var minSizeMb by remember { mutableStateOf(bytesToMbText(filter.minBytes)) }
+        var maxSizeMb by remember { mutableStateOf(bytesToMbText(filter.maxBytes)) }
+        var minParamsM by remember { mutableStateOf(paramsToMText(filter.minParams)) }
+        var maxParamsM by remember { mutableStateOf(paramsToMText(filter.maxParams)) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NumberField("Min size (MB)", minSizeMb, { minSizeMb = it }, Modifier.weight(1f))
+            NumberField("Max size (MB)", maxSizeMb, { maxSizeMb = it }, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NumberField("Min params (M)", minParamsM, { minParamsM = it }, Modifier.weight(1f))
+            NumberField("Max params (M)", maxParamsM, { maxParamsM = it }, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                onFilterChange(
+                    HfSizeParamFilter(
+                        minBytes = mbTextToBytes(minSizeMb),
+                        maxBytes = mbTextToBytes(maxSizeMb),
+                        minParams = mTextToParams(minParamsM),
+                        maxParams = mTextToParams(maxParamsM),
+                    ),
+                )
+            }) { Text("Apply") }
+            OutlinedButton(onClick = {
+                minSizeMb = ""
+                maxSizeMb = ""
+                minParamsM = ""
+                maxParamsM = ""
+                onFilterChange(HfSizeParamFilter())
+            }) { Text("Clear") }
+        }
+    }
+}
+
+@Composable
+private fun NumberField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        modifier = modifier,
+    )
+}
+
+/** Pagination's "fetch the next page" control (issue: Browse "Load more") — a button while idle, a
+ * spinner while [loading] a page is in flight, centered so it reads as a list footer rather than
+ * another result row. */
+@Composable
+private fun LoadMoreRow(
+    loading: Boolean,
+    onLoadMore: () -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        if (loading) {
+            CircularProgressIndicator()
+        } else {
+            OutlinedButton(onClick = onLoadMore) { Text("Load more") }
+        }
+    }
+}
+
+private fun bytesToMbText(bytes: Long?): String = bytes?.let { "%.0f".format(it / BYTES_PER_MB.toDouble()) } ?: ""
+
+private fun paramsToMText(params: Long?): String = params?.let { "%.0f".format(it / PARAMS_PER_M) } ?: ""
+
+private fun mbTextToBytes(text: String): Long? =
+    text.trim().toDoubleOrNull()?.takeIf { it > 0.0 }?.let { (it * BYTES_PER_MB).roundToLong() }
+
+private fun mTextToParams(text: String): Long? =
+    text.trim().toDoubleOrNull()?.takeIf { it > 0.0 }?.let { (it * PARAMS_PER_M).roundToLong() }
 
 /** Every retained browse/download error this session (issue #3): selectable text plus a "Copy all"
  * button so the user can paste a full report rather than only screenshotting a toast. */
@@ -670,6 +793,7 @@ private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(mul
 
 private const val MAX_TAGS_SHOWN = 4
 private const val BYTES_PER_MB = 1024L * 1024L
+private const val PARAMS_PER_M = 1_000_000.0
 private const val THOUSAND = 1000.0
 private const val MB_TO_GB_THRESHOLD = 1024.0
 private const val SECONDS_PER_MINUTE = 60L

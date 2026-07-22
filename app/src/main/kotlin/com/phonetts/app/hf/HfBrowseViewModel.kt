@@ -17,10 +17,12 @@ import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfQuantizedDownloadPlan
 import com.phonetts.core.download.hf.HfResultsView
 import com.phonetts.core.download.hf.HfSizeEstimator
+import com.phonetts.core.download.hf.HfSizeParamFilter
 import com.phonetts.core.download.hf.HfSortOption
 import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.QuantizationVariant
+import com.phonetts.core.download.hf.needsSize
 import com.phonetts.core.registry.ModelCatalog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +52,12 @@ class HfBrowseViewModel(
     // Injectable wall-clock so progress/ETA math (issue #7) is deterministic to test; defaults to
     // the real clock on device.
     private val clock: () -> Long = System::currentTimeMillis,
+    // Live system-notification mirror of each download's progress (issue: download progress
+    // notification) — null by default so this class (and any test constructing it directly) never
+    // needs a real Android Context; the caller that DOES have one (MainActivity/AppGraph, outside
+    // this file's ownership) passes a real DownloadNotifier(context) to turn it on. See
+    // DownloadNotifier's kdoc.
+    private val notifier: DownloadNotifier? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(HfBrowseUiState())
     val state: StateFlow<HfBrowseUiState> = mutableState.asStateFlow()
@@ -90,39 +98,140 @@ class HfBrowseViewModel(
      * what made the sort/filter dropdown janky.
      */
     fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> =
-        HfResultsView.apply(state.results, state.sort, state.tagFilter)
+        HfResultsView.apply(state.results, state.sort, state.tagFilter, state.sizeEstimates, state.sizeFilter)
 
     /** Every tag present in the current result set, for the filter menu's choices — derived from
      * data, never a hardcoded list (issue #6 SSOT rule). Same [state]-parameter rationale as
      * [displayedResults]. */
     fun availableTags(state: HfBrowseUiState): List<String> = HfResultsView.availableTags(state.results)
 
-    fun onSortChange(sort: HfSortOption) = mutableState.update { it.copy(sort = sort) }
+    /** Changing sort order to a size/param-derived one (see [HfSortOption.needsSize]) eagerly fetches
+     * every currently-listed result's size — see [ensureSizesLoaded] — so the new order isn't just
+     * the whole page dumped into "unknown, sorts last" until the user happens to scroll each row into
+     * view (bug: sort/filter by size+params needs sizes available up front, not one row at a time). */
+    fun onSortChange(sort: HfSortOption) {
+        mutableState.update { it.copy(sort = sort) }
+        if (sort.needsSize()) ensureSizesLoaded(mutableState.value.results)
+    }
 
     fun onTagFilterChange(tag: String?) = mutableState.update { it.copy(tagFilter = tag) }
+
+    /** Same eager-fetch rationale as [onSortChange]: setting any size/param bound needs every
+     * result's size to know whether it passes the filter, not just the ones already scrolled past. */
+    fun onSizeFilterChange(filter: HfSizeParamFilter) {
+        mutableState.update { it.copy(sizeFilter = filter) }
+        if (filter.isActive) ensureSizesLoaded(mutableState.value.results)
+    }
+
+    // loadSize() is already idempotent (a no-op once known or already loading — see its own kdoc),
+    // so firing it for the whole current result set here is safe to call as often as sort/filter
+    // changes fire; each row also still calls it individually as it scrolls into view (ModelRow's
+    // LaunchedEffect), so nothing here is a new network *pattern* — just triggering it earlier.
+    private fun ensureSizesLoaded(models: List<HfModelSummary>) = models.forEach { loadSize(it.id) }
 
     /** Clears the current inline error banner (issue #2). The full session log in [HfBrowseError]
      * is untouched — dismissing only hides the one-line banner, it doesn't forget the error. */
     fun dismissError() = mutableState.update { it.copy(error = null) }
 
-    /** Download a curated model directly — no search, no webpage — using its known file list. */
-    fun downloadBuiltIn(model: BuiltInModel) = runDownload(model.id, model.downloadItems())
+    /**
+     * Download a curated model directly — no search, no webpage — using its known file list.
+     *
+     * Bug fix: a curated model's [BuiltInModel.downloadItems] carries no per-file size (it's a
+     * static, hand-authored file list — unlike a browsed repo's file tree, nothing here ever called
+     * the Hub for real sizes), so [HfDownloader]'s byte total was always unknown and the in-screen
+     * progress bar rendered indeterminate for the whole download, then jumped straight to done —
+     * unlike a browsed model, whose file-tree fetch ([download]) gives it real per-file sizes up
+     * front. Fetching the SAME repo's file tree here (the exact endpoint browsed downloads already
+     * use) before starting the download closes that gap: [sizedBuiltInItems] merges each file's real
+     * tree size onto its download item, so [runDownload] gets an exact byte total and the bar fills
+     * the same way a browsed model's does.
+     */
+    fun downloadBuiltIn(model: BuiltInModel) {
+        if (mutableState.value.isDownloading(model.id)) return
+        beginTracking(model.id)
+        downloadJobs[model.id] =
+            viewModelScope.launch {
+                runCatching { withContext(Dispatchers.IO) { catalog.listFiles(model.repoId, model.revision) } }
+                    .onSuccess { files -> runDownload(model.id, sizedBuiltInItems(model, files), model.displayName) }
+                    .onFailure { e ->
+                        if (e is CancellationException) throw e
+                        // A failed size lookup is best-effort, not fatal — a known-good curated
+                        // download must not be blocked by it. Falls back to the old size-less items
+                        // (indeterminate bar, exactly this bug's pre-fix behavior) rather than losing
+                        // the download entirely.
+                        runDownload(model.id, model.downloadItems(), model.displayName)
+                    }
+            }
+    }
+
+    // Zips model.downloadItems() (the URLs/relative paths — unchanged) against model.files (the
+    // repo paths that name each file's real tree size) — both lists are the exact same size/order
+    // since downloadItems() maps 1:1 over files, so no repo-path matching by string is needed beyond
+    // this simple positional pairing.
+    private fun sizedBuiltInItems(
+        model: BuiltInModel,
+        files: List<HfTreeEntry>,
+    ): List<HfDownloadItem> {
+        val sizesByRepoPath = files.filter { it.isFile }.associate { it.path to it.size }
+        return model.downloadItems().zip(model.files) { item, file ->
+            item.copy(sizeBytes = sizesByRepoPath[file.repoPath])
+        }
+    }
 
     fun onQueryChange(query: String) = mutableState.update { it.copy(query = query) }
 
+    // A fresh search always starts a new first page (skip = 0, the default) — canLoadMore is set from
+    // whether that page came back full (== PAGE_SIZE): a short/empty page means the Hub has nothing
+    // more for this query, so "Load more" never even appears rather than firing a request known to
+    // return nothing new.
     fun search() {
         val query = mutableState.value.query
-        mutableState.update { it.copy(loading = true, error = null) }
+        mutableState.update { it.copy(loading = true, error = null, loadingMore = false) }
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { catalog.search(query) } }
-                .onSuccess { results -> mutableState.update { it.copy(loading = false, results = results) } }
-                .onFailure { e ->
+            runCatching { withContext(Dispatchers.IO) { catalog.search(query, limit = PAGE_SIZE) } }
+                .onSuccess { results ->
+                    mutableState.update {
+                        it.copy(loading = false, results = results, canLoadMore = results.size >= PAGE_SIZE)
+                    }
+                }.onFailure { e ->
                     // logError does its own atomic state update, so it must NOT be called from
                     // inside this update {} block below — MutableStateFlow.update retries its
                     // transform on a compare-and-set conflict, and a nested update() call here would
                     // re-run (and re-log) on every retry.
                     val message = logError(null, e)
-                    mutableState.update { it.copy(loading = false, error = message) }
+                    mutableState.update { it.copy(loading = false, error = message, canLoadMore = false) }
+                }
+        }
+    }
+
+    /**
+     * Fetches the next page of the current query (issue: Browse pagination) and appends it to
+     * [HfBrowseUiState.results] — the Hub's `/api/models` list endpoint pages with `limit`+`skip`
+     * (verified against the live API; see [com.phonetts.core.download.hf.HfEndpoints.searchModelsUrl]'s
+     * kdoc), so the next page's `skip` is simply how many results are already loaded. A no-op while
+     * a page is already loading, a fresh search is loading, or the previous page came back short
+     * (nothing more to fetch) — [HfBrowseUiState.canLoadMore] gates all three.
+     */
+    fun loadMore() {
+        val current = mutableState.value
+        if (current.loadingMore || current.loading || !current.canLoadMore) return
+        val query = current.query
+        val skip = current.results.size
+        mutableState.update { it.copy(loadingMore = true) }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { catalog.search(query, limit = PAGE_SIZE, skip = skip) } }
+                .onSuccess { page ->
+                    mutableState.update { state ->
+                        // distinctBy guards against a result the Hub's own ranking shuffled across
+                        // the page boundary mid-session (a download-count change reordering the
+                        // list) from showing up twice, rather than trusting pages never overlap.
+                        val merged = (state.results + page).distinctBy { it.id }
+                        state.copy(loadingMore = false, results = merged, canLoadMore = page.size >= PAGE_SIZE)
+                    }
+                }.onFailure { e ->
+                    if (e is CancellationException) throw e
+                    val message = logError(null, e)
+                    mutableState.update { it.copy(loadingMore = false, error = message) }
                 }
         }
     }
@@ -134,7 +243,7 @@ class HfBrowseViewModel(
             viewModelScope.launch {
                 runCatching { withContext(Dispatchers.IO) { catalog.listFiles(model.id) } }
                     .onSuccess { files -> onFilesListed(model.id, files) }
-                    .onFailure { e -> failDownload(model.id, e) }
+                    .onFailure { e -> failDownload(model.id, model.id, e) }
             }
     }
 
@@ -179,6 +288,10 @@ class HfBrowseViewModel(
     fun cancelDownload(modelId: String) {
         downloadJobs.remove(modelId)?.cancel()
         endTracking(modelId)
+        // Drop any in-flight progress/failure notification too — a cancelled download shouldn't
+        // leave a stale "downloading"/"failed" row sitting in the shade for something the user
+        // chose to abandon (issue: download progress notification).
+        notifier?.cancel(modelId)
         if (mutableState.value.variantChoice?.modelId == modelId) cancelVariantChoice()
     }
 
@@ -207,9 +320,14 @@ class HfBrowseViewModel(
 
     fun cancelVariantChoice() = mutableState.update { it.copy(variantChoice = null) }
 
+    // [displayName] defaults to [modelId] — right for a browsed HF repo, whose id (e.g.
+    // "hexgrad/Kokoro-82M") is already the label shown in ModelRow; downloadBuiltIn passes the
+    // curated model's friendlier BuiltInModel.displayName instead. Only used for the notification
+    // (issue: download progress notification) — the in-screen row already has its own label.
     private fun runDownload(
         modelId: String,
         items: List<HfDownloadItem>,
+        displayName: String = modelId,
     ) {
         val sizeEstimate = HfSizeEstimator.estimateItems(items)
         val exactBytesTotal = sizeEstimate.knownBytes.takeIf { sizeEstimate.isExact }
@@ -227,10 +345,11 @@ class HfBrowseViewModel(
                             updateProgress(modelId) {
                                 it.copy(bytesDone = bytesDone, bytesTotal = bytesTotal ?: it.bytesTotal)
                             }
+                            notifier?.updateProgress(modelId, displayName, bytesDone, bytesTotal)
                         },
                     )
-                }.onSuccess { completeDownload(modelId) }
-                    .onFailure { e -> failDownload(modelId, e) }
+                }.onSuccess { completeDownload(modelId, displayName) }
+                    .onFailure { e -> failDownload(modelId, displayName, e) }
             }
     }
 
@@ -257,10 +376,15 @@ class HfBrowseViewModel(
 
     // ModelCatalog already has [descriptor] cataloged by the time this runs (ModelImporter.import
     // added it before returning), so isInstalled()'s live modelCatalog.isKnown() check already
-    // reflects it — nothing to update here beyond ending the progress tracking.
-    private fun completeDownload(modelId: String) {
+    // reflects it — nothing to update here beyond ending the progress tracking (and the notification
+    // — issue: download progress notification).
+    private fun completeDownload(
+        modelId: String,
+        displayName: String,
+    ) {
         downloadJobs.remove(modelId)
         mutableState.update { it.copy(downloads = it.downloads - modelId) }
+        notifier?.complete(modelId, displayName)
     }
 
     // Bug #6: a resolve failure during a Browse download is NOT a network/IO failure — the bytes
@@ -268,9 +392,11 @@ class HfBrowseViewModel(
     // ModelCatalog.markUnresolved) before rethrowing this. Treat it as "installed, no engine yet":
     // no error banner/errorLog entry (that's for real failures), just a diagnostics-log row so the
     // user can see which engine is worth adding next. isInstalled() already reflects it live via
-    // ModelCatalog.isKnown().
+    // ModelCatalog.isKnown(). The notification reads "downloaded" too — from the user's perspective
+    // the bytes landed fine, which is what the notification is telling them about.
     private fun completeUnresolvedDownload(
         modelId: String,
+        displayName: String,
         e: UserPickRequiredException,
     ) {
         downloadJobs.remove(modelId)
@@ -283,20 +409,22 @@ class HfBrowseViewModel(
             ),
         )
         mutableState.update { it.copy(downloads = it.downloads - modelId) }
+        notifier?.complete(modelId, displayName)
     }
 
     // Cancellation is a user action, not a failure — let it propagate; cancelDownload already reset
-    // the UI. Only real errors surface an error line AND join the retained/copyable log (issue #3)
-    // AND the persistent diagnostics log (bug: user-tracked download log). A resolve failure (bug
-    // #6, "downloaded, no engine yet") is a distinct, non-error outcome — see
-    // [completeUnresolvedDownload].
+    // the UI (and dropped the notification, see cancelDownload). Only real errors surface an error
+    // line AND join the retained/copyable log (issue #3) AND the persistent diagnostics log (bug:
+    // user-tracked download log) AND the failure notification. A resolve failure (bug #6,
+    // "downloaded, no engine yet") is a distinct, non-error outcome — see [completeUnresolvedDownload].
     private fun failDownload(
         modelId: String,
+        displayName: String,
         e: Throwable,
     ) {
         if (e is CancellationException) throw e
         if (e is UserPickRequiredException) {
-            completeUnresolvedDownload(modelId, e)
+            completeUnresolvedDownload(modelId, displayName, e)
             return
         }
         downloadJobs.remove(modelId)
@@ -305,6 +433,7 @@ class HfBrowseViewModel(
             DiagnosticsEntry(atMs = clock(), modelId = modelId, kind = DiagnosticsKind.FAILURE, detail = message),
         )
         mutableState.update { it.copy(downloads = it.downloads - modelId, error = message) }
+        notifier?.failed(modelId, displayName, message)
     }
 
     /** Appends [e] to the retained error log (issue #3), bounded to [MAX_HF_ERROR_LOG] entries, and
@@ -350,5 +479,12 @@ class HfBrowseViewModel(
                 }
             mutableState.update { it.copy(diagnostics = entries) }
         }
+    }
+
+    companion object {
+        // One page's worth of Hub results (issue: Browse pagination) — deliberately the same value
+        // HfCatalog.DEFAULT_LIMIT already used for the single page fetched before pagination existed,
+        // so a first search's behavior/URL is unchanged; only loadMore()'s later pages are new.
+        private const val PAGE_SIZE = HfCatalog.DEFAULT_LIMIT
     }
 }

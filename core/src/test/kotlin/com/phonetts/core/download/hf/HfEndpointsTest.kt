@@ -20,6 +20,19 @@ class HfEndpointsTest {
     }
 
     @Test
+    fun defaultSkipIsOmittedFromTheFirstPagesUrl() {
+        val url = HfEndpoints.searchModelsUrl("kokoro", limit = 20)
+        assertTrue(!url.contains("skip="), "first page shouldn't carry a skip param: $url")
+    }
+
+    @Test
+    fun nonZeroSkipPagesPastEarlierResults() {
+        val url = HfEndpoints.searchModelsUrl("kokoro", limit = 20, skip = 20)
+        assertTrue(url.contains("skip=20"), "expected a skip param for page 2: $url")
+        assertTrue(url.contains("limit=20"))
+    }
+
+    @Test
     fun treeUrlIsRecursive() {
         assertEquals(
             "https://huggingface.co/api/models/hexgrad/Kokoro-82M/tree/main?recursive=true",

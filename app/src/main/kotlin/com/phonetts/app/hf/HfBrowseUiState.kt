@@ -4,6 +4,7 @@ import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
+import com.phonetts.core.download.hf.HfSizeParamFilter
 import com.phonetts.core.download.hf.HfSortOption
 import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.QuantizationVariant
@@ -45,6 +46,17 @@ data class HfBrowseUiState(
     // (see HfResultsView.availableTags), never a hardcoded list.
     val sort: HfSortOption = HfSortOption.MOST_DOWNLOADS,
     val tagFilter: String? = null,
+    // Size/param-count filter (issue: sort+filter by size/params) — see HfSizeParamFilter. Applying
+    // any bound here (or picking a size/param HfSortOption) is what triggers eagerly fetching sizes
+    // for the whole current result set — see HfBrowseViewModel.ensureSizesLoaded.
+    val sizeFilter: HfSizeParamFilter = HfSizeParamFilter(),
+    // Pagination (issue: Browse "Load more") — the Hub's /api/models list is paged with limit+skip
+    // (HfEndpoints.searchModelsUrl); [results] above only ever holds the pages fetched SO far,
+    // appended in order. [canLoadMore] is false once a page came back shorter than the page size
+    // (or before any search has run), so the button/control disappears rather than firing a request
+    // that's known to return nothing new.
+    val loadingMore: Boolean = false,
+    val canLoadMore: Boolean = false,
 ) {
     /** True while [modelId] has an in-flight download (issue #2 — any number of these can be true
      * at once, one per repo). */
