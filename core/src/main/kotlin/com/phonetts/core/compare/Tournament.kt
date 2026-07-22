@@ -75,7 +75,7 @@ class Tournament<T>(entries: List<Contender<T>>) {
     private data class QueuedPairing<T>(val pairing: Pairing<T>, val slotIndex: Int)
 
     /** The next unresolved matchup, or `null` once the bracket is [isComplete]. */
-    fun nextPairing(): Pairing<T>? = roundQueue.firstOrNull()
+    fun nextPairing(): Pairing<T>? = roundQueue.firstOrNull()?.pairing
 
     /** True once a single undefeated contender remains. */
     fun isComplete(): Boolean = championEntry != null

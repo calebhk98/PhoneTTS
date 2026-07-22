@@ -433,12 +433,12 @@ class TournamentController(
             )
         }
 
-        if (!ensureGenerated(pairing.a, text)) return fail("Slot 1")
+        if (!ensureGenerated(pairing.a.payload, text)) return fail("Slot 1")
         update { it.copy(slot1Ready = true, status = "Playing 1…") }
         playSlot(1, pairing.a.id)
 
         update { it.copy(status = "Generating 2…") }
-        if (!ensureGenerated(pairing.b, text)) return fail("Slot 2")
+        if (!ensureGenerated(pairing.b.payload, text)) return fail("Slot 2")
         update { it.copy(slot2Ready = true, status = "Playing 2…") }
         playSlot(2, pairing.b.id)
 
