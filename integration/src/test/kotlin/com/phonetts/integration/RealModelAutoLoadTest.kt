@@ -52,7 +52,7 @@ class RealModelAutoLoadTest {
             // 2. THE APP'S REAL WIRING — real engines seeded via ServiceLoader, real resolver/catalog,
             //    real platform backends. The user-pick fallback throws: detection MUST succeed on its own.
             val runtimes = RuntimeRegistry().apply { register(JvmOnnxRuntime()) }
-            val context = EngineContext(runtimes, EspeakCliPhonemizer(), dir.absolutePath)
+            val context = EngineContext(runtimes, EspeakCliPhonemizer())
             val registry = EngineRegistry().also { EngineLoader.seed(it, context) }
             val catalog = ModelCatalog()
             val resolver =
@@ -180,7 +180,7 @@ class RealModelAutoLoadTest {
     // The app's real wiring, shared by the per-engine cases above. Returns the auto-resolved descriptor.
     private fun importReal(dir: File): com.phonetts.core.model.ModelDescriptor {
         val runtimes = RuntimeRegistry().apply { register(JvmOnnxRuntime()) }
-        val context = EngineContext(runtimes, EspeakCliPhonemizer(), dir.absolutePath)
+        val context = EngineContext(runtimes, EspeakCliPhonemizer())
         val registry = EngineRegistry().also { EngineLoader.seed(it, context) }
         val resolver =
             Resolver(registry.list(), InMemoryOverrideStore()) {

@@ -2,6 +2,7 @@ package com.phonetts.app.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -51,9 +53,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
@@ -65,6 +70,7 @@ import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.engine.Voice
+import com.phonetts.core.text.TextChunker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
@@ -87,6 +93,8 @@ fun TtsScreen(
     onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
     onMixVoices: () -> Unit = {},
+    onLibrary: () -> Unit = {},
+    onCompare: () -> Unit = {},
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
@@ -136,6 +144,8 @@ fun TtsScreen(
                 onBenchmarks = { navigate(onBenchmarks) },
                 onHelp = { navigate(onHelp) },
                 onMixVoices = { navigate(onMixVoices) },
+                onLibrary = { navigate(onLibrary) },
+                onCompare = { navigate(onCompare) },
             )
         },
     ) {
@@ -189,6 +199,12 @@ private fun TtsBody(
         state.update?.let { update ->
             UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
         }
+        state.sideloadFailureExplanation?.let { explanation ->
+            SideloadFailureBanner(
+                explanation = explanation,
+                onDismiss = viewModel::dismissSideloadFailureExplanation,
+            )
+        }
 
         VoiceCard(state, viewModel)
         TextCard(state, viewModel, onImport)
@@ -224,6 +240,8 @@ private fun AppDrawer(
     onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
     onMixVoices: () -> Unit = {},
+    onLibrary: () -> Unit = {},
+    onCompare: () -> Unit = {},
 ) {
     ModalDrawerSheet {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -240,6 +258,8 @@ private fun AppDrawer(
             DrawerLink("Manage models", onManageModels)
             DrawerLink("Sideload folder", onSideload)
             DrawerLink("Mix voices", onMixVoices)
+            DrawerLink("Reading library", onLibrary)
+            DrawerLink("Compare voices (A/B)", onCompare)
             DrawerLink("Benchmarks", onBenchmarks)
             DrawerLink("Help", onHelp)
         }
@@ -315,6 +335,10 @@ private fun TextCard(
             textStyle = baseStyle.copy(fontSize = baseStyle.fontSize * state.readingScale),
             minLines = 3,
         )
+        // Karaoke-style "now playing" sentence highlight (issue #19-3), separate from the editable
+        // field above so editing never fights with highlighting mid-sentence; simply absent when
+        // nothing is playing or the text is empty (KaraokeText itself guards both).
+        KaraokeText(state.text, state.currentSentenceIndex)
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -324,6 +348,12 @@ private fun TextCard(
                 onClick = { viewModel.playFromCursor(fieldValue.selection.start) },
                 enabled = state.selected != null && !state.playing && state.text.isNotBlank(),
             ) { Text("Read from cursor") }
+            // Save into the reading library (issue #19-5) — reachable from here or the library
+            // screen itself, which lists everything saved from either place.
+            OutlinedButton(
+                onClick = viewModel::saveToLibrary,
+                enabled = state.text.isNotBlank(),
+            ) { Text("Save to library") }
             FontSizeControls(state, viewModel)
         }
     }
@@ -344,6 +374,59 @@ private fun FontSizeControls(
         enabled = state.readingScale < ReadingTextPreferences.MAX_SCALE,
     ) { Text("A+") }
 }
+
+/**
+ * Karaoke-style "now playing" view (issue #19-3): the document's sentences ([TextChunker.intoSentences]
+ * — the SAME split the one generation path chunks by, so this always agrees with what's actually
+ * playing), one per line, with the current sentence highlighted and auto-scrolled toward. Renders
+ * nothing when there is nothing applicable to highlight: no active sentence, or no sentences at all
+ * (blank text) — the guard clauses below cover both, so an empty document is simply absent, not broken.
+ */
+@Composable
+private fun KaraokeText(
+    text: String,
+    currentSentenceIndex: Int?,
+) {
+    if (currentSentenceIndex == null) return
+    val sentences = remember(text) { TextChunker.intoSentences(text) }
+    if (sentences.isEmpty()) return
+    val index = currentSentenceIndex.coerceIn(0, sentences.lastIndex)
+    val scrollState = rememberScrollState()
+    // Best-effort scroll-into-view: proportional to how far through the sentence list we are, rather
+    // than an exact pixel position (sentences wrap to different heights) — good enough to keep the
+    // highlighted line on screen during a long document without measuring every line's layout.
+    LaunchedEffect(index) {
+        val target = scrollState.maxValue.toFloat() * index / sentences.size
+        scrollState.animateScrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
+    }
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = KARAOKE_MAX_HEIGHT)
+                .verticalScroll(scrollState),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        sentences.forEachIndexed { i, sentence ->
+            val isCurrent = i == index
+            Text(
+                sentence,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                modifier =
+                    if (isCurrent) {
+                        Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                    } else {
+                        Modifier.fillMaxWidth()
+                    },
+            )
+        }
+    }
+}
+
+private val KARAOKE_MAX_HEIGHT = 160.dp
 
 /**
  * Playback controls. Play is the single primary action (it generates on first tap, then replays
@@ -386,14 +469,18 @@ private fun PlaybackCard(
             ) { Text("Resume from where it stopped") }
         }
 
-        // Transport controls only matter mid-playback, so they only appear then.
+        // Transport controls only matter mid-playback, so they only appear then. Per-sentence skip
+        // (issue #19-3) sits alongside pause/resume/stop — the same restart-from-index mechanism the
+        // lock screen's paragraph skip uses, just one sentence at a time.
         if (state.playing) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = viewModel::skipBackSentence) { Text("⏮ Sentence") }
                 if (!state.paused) {
                     OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
                 } else {
                     OutlinedButton(onClick = viewModel::resumePlayback) { Text("Resume") }
                 }
+                OutlinedButton(onClick = viewModel::skipForwardSentence) { Text("Sentence ⏭") }
                 OutlinedButton(onClick = viewModel::stop) { Text("Stop") }
             }
         }
@@ -654,6 +741,28 @@ private fun UpdateBanner(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { target?.let(uriHandler::openUri) }, enabled = target != null) { Text("Download") }
                 OutlinedButton(onClick = onDismiss) { Text("Not now") }
+            }
+        }
+    }
+}
+
+// Surfaces DetectionFailureExplainer's narration of why a sideloaded folder's model couldn't be
+// auto-detected (issue #19-2), with a Copy action (the LocalClipboardManager idiom BenchmarkScreen
+// uses) so the owner can paste it into a bug report — this is read-only narration, it changes
+// nothing and offers no retry (the user still picks a folder again via the drawer's Sideload link).
+@Composable
+private fun SideloadFailureBanner(
+    explanation: String,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Couldn't identify that model", style = MaterialTheme.typography.titleSmall)
+            Text(explanation, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(explanation)) }) { Text("Copy") }
+                OutlinedButton(onClick = onDismiss) { Text("Dismiss") }
             }
         }
     }

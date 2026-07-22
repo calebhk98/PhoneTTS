@@ -15,8 +15,10 @@ import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
+import com.phonetts.core.prefs.DocumentLibrary
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
+import com.phonetts.core.prefs.LastUsedSelectionStore
 import com.phonetts.core.prefs.LongDocumentPreferences
 import com.phonetts.core.prefs.OnboardingState
 import com.phonetts.core.prefs.ReadingTextPreferences
@@ -33,8 +35,13 @@ import com.phonetts.core.sideload.DirectoryBundleReader
 import com.phonetts.core.sideload.ModelImporter
 import com.phonetts.core.update.UpdateChecker
 
-/** Raised when no engine can identify a bundle and no manual pick is wired yet (see resolver). */
-class UserPickRequiredException(bundleId: String) :
+/**
+ * Raised when no engine can identify a bundle and no manual pick is wired yet (see resolver).
+ * [explanation] is [com.phonetts.core.resolver.DetectionFailureExplainer]'s narration of WHY —
+ * which engines were asked, which (if any) companion files the bundle has — so the UI can surface
+ * it to the user instead of a bare "could not identify" (issue #19-2).
+ */
+class UserPickRequiredException(bundleId: String, val explanation: String) :
     Exception("could not identify model '$bundleId' — a manual engine pick is required")
 
 /**
@@ -61,15 +68,23 @@ class AppGraph(context: Context) {
     // internally and logs a warning if the native lib/data files aren't present on this device
     // or this build (docs/espeak-ng-integration.md), so no try/catch is needed here.
     private val phonemizer = EspeakPhonemizer(appContext)
-    private val engineContext = EngineContext(runtimeRegistry, phonemizer, appContext.filesDir.absolutePath)
+    private val engineContext = EngineContext(runtimeRegistry, phonemizer)
 
     val engineRegistry = EngineRegistry().also { EngineLoader.seed(it, engineContext) }
     val engineManager = EngineManager(engineRegistry)
     val catalog = ModelCatalog()
 
+    // Read-only "why did detection fail" narration (issue #19-2): explain() only calls the same
+    // VoiceEngine.inspect() probe the resolver already used and changes no state, so it is safe to
+    // invoke right here, on the failure path, before surfacing a [UserPickRequiredException].
+    val detectionFailureExplainer = DetectionFailureExplainer()
+
     private val overrideStore = PrefsOverrideStore(appContext)
     private val resolver =
-        Resolver(engineRegistry.list(), overrideStore) { bundle -> throw UserPickRequiredException(bundle.id) }
+        Resolver(engineRegistry.list(), overrideStore) { bundle ->
+            val report = detectionFailureExplainer.explain(bundle, engineRegistry.list())
+            throw UserPickRequiredException(bundle.id, report.summary)
+        }
 
     val importer = ModelImporter(DirectoryBundleReader(), resolver, catalog)
     val fileTextImporter = FileTextImporter(appContext)
@@ -94,12 +109,19 @@ class AppGraph(context: Context) {
         )
 
     // Preferences-backed features: favorite voices + per-language default, per-document resume,
-    // and the read-only "why did detection fail" explainer. All model facts still come from
-    // descriptor.voices / the registry — these only persist user choices.
+    // and the GLOBAL last-used model/voice/speed (issue #19-1 — one shared "where I left off",
+    // deliberately not per-document; see LastUsedSelection's kdoc). All model facts still come
+    // from descriptor.voices / the registry — these only persist the user's choices.
     private val preferenceStore = PrefsPreferenceStore(appContext)
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
+    val lastUsedSelection = LastUsedSelectionStore(preferenceStore)
+
+    // Saved multi-document library (issue #19-5): titles/text only, keyed by the same content-derived
+    // id DocumentMemory uses for resume positions (see TtsViewModel.documentIdFor), so opening a saved
+    // document lines up with its resume point automatically.
+    val documentLibrary = DocumentLibrary(preferenceStore)
 
     // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
     // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
@@ -108,7 +130,6 @@ class AppGraph(context: Context) {
     // Long-document (spill-to-disk) mode (issue #34): an opt-in toggle only; the actual scratch file
     // is minted by [newSpillFile] so :core stays Android-free (it takes a plain java.io.File).
     val longDocumentPreferences = LongDocumentPreferences(preferenceStore)
-    val detectionFailureExplainer = DetectionFailureExplainer()
 
     // UI-preference seams over the same store: the chosen color theme (reading/OLED schemes) and
     // the one-shot "has the first-run walkthrough been seen?" flag. Both hold only the user's

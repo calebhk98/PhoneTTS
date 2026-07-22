@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
 import com.phonetts.app.BuildConfig
+import com.phonetts.app.UserPickRequiredException
 import com.phonetts.app.audio.AudioTrackSink
 import com.phonetts.core.audio.AudioSink
 import com.phonetts.core.audio.TransformingSink
@@ -29,8 +30,11 @@ import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.WordCounter
 import com.phonetts.core.metrics.trackGeneration
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.prefs.DocumentPosition
+import com.phonetts.core.prefs.LastUsedSelection
 import com.phonetts.core.prefs.ReadingTextPreferences
+import com.phonetts.core.text.DocumentId
 import com.phonetts.core.text.TextChunker
 import com.phonetts.core.update.UpdateStatus
 import kotlinx.coroutines.Dispatchers
@@ -120,6 +124,14 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // Font scale for the reading/editing text field (issue #29, the A− / A+ control). A display
         // preference only — persisted via ReadingTextPreferences; scales no model fact.
         val readingScale: Float = ReadingTextPreferences.DEFAULT_SCALE,
+        // The absolute sentence index (TextChunker.intoSentences' indexing) currently being heard,
+        // for karaoke-style highlighting and per-sentence skip (issue #19-3). Non-null only while a
+        // play session is active; driven off BufferedPlayback.playedChunks (see beginProgressTracking).
+        val currentSentenceIndex: Int? = null,
+        // The DetectionFailureExplainer narration of why a sideloaded folder's model couldn't be
+        // auto-detected (issue #19-2), or null when there's nothing to show. Cleared on the next
+        // sideload attempt (success or failure) or explicit dismissal.
+        val sideloadFailureExplanation: String? = null,
     ) {
         /** The chosen parameter values, as the [SynthesisParams] bag the one generation path consumes. */
         val params: SynthesisParams get() = SynthesisParams(paramValues)
@@ -200,6 +212,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private var currentStartSentenceIndex = 0
     private var progressJob: Job? = null
 
+    // Mirrors playback.playedChunks into UiState.currentSentenceIndex (issue #19-3), separate from
+    // progressJob (played samples → elapsed millis) so either can be cancelled/reasoned about on its
+    // own; both are started together in beginProgressTracking and cancelled together in stop().
+    private var sentenceProgressJob: Job? = null
+
     // The most recently generated buffer, kept so a Play tap that exactly matches what was last
     // generated (same model/voice/text/params) replays instantly instead of re-synthesizing —
     // still the ONE generation path (spec §6.1), just not re-run when nothing changed.
@@ -256,13 +273,30 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun refreshModels() {
         val models = graph.catalog.list()
+        // Only relevant the FIRST time a selection is made (app start): prefer the globally saved
+        // last-used model/voice/speed (issue #19-1) over "just pick the first model in the list".
+        // Once something is already selected, later refreshes (e.g. returning from Browse/Manage)
+        // must never clobber the user's current pick.
+        val restored = if (mutableState.value.selected == null) restoredSelection(models) else null
         mutableState.update { current ->
-            val selected = current.selected ?: models.firstOrNull()
+            val wasAlreadySelected = current.selected != null
+            val selected = current.selected ?: restored?.descriptor ?: models.firstOrNull()
+            val restoringThisModel =
+                !wasAlreadySelected && restored != null && restored.descriptor.modelId == selected?.modelId
             current.copy(
                 models = models,
                 selected = selected,
-                voiceId = current.voiceId ?: selected?.let(::defaultVoiceIdFor),
-                paramValues = selected?.let(::defaultParamValues) ?: current.paramValues,
+                voiceId =
+                    current.voiceId
+                        ?: restored?.voiceId?.takeIf { restoringThisModel }
+                        ?: selected?.let(::defaultVoiceIdFor),
+                paramValues =
+                    when {
+                        wasAlreadySelected -> current.paramValues
+                        selected == null -> current.paramValues
+                        restoringThisModel -> defaultParamValues(selected, preferredSpeed = restored?.speed)
+                        else -> defaultParamValues(selected)
+                    },
                 favoriteVoiceIds = graph.favoriteVoices.favoriteIds(),
             )
         }
@@ -272,6 +306,20 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.value.selected
             ?.takeIf { graph.engineManager.currentDescriptor?.modelId == it.modelId }
             ?.let(::refreshBlendedVoices)
+    }
+
+    private data class RestoredSelection(val descriptor: ModelDescriptor, val voiceId: String, val speed: Float)
+
+    // Look up the globally saved last-used selection (issue #19-1) against the CURRENT catalog,
+    // failing closed at every step: a saved modelId no longer in [models], or a saved voiceId no
+    // longer on that model, or a saved speed outside the model's current range, is silently ignored
+    // rather than crashing or selecting something the model doesn't actually offer.
+    private fun restoredSelection(models: List<ModelDescriptor>): RestoredSelection? {
+        val saved = graph.lastUsedSelection.last() ?: return null
+        val descriptor = models.firstOrNull { it.modelId == saved.modelId } ?: return null
+        val voiceId = descriptor.voices.firstOrNull { it.id == saved.voiceId }?.id ?: descriptor.defaultVoiceId
+        val speed = saved.speed.takeIf { it in descriptor.speedRange } ?: descriptor.defaultSpeed
+        return RestoredSelection(descriptor, voiceId, speed)
     }
 
     // Re-apply any saved voice mixes for [descriptor] to the just-loaded engine and expose the
@@ -302,11 +350,21 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 blendedVoices = emptyList(),
             )
         }
+        saveLastUsedSelection()
     }
 
     // Each declared parameter's default value, keyed by id — the starting point for the controls.
-    private fun defaultParamValues(descriptor: ModelDescriptor): Map<String, Float> =
-        descriptor.parameters.associate { it.id to it.default }
+    // [preferredSpeed] optionally overrides just the speed knob (issue #19-1's restored selection);
+    // it only takes effect if the model actually declares a speed parameter (SSOT: never invents a
+    // paramValues entry for a knob the descriptor didn't declare).
+    private fun defaultParamValues(
+        descriptor: ModelDescriptor,
+        preferredSpeed: Float? = null,
+    ): Map<String, Float> =
+        descriptor.parameters.associate { param ->
+            val value = if (param.id == ModelParameter.SPEED_ID) preferredSpeed ?: param.default else param.default
+            param.id to value
+        }
 
     // Remembering the user's manual pick as the per-language default (favoriteVoices.setDefaultVoice)
     // is what makes defaultVoiceIdFor's prefill useful next time this language comes up.
@@ -318,6 +376,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             current.selected?.voices?.firstOrNull { it.id == voiceId }?.let(graph.favoriteVoices::setDefaultVoice)
             current.copy(voiceId = voiceId)
         }
+        saveLastUsedSelection()
     }
 
     /** Flips [voice]'s favorite state; the voice picker re-sorts/stars off [UiState.favoriteVoiceIds]. */
@@ -340,7 +399,23 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     fun setParam(
         id: String,
         value: Float,
-    ) = mutableState.update { it.copy(paramValues = it.paramValues + (id to value)) }
+    ) {
+        mutableState.update { it.copy(paramValues = it.paramValues + (id to value)) }
+        // Only the speed knob is part of the globally-remembered selection (issue #19-1); other
+        // parameters (e.g. a future emotion selector) aren't in LastUsedSelection's scope.
+        if (id == ModelParameter.SPEED_ID) saveLastUsedSelection()
+    }
+
+    // Persist the user's current model+voice+speed globally (issue #19-1) — restored as the initial
+    // selection on next launch by refreshModels()/restoredSelection() above. Deliberately NOT keyed
+    // to a document: LastUsedSelection is one shared "where I left off", separate from DocumentMemory's
+    // per-document resume position. A no-op before a model/voice is actually selected.
+    private fun saveLastUsedSelection() {
+        val s = mutableState.value
+        val descriptor = s.selected ?: return
+        val voiceId = s.voiceId ?: return
+        graph.lastUsedSelection.record(LastUsedSelection(descriptor.modelId, voiceId, s.params.speed))
+    }
 
     fun setText(text: String) =
         mutableState.update { it.copy(text = text, resumeSentenceIndex = resumeIndexFor(text)) }
@@ -353,8 +428,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     // A stable id for the current text so DocumentMemory can key its resume position to this document
-    // (issues #24/#28). Content-derived: editing the text starts a fresh document, as expected.
-    private fun documentIdFor(text: String): String = text.hashCode().toString()
+    // (issues #24/#28). Content-derived: editing the text starts a fresh document, as expected. The
+    // SAME id (com.phonetts.core.text.DocumentId) is what ReadingLibraryViewModel saves a document
+    // under (issue #19-5), so opening a saved document here lines up with any resume point for free.
+    private fun documentIdFor(text: String): String = DocumentId.of(text)
 
     /** A+ : one step larger reading font (issue #29), persisted immediately. */
     fun increaseTextScale() = mutableState.update { it.copy(readingScale = graph.readingTextPreferences.increased()) }
@@ -402,7 +479,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val descriptor = mutableState.value.selected ?: return
         mutableState.update { it.copy(busy = true, status = "Loading model…") }
         viewModelScope.launch {
-            runCatching { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
+            // switchTo()/engine.load() runs synchronous ONNX/native weight loading (issue #18-4b) —
+            // off Main so the UI stays responsive while a model loads.
+            runCatching {
+                withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
+            }
                 .onSuccess {
                     refreshBlendedVoices(descriptor)
                     mutableState.update {
@@ -504,7 +585,13 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             mutableState.update { it.copy(playing = true, paused = false, status = null) }
             playJob =
                 viewModelScope.launch {
-                    runCatching { playback.play(cached, descriptor.sampleRate, playSink) }
+                    // BufferedPlayback.play drives AudioTrack.write(..., WRITE_BLOCKING) via the sink
+                    // (issue #18-4b) — offload it off Main so scrolling/navigating stays responsive
+                    // during playback. Core's BufferedPlayback/AudioTrackSink threading is untouched;
+                    // only this call site moves.
+                    runCatching {
+                        withContext(Dispatchers.IO) { playback.play(cached, descriptor.sampleRate, playSink) }
+                    }
                         .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
                     mutableState.update { it.copy(playing = false, paused = false) }
                 }
@@ -528,7 +615,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             }
         playJob =
             viewModelScope.launch {
-                runCatching { playback.play(audio, descriptor.sampleRate, playSink) }
+                // Same offload as the cached-replay branch above (issue #18-4b) — the blocking
+                // AudioTrack write must not run on Main.
+                runCatching { withContext(Dispatchers.IO) { playback.play(audio, descriptor.sampleRate, playSink) } }
                     .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
                 mutableState.update { it.copy(playing = false, paused = false) }
             }
@@ -542,13 +631,35 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     fun skipBackParagraph() =
         startPlaybackFrom(TextChunker.previousParagraphStart(mutableState.value.text, currentPlaybackSentenceIndex()))
 
+    /**
+     * Per-sentence "next" (issue #19-3): the same restart-the-one-generation-flow-from-an-index
+     * mechanism [skipForwardParagraph] uses, just one sentence forward instead of a whole paragraph.
+     * Clamped to the last sentence — a forward skip at the end is a harmless no-op, not a run past
+     * the text. A no-op on blank text (nothing to skip).
+     */
+    fun skipForwardSentence() {
+        val text = mutableState.value.text
+        if (text.isBlank()) return
+        val lastIndex = (TextChunker.intoSentences(text).size - 1).coerceAtLeast(0)
+        startPlaybackFrom((currentPlaybackSentenceIndex() + 1).coerceAtMost(lastIndex))
+    }
+
+    /** Per-sentence "previous" (issue #19-3): mirrors [skipForwardSentence], one sentence back. */
+    fun skipBackSentence() {
+        val text = mutableState.value.text
+        if (text.isBlank()) return
+        startPlaybackFrom((currentPlaybackSentenceIndex() - 1).coerceAtLeast(0))
+    }
+
     // The absolute sentence playback is at now: where this flow started + the chunks (== sentences)
-    // already delivered to the sink. The paragraph-skip math reasons in these whole-document indices.
+    // already delivered to the sink. The paragraph/sentence-skip math reasons in these whole-document
+    // indices.
     private fun currentPlaybackSentenceIndex(): Int = currentStartSentenceIndex + playback.playedChunks.value
 
     // Publish progress for THIS play session (issue #26): reset elapsed, compute the synthesis-free
     // listening total for the sliced text, and collect played samples into elapsed so the media
     // session's scrubber advances as audio is heard. The collector rides the fresh `playback` above.
+    // Also seeds/tracks the karaoke sentence index (issue #19-3) off the SAME playback instance.
     private fun beginProgressTracking(
         descriptor: ModelDescriptor,
         effectiveText: String,
@@ -556,12 +667,25 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     ) {
         val seconds = ListeningTimeEstimator.estimateSeconds(WordCounter.count(effectiveText), speed)
         val totalMillis = (seconds * MILLIS_PER_SECOND).toLong()
-        mutableState.update { it.copy(playbackElapsedMillis = 0, playbackTotalMillis = totalMillis) }
+        mutableState.update {
+            it.copy(
+                playbackElapsedMillis = 0,
+                playbackTotalMillis = totalMillis,
+                currentSentenceIndex = currentStartSentenceIndex,
+            )
+        }
         progressJob?.cancel()
         progressJob =
             viewModelScope.launch {
                 playback.playedSamples.collect { samples ->
                     mutableState.update { it.copy(playbackElapsedMillis = samples * MILLIS_PER_SECOND / descriptor.sampleRate) }
+                }
+            }
+        sentenceProgressJob?.cancel()
+        sentenceProgressJob =
+            viewModelScope.launch {
+                playback.playedChunks.collect { chunks ->
+                    mutableState.update { it.copy(currentSentenceIndex = currentStartSentenceIndex + chunks) }
                 }
             }
     }
@@ -601,7 +725,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         var chunksDone = 0
         val result =
             runCatching {
-                graph.engineManager.switchTo(descriptor.engineId, descriptor)
+                // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) — off
+                // Main so generation (Play/Generate/export all route through here) never freezes the UI.
+                withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
                 // Register saved mixes on the loaded engine so a blended voiceId resolves here (#42).
                 refreshBlendedVoices(descriptor)
@@ -683,11 +809,21 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         playJob?.cancel()
         genJob?.cancel() // step 1: cancel synthesis
         progressJob?.cancel() // stop mapping played samples into progress (issue #26)
+        sentenceProgressJob?.cancel() // stop mapping played chunks into the karaoke index (issue #19-3)
         playJob = null
         genJob = null
         progressJob = null
+        sentenceProgressJob = null
         sink.stop() // steps 2b + 3: flush queued PCM and stop the AudioTrack
-        mutableState.update { it.copy(playing = false, paused = false, playbackElapsedMillis = 0, playbackTotalMillis = 0) }
+        mutableState.update {
+            it.copy(
+                playing = false,
+                paused = false,
+                playbackElapsedMillis = 0,
+                playbackTotalMillis = 0,
+                currentSentenceIndex = null,
+            )
+        }
     }
 
     /**
@@ -701,9 +837,13 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(busy = true, status = "Measuring voice…") }
         viewModelScope.launch {
             runCatching {
-                graph.engineManager.switchTo(descriptor.engineId, descriptor)
-                val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
-                RtfEstimator.estimate(engine, voiceId, s.params, VOICE_SAMPLE_PHRASE, descriptor.sampleRate)
+                // switchTo()/engine.load() AND RtfEstimator's synthesis drain both block (weight load
+                // + inference), so keep the whole measurement off the main thread (issue #18-4b).
+                withContext(Dispatchers.IO) {
+                    graph.engineManager.switchTo(descriptor.engineId, descriptor)
+                    val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
+                    RtfEstimator.estimate(engine, voiceId, s.params, VOICE_SAMPLE_PHRASE, descriptor.sampleRate)
+                }
             }
                 .onSuccess { r ->
                     val rtf = "%.2f".format(r.realTimeFactor)
@@ -757,7 +897,8 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         sink: AudioFileSink,
     ): Boolean =
         runCatching {
-            graph.engineManager.switchTo(descriptor.engineId, descriptor)
+            // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b).
+            withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
             val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
             val voiceId = defaultVoiceIdFor(descriptor)
             val params = SynthesisParams(defaultParamValues(descriptor))
@@ -792,7 +933,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(busy = true, status = null) }
         viewModelScope.launch {
             runCatching {
-                graph.engineManager.switchTo(descriptor.engineId, descriptor)
+                // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) — the
+                // encode() call below was already offloaded; this closes the gap before it.
+                withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
                 // onEach counts fully-emitted sentences (one chunk == one sentence) without altering
                 // the flow the encoder consumes — the same resume-point tracking generate() does.
@@ -833,16 +976,33 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             .withEnabled(DeEsser.ID, s.deEss)
 
     fun sideloadFolder(uri: Uri) {
-        mutableState.update { it.copy(busy = true, status = null) }
+        mutableState.update { it.copy(busy = true, status = null, sideloadFailureExplanation = null) }
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { graph.sideloadCoordinator.importFromTree(uri) } }
                 .onSuccess {
-                    mutableState.update { it.copy(busy = false, status = "Added model") }
+                    mutableState.update {
+                        it.copy(busy = false, status = "Added model", sideloadFailureExplanation = null)
+                    }
                     refreshModels()
                 }
-                .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Sideload failed: ${e.message}") } }
+                .onFailure { e ->
+                    // A failed auto-detection carries the DetectionFailureExplainer's narration
+                    // (issue #19-2) — surface it (with a Copy action, TtsScreen) instead of just the
+                    // bare "could not identify" message.
+                    val explanation = (e as? UserPickRequiredException)?.explanation
+                    mutableState.update {
+                        it.copy(
+                            busy = false,
+                            status = "Sideload failed: ${e.message}",
+                            sideloadFailureExplanation = explanation,
+                        )
+                    }
+                }
         }
     }
+
+    /** Dismiss the sideload-failure explanation panel (issue #19-2). */
+    fun dismissSideloadFailureExplanation() = mutableState.update { it.copy(sideloadFailureExplanation = null) }
 
     fun importTextFrom(uri: Uri) {
         mutableState.update { it.copy(busy = true, status = null) }
@@ -851,6 +1011,20 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 .onSuccess { text -> mutableState.update { it.copy(busy = false, text = text, status = "Imported text") } }
                 .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Import failed: ${e.message}") } }
         }
+    }
+
+    /**
+     * Save the current text into the reading library (issue #19-5), reachable right from the main
+     * screen (the library screen itself also offers this for the same text). Uses the SAME
+     * content-derived id [documentIdFor] uses for [graph.documentMemory], so a document saved here
+     * and later reopened from the library immediately lines up with any resume point (issue #28) —
+     * no separate plumbing needed. A no-op on blank text.
+     */
+    fun saveToLibrary() {
+        val text = mutableState.value.text
+        if (text.isBlank()) return
+        graph.documentLibrary.add(id = documentIdFor(text), text = text, savedAtMillis = System.currentTimeMillis())
+        mutableState.update { it.copy(status = "Saved to library") }
     }
 
     override fun onCleared() {

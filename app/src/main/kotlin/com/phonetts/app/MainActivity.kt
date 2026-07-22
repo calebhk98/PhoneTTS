@@ -37,8 +37,12 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.phonetts.app.benchmark.BenchmarkScreen
 import com.phonetts.app.benchmark.BenchmarkViewModel
+import com.phonetts.app.compare.CompareScreen
+import com.phonetts.app.compare.CompareViewModel
 import com.phonetts.app.hf.HfBrowseScreen
 import com.phonetts.app.hf.HfBrowseViewModel
+import com.phonetts.app.library.ReadingLibraryScreen
+import com.phonetts.app.library.ReadingLibraryViewModel
 import com.phonetts.app.manage.ModelManagementScreen
 import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.ui.HelpScreen
@@ -51,7 +55,7 @@ import com.phonetts.app.ui.TtsViewModel
 import com.phonetts.app.ui.theme.PhoneTtsTheme
 import com.phonetts.core.prefs.AppTheme
 
-private enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX }
+private enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -196,6 +200,8 @@ private fun AppNav(
                 onBenchmarks = { screen = Screen.BENCHMARK },
                 onHelp = { screen = Screen.HELP },
                 onMixVoices = { screen = Screen.MIX },
+                onLibrary = { screen = Screen.LIBRARY },
+                onCompare = { screen = Screen.COMPARE },
                 appVersion = BuildConfig.VERSION_NAME,
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
@@ -257,6 +263,34 @@ private fun AppNav(
                 screen = Screen.MAIN
             }) { MixVoicesScreen(mixViewModel) }
         }
+        Screen.LIBRARY -> {
+            val ttsState by ttsViewModel.state.collectAsState()
+            val libraryViewModel: ReadingLibraryViewModel =
+                viewModel(factory = viewModelFactory { initializer { ReadingLibraryViewModel(graph, ttsState.text) } })
+            BackScaffold(title = "Reading library", onBack = { screen = Screen.MAIN }) {
+                ReadingLibraryScreen(
+                    viewModel = libraryViewModel,
+                    onOpen = { document, resume ->
+                        // Loads the saved text into the SAME main-screen TtsViewModel the reader
+                        // already uses; setText() itself looks up any saved DocumentMemory position
+                        // for this content-derived id, so "resume" just reuses resumeFromSaved() —
+                        // no second resume mechanism.
+                        ttsViewModel.setText(document.text)
+                        if (resume) ttsViewModel.resumeFromSaved()
+                        screen = Screen.MAIN
+                    },
+                )
+            }
+        }
+        Screen.COMPARE -> {
+            val ttsState by ttsViewModel.state.collectAsState()
+            val compareViewModel: CompareViewModel =
+                viewModel(factory = viewModelFactory { initializer { CompareViewModel(graph, ttsState.text) } })
+            BackScaffold(title = "Compare voices (A/B)", onBack = {
+                compareViewModel.stop()
+                screen = Screen.MAIN
+            }) { CompareScreen(compareViewModel) }
+        }
         Screen.HELP -> {
             val ttsState by ttsViewModel.state.collectAsState()
             BackScaffold(title = "Help", onBack = { screen = Screen.MAIN }) {
@@ -265,6 +299,7 @@ private fun AppNav(
                     update = ttsState.update,
                     checkStatus = ttsState.updateCheckStatus,
                     onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
+                    repoUrl = "https://github.com/${AppGraph.REPO_OWNER}/${AppGraph.REPO_NAME}",
                     currentTheme = theme,
                     onThemeSelected = onThemeSelected,
                 )

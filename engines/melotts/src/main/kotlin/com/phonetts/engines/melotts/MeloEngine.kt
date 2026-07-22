@@ -17,6 +17,7 @@ import com.phonetts.engines.common.closeAllQuietly
 import com.phonetts.engines.common.joinAssetPath
 import com.phonetts.engines.common.openWithRollback
 import com.phonetts.engines.common.requireAssetPath
+import com.phonetts.engines.common.requireExtra
 import com.phonetts.engines.common.requireRuntime
 import com.phonetts.engines.common.requireVoiceIndex
 import com.phonetts.engines.common.singleFloatsOrError
@@ -99,7 +100,9 @@ internal class MeloEngine(
         return EngineMatch(ENGINE_ID, descriptor)
     }
 
-    override suspend fun load(descriptor: ModelDescriptor) {
+    override fun isRuntimeAvailable(): Boolean = requireRuntime(context, RUNTIME_ID, engineLabel).isAvailable()
+
+    override suspend fun doLoad(descriptor: ModelDescriptor) {
         unload()
         val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
         val modelPath = requireAssetPath(descriptor, ACOUSTIC_ASSET, engineLabel)
@@ -154,9 +157,8 @@ internal class MeloEngine(
     ): Map<String, Tensor> {
         val tokenCount = input.tokenIds.size
         val shape = intArrayOf(1, tokenCount)
-        val tones =
-            input.extras[MeloFrontend.EXTRA_TONES] as? LongArray
-                ?: error("$engineLabel: frontend did not produce '${MeloFrontend.EXTRA_TONES}'")
+        // Type-safe accessor (issue #18 item 2) -- no raw `as?` cast at this callsite.
+        val tones = input.requireExtra(MeloFrontend.TONES_KEY, engineLabel)
         return mapOf(
             INPUT_X to Tensor.longs(input.tokenIds, shape),
             INPUT_X_LENGTHS to Tensor.longs(longArrayOf(tokenCount.toLong())),

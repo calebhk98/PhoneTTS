@@ -21,6 +21,7 @@ import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
+import com.phonetts.engines.common.requireVoiceIndex
 import java.io.File
 
 /**
@@ -128,7 +129,9 @@ internal class KokoroEngine(
         val voiceIds: List<String>,
     )
 
-    override suspend fun load(descriptor: ModelDescriptor) {
+    override fun isRuntimeAvailable(): Boolean = requireRuntime(context, RUNTIME_ID, engineLabel).isAvailable()
+
+    override suspend fun doLoad(descriptor: ModelDescriptor) {
         val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
         val weightsPath = requireAssetPath(descriptor, WEIGHTS_ASSET, engineLabel)
 
@@ -186,7 +189,10 @@ internal class KokoroEngine(
         val speed = params.speed
         val activeSession = session ?: error("$engineLabel.synthesizeSentence called before load()")
         val activeFrontend = frontend ?: error("$engineLabel.synthesizeSentence called before load()")
-        val table = voiceTables[voiceId] ?: error("Unknown Kokoro voice id '$voiceId'")
+        // Shared voice-lookup path (issue #18 item 7): same exception type/message shape as every
+        // other engine, rather than this engine's own IllegalStateException.
+        requireVoiceIndex(loadedVoices, voiceId, engineLabel)
+        val table = voiceTables.getValue(voiceId)
         val language = voiceLanguages[voiceId] ?: KokoroVoiceTable.DEFAULT_LANGUAGE
 
         val modelInput = activeFrontend.toModelInput(sentence, language)

@@ -11,12 +11,14 @@ import com.phonetts.core.engine.BlendedVoiceSpec
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Drives the "Mix voices" screen (issue #42). It is a consumer of the same abstractions as the main
@@ -118,7 +120,9 @@ class MixVoicesViewModel(
             }
         playJob =
             viewModelScope.launch {
-                runCatching { playback.play(audio, model.sampleRate, sink) }
+                // BufferedPlayback.play drives a blocking AudioTrack.write via the sink (issue #18-4b)
+                // — offload it off Main, same as the reader's play paths in TtsViewModel.
+                runCatching { withContext(Dispatchers.IO) { playback.play(audio, model.sampleRate, sink) } }
                     .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
             }
     }
@@ -145,7 +149,8 @@ class MixVoicesViewModel(
     ): Boolean {
         val result =
             runCatching {
-                graph.engineManager.switchTo(model.engineId, model)
+                // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b).
+                withContext(Dispatchers.IO) { graph.engineManager.switchTo(model.engineId, model) }
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
                 val blend = engine as? BlendableVoices ?: error("this model can't blend voices")
                 val voice = blend.addBlendedVoice(spec) ?: error("pick two of this model's voices")

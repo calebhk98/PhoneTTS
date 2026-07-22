@@ -126,7 +126,7 @@ class RealCosyVoiceAutoLoadTest {
                 register(JvmOnnxRuntime())
                 register(JvmNativeCosyVoiceRuntime())
             }
-        val context = EngineContext(runtimes, EspeakCliPhonemizer(), dir.absolutePath)
+        val context = EngineContext(runtimes, EspeakCliPhonemizer())
         return EngineRegistry().also { EngineLoader.seed(it, context) }
     }
 

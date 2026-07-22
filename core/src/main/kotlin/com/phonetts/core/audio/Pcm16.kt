@@ -11,8 +11,14 @@ private const val BYTES_PER_SAMPLE = 2
 
 /** Float PCM ([-1f, 1f]) to signed little-endian 16-bit PCM. The one conversion used everywhere. */
 object Pcm16 {
-    /** Quantize a single sample, clamping out-of-range values instead of wrapping. */
+    /**
+     * Quantize a single sample, clamping out-of-range values instead of wrapping. A NaN sample
+     * (e.g. a runtime producing a stray non-finite value) is treated as silence rather than
+     * propagated — `Float.roundToInt()` throws `IllegalArgumentException` on NaN, so this must be
+     * checked before scaling/rounding, not left to `coerceIn` (which only guards the finite range).
+     */
     fun toShort(sample: Float): Short {
+        if (sample.isNaN()) return 0
         val scaled = (sample * Short.MAX_VALUE).roundToInt()
         return scaled.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
     }

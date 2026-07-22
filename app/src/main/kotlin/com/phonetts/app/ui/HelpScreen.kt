@@ -36,6 +36,7 @@ fun HelpScreen(
     update: UpdateStatus?,
     checkStatus: String?,
     onCheckForUpdates: () -> Unit,
+    repoUrl: String,
     currentTheme: AppTheme,
     onThemeSelected: (AppTheme) -> Unit,
 ) {
@@ -43,7 +44,7 @@ fun HelpScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates)
+        UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates, repoUrl)
 
         ThemeSection(currentTheme, onThemeSelected)
 
@@ -68,7 +69,8 @@ fun HelpScreen(
             Engine(
                 "Kokoro-82M",
                 "onnx-community/Kokoro-82M-v1.0-ONNX",
-                "onnx/model.onnx (fp32) + config.json + tokenizer.json + voices/<name>.bin. Use fp32 — q8f16 crashes.",
+                "onnx/model.onnx (fp32) + config.json + tokenizer.json + voices/<name>.bin. " +
+                    "Use fp32 — q8f16 crashes.",
             )
             Engine(
                 "MeloTTS",
@@ -80,8 +82,14 @@ fun HelpScreen(
         Section("Troubleshooting") {
             Q("No sound, or it's garbled?", "Piper/Kitten/Kokoro need the espeak add-on in the build; MeloTTS doesn't.")
             Q("Which Kokoro file?", "The fp32 onnx/model.onnx — the q8f16 one crashes the runtime.")
-            Q("MeloTTS won't work?", "Use the MiaoMint sherpa export (with tokens.txt/lexicon.txt), not myshell-ai/MeloTTS.")
-            Q("It asked me to pick an engine?", "It couldn't identify the model — pick the matching engine; it's remembered.")
+            Q(
+                "MeloTTS won't work?",
+                "Use the MiaoMint sherpa export (with tokens.txt/lexicon.txt), not myshell-ai/MeloTTS.",
+            )
+            Q(
+                "It asked me to pick an engine?",
+                "It couldn't identify the model — pick the matching engine; it's remembered.",
+            )
             Q("Freeing space?", "Manage models shows each model's size and lets you delete it.")
         }
     }
@@ -97,6 +105,7 @@ private fun UpdatesSection(
     update: UpdateStatus?,
     checkStatus: String?,
     onCheckForUpdates: () -> Unit,
+    repoUrl: String,
 ) {
     val uriHandler = LocalUriHandler.current
     Section("About & updates") {
@@ -110,6 +119,7 @@ private fun UpdatesSection(
                 }
             }
         }
+        OutlinedButton(onClick = { uriHandler.openUri(repoUrl) }) { Text("View on GitHub") }
         checkStatus?.let { Body(it) }
     }
 }

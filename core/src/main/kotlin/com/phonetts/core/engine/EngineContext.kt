@@ -12,6 +12,4 @@ import com.phonetts.core.text.Phonemizer
 class EngineContext(
     val runtimes: RuntimeRegistry,
     val phonemizer: Phonemizer,
-    /** App-private directory where this engine's downloaded weights live, if it needs a base path. */
-    val storageDir: String? = null,
 )
