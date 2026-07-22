@@ -13,7 +13,7 @@ import com.phonetts.core.model.ModelDescriptor
  * `:app`'s own classpath resources with no shared code naming "SystemTts" anywhere else
  * (CLAUDE.md rule 5).
  *
- * The one thing that makes this engine different from a `engines/*` module is that it wraps an
+ * The one thing that makes this engine different from an engine in the `engines/` modules is it wraps an
  * Android OS service rather than loading weights of its own, so it needs an application
  * `Context`. That comes through [EngineContext.platform] — cast to this app's concrete
  * [AppPlatformServices] — rather than :core growing an Android dependency. [builtInDescriptors]
