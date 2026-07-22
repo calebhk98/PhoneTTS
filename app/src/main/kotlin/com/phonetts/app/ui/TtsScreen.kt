@@ -834,12 +834,18 @@ private fun ChoiceControl(
 
 private val SPEED_PRESETS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
-// "~6 min at 1.25×" — the estimate itself (seconds) comes from ListeningTimeEstimator (:core, SSOT
-// for the reading rate); this only rounds up to whole minutes and formats the speed for display.
+// "~6 min at 1.25×" (or "~4 sec at 1.0×" under a minute) — the estimate itself (seconds) comes from
+// ListeningTimeEstimator (:core, SSOT for the reading rate); this only rounds for display and formats
+// the speed. Below a minute, rounding UP to "~1 min" overstated a short phrase's listening time by up
+// to ~20x (issue #17) — showing seconds there instead keeps the estimate honest at that scale.
 private fun formatListeningEstimate(
     seconds: Double,
     speed: Float,
 ): String {
+    if (seconds < SECONDS_PER_MINUTE) {
+        val wholeSeconds = ceil(seconds).toInt().coerceAtLeast(1)
+        return "~$wholeSeconds sec at ${formatSpeed(speed)}"
+    }
     val minutes = ceil(seconds / SECONDS_PER_MINUTE).toInt().coerceAtLeast(1)
     return "~$minutes min at ${formatSpeed(speed)}"
 }
