@@ -91,16 +91,38 @@ private fun ResultsTable(rows: List<BenchmarkViewModel.Row>) {
     // The table can be wider than the screen (long model names); let it scroll sideways on its own
     // rather than forcing the page to.
     Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-        TableRow("Model", "RTF", "Audio s", "Wall s", "Est. RAM", header = true)
+        TableRow(
+            "Model",
+            "RTF",
+            "Audio s",
+            "Gen s",
+            "TTFA s",
+            "Load s",
+            "RAM used",
+            "Est. RAM",
+            header = true,
+        )
         HorizontalDivider()
-        rows.forEach { row ->
-            if (row.ok) {
-                TableRow(row.displayName, fmt(row.realTimeFactor), fmt(row.audioSeconds), fmt(row.wallSeconds), ram(row.peakRamBytes))
-            } else {
-                TableRow(row.displayName, "failed", "—", "—", ram(row.peakRamBytes))
-            }
-        }
+        rows.forEach { row -> TableRow(row) }
     }
+}
+
+@Composable
+private fun TableRow(row: BenchmarkViewModel.Row) {
+    if (!row.ok) {
+        TableRow(row.displayName, "failed", "—", "—", "—", "—", ram(row.metrics?.processMemoryBytes), ram(row.peakRamBytes))
+        return
+    }
+    TableRow(
+        row.displayName,
+        fmt(row.realTimeFactor),
+        fmt(row.audioSeconds),
+        fmt(row.wallSeconds),
+        optionalFmt(row.metrics?.timeToFirstAudioSeconds),
+        optionalFmt(row.metrics?.modelLoadSeconds),
+        ram(row.metrics?.processMemoryBytes),
+        ram(row.peakRamBytes),
+    )
 }
 
 @Composable
@@ -108,8 +130,11 @@ private fun TableRow(
     model: String,
     rtf: String,
     audio: String,
-    wall: String,
-    ram: String,
+    gen: String,
+    ttfa: String,
+    load: String,
+    ramUsed: String,
+    estRam: String,
     header: Boolean = false,
 ) {
     val weight = if (header) FontWeight.Bold else FontWeight.Normal
@@ -120,8 +145,11 @@ private fun TableRow(
         Cell(model, MODEL_COL_WIDTH, weight)
         Cell(rtf, NUM_COL_WIDTH, weight)
         Cell(audio, NUM_COL_WIDTH, weight)
-        Cell(wall, NUM_COL_WIDTH, weight)
-        Cell(ram, NUM_COL_WIDTH, weight)
+        Cell(gen, NUM_COL_WIDTH, weight)
+        Cell(ttfa, NUM_COL_WIDTH, weight)
+        Cell(load, NUM_COL_WIDTH, weight)
+        Cell(ramUsed, NUM_COL_WIDTH, weight)
+        Cell(estRam, NUM_COL_WIDTH, weight)
     }
 }
 
@@ -135,6 +163,11 @@ private fun Cell(
 }
 
 private fun fmt(value: Double): String = "%.2f".format(value)
+
+// Table columns are narrow, so an unmeasured figure (issue #14: TTFA/load time not available on
+// this run) reads as "—" here rather than the fuller "unknown" the Markdown export uses — same
+// honesty (never a guessed number), just terser for the fixed-width cell.
+private fun optionalFmt(value: Double?): String = value?.let { fmt(it) } ?: "—"
 
 private fun ram(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "?"
 

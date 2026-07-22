@@ -41,18 +41,23 @@ class RtfEstimatorTest {
 
             assertEquals(4, result.calibrationWordCount)
             assertEquals(1.0, result.audioSecondsProduced)
-            // now() is read once before collection starts and once after it fully drains:
-            // call 0 -> 0ns, call 1 -> 750ms, so elapsed = 0.75s regardless of chunk count.
-            assertEquals(0.75, result.wallClockElapsedSeconds)
+            // now() is read once before collection starts, once at the first chunk (to measure TTFA),
+            // and once after collection fully drains: call 0 -> 0ns, call 1 (1st chunk) -> 750ms,
+            // call 2 (drain complete) -> 1500ms, so elapsed = 1.5s regardless of remaining chunk count.
+            assertEquals(1.5, result.wallClockElapsedSeconds)
             assertEquals(2, result.chunksProduced)
-            assertEquals(0.75, result.realTimeFactor)
-            assertEquals(187.5, result.secondsPer1000Words)
+            assertEquals(1.5, result.realTimeFactor)
+            assertEquals(375.0, result.secondsPer1000Words)
+            assertEquals(0.75, result.timeToFirstAudioSeconds)
         }
 
     @Test
     fun engineThatProducesMoreAudioForTheSameElapsedClockHasALowerMeasuredRtfThanOneThatProducesLess() =
         runTest {
-            val fastEngine = FakeEngine(id = "fast", audio = listOf(FloatArray(2_000)))
+            // Both engines emit a single chunk, so both pay the same extra now() call at that chunk
+            // (to measure TTFA) plus the start/drain calls -> identical 2.0s wall-clock elapsed for
+            // both. "fast" must still produce enough audio to land under 1.0x at that elapsed time.
+            val fastEngine = FakeEngine(id = "fast", audio = listOf(FloatArray(4_000)))
             val slowEngine = FakeEngine(id = "slow", audio = listOf(FloatArray(500)))
 
             val fastResult =
@@ -137,6 +142,46 @@ class RtfEstimatorTest {
         }
 
     @Test
+    fun measuresTimeToFirstAudioAsTheElapsedTimeAtTheFirstChunk() =
+        runTest {
+            // Three chunks; now() advances by 1s per call. Sequence: startNanos=0 (call 0),
+            // first chunk lands at call 1 -> 1s, second at call 2 -> 2s, final `now()` at call 3 -> 3s.
+            val engine = FakeEngine(id = "e1", audio = listOf(FloatArray(10), FloatArray(10), FloatArray(10)))
+
+            val result =
+                RtfEstimator.estimate(
+                    engine = engine,
+                    voiceId = "v0",
+                    params = SynthesisParams.ofSpeed(1.0f),
+                    calibrationText = "hello world",
+                    sampleRate = TEST_SAMPLE_RATE,
+                    now = clockAdvancingBy(stepNanos = 1_000_000_000L),
+                )
+
+            assertEquals(1.0, result.timeToFirstAudioSeconds)
+            // TTFA must never exceed the total measured wall-clock time.
+            assertTrue(result.timeToFirstAudioSeconds!! <= result.wallClockElapsedSeconds)
+        }
+
+    @Test
+    fun timeToFirstAudioIsNullWhenNoChunkEverArrives() =
+        runTest {
+            val engine = FakeEngine(id = "e1", audio = emptyList())
+
+            val result =
+                RtfEstimator.estimate(
+                    engine = engine,
+                    voiceId = "v0",
+                    params = SynthesisParams.ofSpeed(1.0f),
+                    calibrationText = "hello world",
+                    sampleRate = TEST_SAMPLE_RATE,
+                    now = clockAdvancingBy(stepNanos = 1_000_000_000L),
+                )
+
+            assertNull(result.timeToFirstAudioSeconds)
+        }
+
+    @Test
     fun rejectsANonPositiveSampleRate() =
         runTest {
             val engine = FakeEngine(id = "e1")
@@ -152,4 +197,17 @@ class RtfEstimatorTest {
                 )
             }
         }
+
+    @Test
+    fun rejectsANegativeTimeToFirstAudio() {
+        assertFailsWith<IllegalArgumentException> {
+            RtfResult(
+                calibrationWordCount = 1,
+                audioSecondsProduced = 1.0,
+                wallClockElapsedSeconds = 1.0,
+                chunksProduced = 1,
+                timeToFirstAudioSeconds = -1.0,
+            )
+        }
+    }
 }
