@@ -42,40 +42,73 @@ class HfDownloader(
     private val timeoutMs: Int = DEFAULT_TIMEOUT_MS,
     private val maxFileBytes: Long = DEFAULT_MAX_FILE_BYTES,
 ) {
+    /**
+     * @param onBytesProgress cumulative bytes written across ALL of [items] so far, plus the
+     * plan's total size in bytes — or `null` for the total when any item's size wasn't advertised
+     * by the repo tree (spec: never present a fabricated total). Reported at most every
+     * [BYTES_PROGRESS_STEP] bytes so a large weight file doesn't flood the caller's state updates.
+     */
     suspend fun downloadAndImport(
         modelId: String,
         items: List<HfDownloadItem>,
         onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+        onBytesProgress: (bytesDone: Long, bytesTotal: Long?) -> Unit = { _, _ -> },
     ): ModelDescriptor =
         withContext(Dispatchers.IO) {
             val destination = ModelStorage.modelDir(filesDir, modelId)
             destination.mkdirs()
+            val bytesTotal = totalBytesOrNull(items)
+            var priorBytes = 0L
             items.forEachIndexed { index, item ->
                 // Defense-in-depth against path traversal (HfDownloadPlan already validates).
                 SafePath.require(item.relativePath)
-                fetch(item, File(destination, item.relativePath))
+                val target = File(destination, item.relativePath)
+                val base = priorBytes
+                fetch(item, target) { withinFile -> onBytesProgress(base + withinFile, bytesTotal) }
+                priorBytes += finalSizeOf(item, target)
                 onProgress(index + 1, items.size)
             }
             importer.import(destination.absolutePath)
         }
+
+    // Null (rather than a partial sum) the moment any item's size is unknown — a partial total
+    // would silently under-report how much there is left to fetch.
+    private fun totalBytesOrNull(items: List<HfDownloadItem>): Long? {
+        val sizes = items.map { it.sizeBytes }
+        if (sizes.any { it == null }) return null
+        return sizes.sumOf { it ?: 0L }
+    }
+
+    // Once a file is done, its contribution to the running total is its advertised size if known,
+    // else whatever actually landed on disk (still exact — just not knowable in advance).
+    private fun finalSizeOf(
+        item: HfDownloadItem,
+        target: File,
+    ): Long = item.sizeBytes ?: if (target.isFile) target.length() else 0L
 
     // Resume-aware fetch of one file: skip if already complete, resume from the on-disk offset if
     // partial, else download fresh. The resume/skip/restart decision is the tested core policy.
     private suspend fun fetch(
         item: HfDownloadItem,
         target: File,
+        reportWithinFile: (Long) -> Unit,
     ) {
         val onDisk = if (target.isFile) target.length() else 0L
         val decision = HfResume.decide(onDisk, item.sizeBytes)
-        if (decision.action == ResumeAction.SKIP) return
+        if (decision.action == ResumeAction.SKIP) {
+            reportWithinFile(onDisk)
+            return
+        }
         val resumeFrom = if (decision.action == ResumeAction.RESUME) decision.offsetBytes else 0L
-        downloadFile(item.url, target, resumeFrom)
+        reportWithinFile(resumeFrom)
+        downloadFile(item.url, target, resumeFrom, reportWithinFile)
     }
 
     private suspend fun downloadFile(
         url: String,
         target: File,
         resumeFrom: Long,
+        reportWithinFile: (Long) -> Unit,
     ) {
         target.parentFile?.mkdirs()
         val connection = openConnection(url, resumeFrom)
@@ -87,7 +120,7 @@ class HfDownloader(
             val startOffset = if (serverResumed) resumeFrom else 0L
             connection.inputStream.use { input ->
                 java.io.FileOutputStream(target, serverResumed).use { output ->
-                    copyCapped(input, output, startOffset)
+                    copyCapped(input, output, startOffset, reportWithinFile)
                 }
             }
         } finally {
@@ -110,26 +143,37 @@ class HfDownloader(
     // Stream to disk with a hard byte cap so a malicious/misconfigured repo can't fill storage, and
     // a cooperative cancellation check each buffer so cancelling the coroutine stops the download
     // promptly (the partial file is intentionally left on disk to enable a later resume).
+    // [reportWithinFile] is throttled to every BYTES_PROGRESS_STEP bytes (plus a final flush) so a
+    // large weight file doesn't flood the caller with a callback every 8 KB buffer.
     private suspend fun copyCapped(
         input: java.io.InputStream,
         output: java.io.OutputStream,
         startOffset: Long,
+        reportWithinFile: (Long) -> Unit,
     ) {
         val buffer = ByteArray(BUFFER_SIZE)
         var total = startOffset
+        var sinceReport = 0L
         var read = input.read(buffer)
         while (read >= 0) {
             coroutineContext.ensureActive()
             total += read
+            sinceReport += read
             if (total > maxFileBytes) throw IOException("download exceeds $maxFileBytes bytes cap")
             output.write(buffer, 0, read)
+            if (sinceReport >= BYTES_PROGRESS_STEP) {
+                reportWithinFile(total)
+                sinceReport = 0L
+            }
             read = input.read(buffer)
         }
+        reportWithinFile(total) // final flush: the caller must see the fully-written size, not a stale throttled one
     }
 
     companion object {
         private const val DEFAULT_TIMEOUT_MS = 30_000
         private const val DEFAULT_MAX_FILE_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB per file
         private const val BUFFER_SIZE = 8192
+        private const val BYTES_PROGRESS_STEP = 256L * 1024 // throttle progress callbacks to every 256 KB
     }
 }
