@@ -6,10 +6,14 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import java.io.ByteArrayOutputStream
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+// Matches WavWriterTest's tolerance: the WAV leg round-trips through 16-bit PCM quantization.
+private const val FINAL_CHUNK_QUANTIZATION_TOLERANCE = 1.0f / Short.MAX_VALUE + 1e-4f
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class StreamingConsumerTest {
@@ -58,6 +62,47 @@ class StreamingConsumerTest {
 
             assertEquals(totalInputSamples, sink.recorded.size)
             assertEquals(totalInputSamples, parseWav(out.toByteArray()).samples.size)
+        }
+
+    /**
+     * Directly targets "last word cut off" / "exported WAV errors at EOF": both symptoms trace back
+     * to a consumer that stops one flow element short of the producer. This asserts the FINAL emitted
+     * chunk specifically — not just the aggregate sample count — reaches both consumers byte-for-byte,
+     * using an uneven trailing chunk (smaller than the others, like a short last sentence) so a
+     * boundary bug that only drops a short/partial final element would be caught, not masked by
+     * uniform chunk sizes.
+     */
+    @Test
+    fun theFinalFlowElementReachesBothConsumersUntruncated() =
+        runTest {
+            val chunks =
+                listOf(
+                    floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f),
+                    floatArrayOf(0.5f, 0.6f, 0.7f, 0.8f),
+                    // Short trailing chunk — the one most likely to be silently dropped.
+                    floatArrayOf(0.9f),
+                )
+            val lastChunkValues = chunks.last().toList()
+            val sink = RecordingSink()
+            val out = ByteArrayOutputStream()
+            val totalSamples = chunks.sumOf { it.size }
+
+            StreamingConsumer().play(flowOf(*chunks.toTypedArray()), sampleRate = 24_000, sink = sink)
+            WavWriter().write(flowOf(*chunks.toTypedArray()), sampleRate = 24_000, out = out)
+
+            val streamedValues = sink.recorded.toList()
+            val exportedValues = parseWav(out.toByteArray()).samples
+            assertEquals(totalSamples, streamedValues.size, "streamed sample count is short of what was emitted")
+            assertEquals(totalSamples, exportedValues.size, "exported sample count is short of what was emitted")
+            // The streaming sink is never quantized, so this leg must match exactly.
+            assertEquals(lastChunkValues, streamedValues.takeLast(lastChunkValues.size))
+            // The WAV leg round-trips through 16-bit PCM, so compare within quantization tolerance.
+            lastChunkValues.zip(exportedValues.takeLast(lastChunkValues.size)).forEach { (original, decoded) ->
+                assertTrue(
+                    abs(original - decoded) <= FINAL_CHUNK_QUANTIZATION_TOLERANCE,
+                    "final chunk sample mismatch beyond quantization: original=$original decoded=$decoded",
+                )
+            }
         }
 
     @Test

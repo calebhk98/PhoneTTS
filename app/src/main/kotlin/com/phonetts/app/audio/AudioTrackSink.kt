@@ -22,6 +22,14 @@ import kotlin.math.max
 class AudioTrackSink : AudioSink {
     private var track: AudioTrack? = null
     private var useFloatEncoding = true
+    private var sampleRateHz = 0
+
+    // Total frames (== samples, mono) actually handed to AudioTrack.write() this session — only
+    // counts what a write call reported as consumed, never the requested chunk size, so a
+    // short/partial write (see writeAllFloat/writeAllShort) is never over-counted. This is the
+    // target [awaitPlaybackDrained] polls the hardware playback head against before onEnd() is
+    // allowed to release() the track, so the tail of a clip can never be torn off mid-flight.
+    private var framesWritten = 0L
 
     override fun onFormat(sampleRate: Int) {
         // Every real call site routes through stop() first, but release defensively so a missed
@@ -29,6 +37,8 @@ class AudioTrackSink : AudioSink {
         // "starting a new session" case, so an immediate (flush) release is correct here — any
         // leftover audio from a track a caller forgot to stop is not this session's to play.
         releaseImmediately()
+        sampleRateHz = sampleRate
+        framesWritten = 0L
         val floatTrack = buildTrack(sampleRate, AudioFormat.ENCODING_PCM_FLOAT)
         if (floatTrack != null) {
             track = floatTrack
@@ -156,6 +166,7 @@ class AudioTrackSink : AudioSink {
             }
             zeroStreak = 0
             offset += written
+            framesWritten += written
         }
     }
 
@@ -174,6 +185,7 @@ class AudioTrackSink : AudioSink {
             }
             zeroStreak = 0
             offset += written
+            framesWritten += written
         }
     }
 
@@ -219,23 +231,55 @@ class AudioTrackSink : AudioSink {
     // guarantees the last chunk's samples were copied into the AudioTrack's internal ring buffer —
     // that buffer is at least half a second deep (see BYTES_PER_FLOAT/BYTES_PER_SHORT sizing below),
     // so audio can still be sitting there, not yet physically played, the instant the last onChunk()
-    // call returns. The previous implementation funnelled onEnd() through the same release() used for
+    // call returns. An earlier implementation funnelled onEnd() through the same release() used for
     // user-initiated stop, which calls flush() — and AudioTrack.flush() is documented to DISCARD any
     // audio that has been written but not yet presented. That silently truncated up to that whole
     // buffer's worth of audio off the end of EVERY playback, not just an occasional race: for a short
     // utterance (a single sentence, or a quick fresh Play before enough chunks have queued up) the
     // entire clip could still be sitting unpresented when onEnd() fired, so the trim was total —
     // "pressing Play produces no sound" — while a long cached replay only lost an inaudible sliver off
-    // the tail after minutes of already-drained playback, which read as "replay works". stop()
-    // (below) keeps flush() — that IS the intended immediate-cutoff behaviour for a deliberate
-    // barge-in (issue #45) — only the natural-completion path drops it so queued audio finishes.
+    // the tail after minutes of already-drained playback, which read as "replay works". Switching to a
+    // non-flushing stop() fixed that, but NOT the "last word missing" report that persisted: stop() is
+    // only documented to let MODE_STREAM's queued data keep draining — that draining happens
+    // asynchronously in the HAL, on its own timeline, and calling release() right after stop() (as
+    // before) can tear the native track down before the OEM driver has actually finished presenting
+    // that tail, cutting it off regardless of flush(). [awaitPlaybackDrained] makes the wait explicit
+    // instead of trusting stop()'s timing, so release() never runs until the hardware has genuinely
+    // caught up to everything this sink wrote. stop() (below, the barge-in path) keeps flush() — that
+    // IS the intended immediate-cutoff behaviour (issue #45) — only the natural-completion path here
+    // waits for the queued audio to finish first.
     override fun onEnd() {
-        track?.let { active ->
-            runCatching { active.stop() } // MODE_STREAM: already-queued audio keeps playing to completion.
-            active.release()
-        }
+        val active = track ?: return
+        awaitPlaybackDrained(active)
+        // A barge-in (stop()/onFormat()) may have superseded this track while draining — it already
+        // tore the track down itself, so there is nothing left for this call to do.
+        if (track !== active) return
+        runCatching { active.stop() }
+        active.release()
         track = null
     }
+
+    // Polls [active]'s hardware playback head until it has caught up with [framesWritten] (everything
+    // this sink has handed to AudioTrack this session), so [onEnd] never releases the track while
+    // audio is still in flight. Bounded by the outstanding audio's own duration plus a fixed grace
+    // margin, so a genuinely stuck head position (a hardware fault, not just OEM-driver slack) can
+    // never hang playback forever — and it exits immediately once a barge-in supersedes this track,
+    // since the tail no longer matters at all then.
+    private fun awaitPlaybackDrained(active: AudioTrack) {
+        val target = framesWritten
+        val remainingFrames = (target - headPositionFrames(active)).coerceAtLeast(0L)
+        val remainingMillis = if (sampleRateHz > 0) remainingFrames * MILLIS_PER_SECOND / sampleRateHz else 0L
+        val deadlineNanos = System.nanoTime() + (remainingMillis + DRAIN_GRACE_MILLIS) * NANOS_PER_MILLI
+        while (track === active && headPositionFrames(active) < target && System.nanoTime() < deadlineNanos) {
+            runCatching { Thread.sleep(DRAIN_POLL_MILLIS) }
+        }
+    }
+
+    // AudioTrack.getPlaybackHeadPosition() is documented to behave like an unsigned 32-bit frame
+    // counter, so a long-running track's raw Int can go negative long before framesWritten (a Long)
+    // does. Widen it the same way this codebase already widens the WAV header's byte counts, so a
+    // wrapped value never reads as "already past the target" and ends the drain wait early.
+    private fun headPositionFrames(active: AudioTrack): Long = active.playbackHeadPosition.toLong() and UINT_MASK
 
     /** Stop playback immediately (e.g. the user switched models mid-utterance). */
     fun stop() = releaseImmediately()
@@ -265,5 +309,14 @@ class AudioTrackSink : AudioSink {
 
         private const val BYTES_PER_FLOAT = 4
         private const val BYTES_PER_SHORT = 2
+
+        // [awaitPlaybackDrained] tuning: poll cheaply and often (audio, not UI, so 15ms is not
+        // perceptible), and always allow at least this much extra grace beyond the computed remaining
+        // duration for OEM-driver/scheduling slack before giving up and releasing anyway.
+        private const val DRAIN_POLL_MILLIS = 15L
+        private const val DRAIN_GRACE_MILLIS = 750L
+        private const val MILLIS_PER_SECOND = 1_000L
+        private const val NANOS_PER_MILLI = 1_000_000L
+        private const val UINT_MASK = 0xffffffffL
     }
 }
