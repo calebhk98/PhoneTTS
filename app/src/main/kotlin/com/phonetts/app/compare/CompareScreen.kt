@@ -1,13 +1,18 @@
 package com.phonetts.app.compare
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenuItem
@@ -21,6 +26,7 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,9 +37,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
+import java.text.DateFormat
+import java.util.Date
 
 /** Which comparison flow the screen is showing. Purely a UI switch — both drive the same [CompareViewModel]. */
 private enum class CompareMode { AB, TOURNAMENT }
@@ -50,11 +61,38 @@ private enum class CompareMode { AB, TOURNAMENT }
 fun CompareScreen(viewModel: CompareViewModel) {
     val state by viewModel.state.collectAsState()
     var mode by remember { mutableStateOf(CompareMode.AB) }
+    val context = LocalContext.current
 
     // Re-read the catalog every time this screen is (re)entered — the ViewModel is Activity-scoped
     // and otherwise keeps the model list it snapshotted the FIRST time Compare was ever opened, so
     // anything downloaded/discovered since was missing from the pickers and the tournament roster.
     LaunchedEffect(Unit) { viewModel.refreshModels() }
+
+    // Save-to-file launchers (issue: "replay + save + relisten") — a SAF "Save As" picker per side,
+    // same pattern TtsScreen's export launcher uses; the ViewModel/controller do the actual encode.
+    val saveALauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
+            uri?.let { context.contentResolver.openOutputStream(it)?.let(viewModel::saveA) }
+        }
+    val saveBLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
+            uri?.let { context.contentResolver.openOutputStream(it)?.let(viewModel::saveB) }
+        }
+    // One shared launcher for tournament entries — CreateDocument only returns a Uri, so the entry
+    // id it's saving is stashed here between "Save" and the picker's callback.
+    var pendingSaveEntryId by remember { mutableStateOf<String?>(null) }
+    val saveEntryLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
+            val entryId = pendingSaveEntryId
+            pendingSaveEntryId = null
+            if (uri != null && entryId != null) {
+                context.contentResolver.openOutputStream(uri)?.let { viewModel.tournamentController.saveEntry(entryId, it) }
+            }
+        }
+    val onSaveEntry: (String) -> Unit = { entryId ->
+        pendingSaveEntryId = entryId
+        saveEntryLauncher.launch("compare-$entryId.wav")
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -77,8 +115,14 @@ fun CompareScreen(viewModel: CompareViewModel) {
         )
 
         when (mode) {
-            CompareMode.AB -> AbCompareSection(viewModel, state)
-            CompareMode.TOURNAMENT -> TournamentSection(viewModel, state)
+            CompareMode.AB ->
+                AbCompareSection(
+                    viewModel = viewModel,
+                    state = state,
+                    onSaveA = { saveALauncher.launch("compare-a.wav") },
+                    onSaveB = { saveBLauncher.launch("compare-b.wav") },
+                )
+            CompareMode.TOURNAMENT -> TournamentSection(viewModel, state, onSaveEntry)
         }
     }
 }
@@ -113,6 +157,8 @@ private fun ModeButton(
 private fun AbCompareSection(
     viewModel: CompareViewModel,
     state: CompareViewModel.UiState,
+    onSaveA: () -> Unit,
+    onSaveB: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SlotCard(
@@ -124,6 +170,7 @@ private fun AbCompareSection(
             playing = state.playing == CompareViewModel.Slot.A,
             hasResult = state.hasResultA,
             onReplay = viewModel::replayA,
+            onSave = onSaveA,
         )
         SlotCard(
             label = "B",
@@ -134,6 +181,7 @@ private fun AbCompareSection(
             playing = state.playing == CompareViewModel.Slot.B,
             hasResult = state.hasResultB,
             onReplay = viewModel::replayB,
+            onSave = onSaveB,
         )
 
         val canRun = !state.busy && state.text.isNotBlank() && state.a.descriptor != null && state.b.descriptor != null
@@ -159,6 +207,7 @@ private fun SlotCard(
     playing: Boolean,
     hasResult: Boolean,
     onReplay: () -> Unit,
+    onSave: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -174,7 +223,10 @@ private fun SlotCard(
             CompareModelPicker(models, selection.descriptor, onSelectModel)
             CompareVoicePicker(selection.voices, selection.voiceId, onSelectVoice)
             HorizontalDivider()
-            OutlinedButton(onClick = onReplay, enabled = hasResult && !playing) { Text("Replay $label") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onReplay, enabled = hasResult && !playing) { Text("Replay $label") }
+                OutlinedButton(onClick = onSave, enabled = hasResult) { Text("Save $label") }
+            }
         }
     }
 }
@@ -185,9 +237,11 @@ private fun SlotCard(
 private fun TournamentSection(
     viewModel: CompareViewModel,
     state: CompareViewModel.UiState,
+    onSaveEntry: (String) -> Unit,
 ) {
     val t = state.tournament
     val controller = viewModel.tournamentController
+    var showErrorLog by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(
@@ -198,11 +252,11 @@ private fun TournamentSection(
 
         when {
             t.complete -> {
-                RankingTable(t.revealedRanking)
+                RankingTable(t.revealedRanking, onReplay = controller::replayEntry, onSave = onSaveEntry)
                 Button(onClick = controller::stop) { Text("New tournament") }
             }
             t.running -> {
-                ActiveMatchCard(t, onPick = controller::pickWinner)
+                ActiveMatchCard(t, onPick = controller::pickWinner, onReplay = controller::replayEntry, onSave = onSaveEntry)
                 OutlinedButton(onClick = controller::stop) { Text("Cancel tournament") }
             }
             else -> {
@@ -220,9 +274,59 @@ private fun TournamentSection(
             }
         }
 
+        // A failing voice auto-fails (its opponent advances without a pick) rather than blocking the
+        // whole tournament — every such failure lands here, copyable, so it can be reported/debugged.
+        if (t.errors.isNotEmpty()) {
+            TextButton(onClick = { showErrorLog = true }) { Text("Errors (${t.errors.size})") }
+        }
+
         if (t.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         t.status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
     }
+
+    if (showErrorLog) {
+        TournamentErrorLogDialog(errors = t.errors, onDismiss = { showErrorLog = false })
+    }
+}
+
+/** Every auto-failed tournament voice this run (issue: "auto-fail a failing voice + copyable error
+ * log"): selectable text plus a "Copy all" button, mirroring Browse's `ErrorLogDialog`. */
+@Composable
+private fun TournamentErrorLogDialog(
+    errors: List<CompareViewModel.TournamentError>,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val formatter = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
+    val fullText = remember(errors) { errors.joinToString("\n\n") { formatTournamentErrorLine(it, formatter) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+        },
+        title = { Text("Tournament errors") },
+        text = {
+            SelectionContainer {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    errors.forEach { error ->
+                        Text(formatTournamentErrorLine(error, formatter), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+    )
+}
+
+private fun formatTournamentErrorLine(
+    error: CompareViewModel.TournamentError,
+    formatter: DateFormat,
+): String {
+    val time = formatter.format(Date(error.atMs))
+    return "[$time] ${error.label} — ${error.message}"
 }
 
 @Composable
@@ -278,11 +382,13 @@ private fun RosterBuilder(
 private fun ActiveMatchCard(
     t: CompareViewModel.TournamentUiState,
     onPick: (Int) -> Unit,
+    onReplay: (String) -> Unit,
+    onSave: (String) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Round ${t.roundNumber ?: 1} — blind pick", style = MaterialTheme.typography.titleMedium)
-            BlindSlotsRow(t, onPick)
+            BlindSlotsRow(t, onPick, onReplay, onSave)
         }
     }
 }
@@ -291,20 +397,46 @@ private fun ActiveMatchCard(
 private fun BlindSlotsRow(
     t: CompareViewModel.TournamentUiState,
     onPick: (Int) -> Unit,
+    onReplay: (String) -> Unit,
+    onSave: (String) -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        BlindSlot(slot = 1, ready = t.slot1Ready, playing = t.playingSlot == 1, canPick = t.canPick, onPick = onPick)
-        BlindSlot(slot = 2, ready = t.slot2Ready, playing = t.playingSlot == 2, canPick = t.canPick, onPick = onPick)
+        BlindSlot(
+            slot = 1,
+            entryId = t.slot1Id,
+            ready = t.slot1Ready,
+            playing = t.playingSlot == 1,
+            canPick = t.canPick,
+            onPick = onPick,
+            onReplay = onReplay,
+            onSave = onSave,
+        )
+        BlindSlot(
+            slot = 2,
+            entryId = t.slot2Id,
+            ready = t.slot2Ready,
+            playing = t.playingSlot == 2,
+            canPick = t.canPick,
+            onPick = onPick,
+            onReplay = onReplay,
+            onSave = onSave,
+        )
     }
 }
 
+// One blind slot's card: while judging, [entryId] is an OPAQUE contender id (never a label) — just
+// enough for "Replay"/"Save" to act on the already-generated audio without regenerating, without
+// revealing which model/voice it is (issue: "replay + save + relisten").
 @Composable
 private fun BlindSlot(
     slot: Int,
+    entryId: String?,
     ready: Boolean,
     playing: Boolean,
     canPick: Boolean,
     onPick: (Int) -> Unit,
+    onReplay: (String) -> Unit,
+    onSave: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val label =
@@ -315,14 +447,25 @@ private fun BlindSlot(
             }
         Text(label, style = MaterialTheme.typography.bodyMedium)
         Button(onClick = { onPick(slot) }, enabled = canPick) { Text("Choose $slot") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { entryId?.let(onReplay) }, enabled = ready && !playing) { Text("Replay $slot") }
+            OutlinedButton(onClick = { entryId?.let(onSave) }, enabled = ready) { Text("Save $slot") }
+        }
     }
 }
 
 @Composable
-private fun RankingTable(rows: List<CompareViewModel.RevealedRankRow>) {
+private fun RankingTable(
+    rows: List<CompareViewModel.RevealedRankRow>,
+    onReplay: (String) -> Unit,
+    onSave: (String) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Final ranking — identities revealed", style = MaterialTheme.typography.titleMedium)
         rows.sortedBy { it.place }.forEach { row ->
+            // A row with no RTF never got a real synthesis result (a same-pairing double-failure —
+            // see TournamentController.advance()'s kdoc), so there is no cached audio to replay/save.
+            val hasAudio = row.realTimeFactor != null
             Column {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -332,6 +475,10 @@ private fun RankingTable(rows: List<CompareViewModel.RevealedRankRow>) {
                     Text(row.realTimeFactor?.let { "RTF %.2f×".format(it) } ?: "RTF —")
                 }
                 Text("Judged wins: ${row.winsRecorded}", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onReplay(row.entryId) }, enabled = hasAudio) { Text("Replay") }
+                    OutlinedButton(onClick = { onSave(row.entryId) }, enabled = hasAudio) { Text("Save") }
+                }
             }
             HorizontalDivider()
         }
