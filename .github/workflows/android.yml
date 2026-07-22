@@ -7,10 +7,14 @@ name: Android CI + APK release
 #
 # The debug APK is signed with the standard Android debug key, so it installs on any device with
 # "install unknown apps" enabled — no keystore secret needed. It bundles ONNX Runtime for the
-# Tier-A/B engines; the espeak-ng and CosyVoice native bridges are opt-in native builds
-# (-PwithEspeak / -PwithCosyVoice) and are NOT included in this baseline APK (see docs/COSYVOICE2.md
-# and docs/espeak-ng-integration.md). Shipping CosyVoice by default is tracked separately — the
-# CrispASR native tree needs real integration work to cross-compile (see the "ship CosyVoice" issue).
+# Tier-A/B engines AND the espeak-ng phonemizer native bridge (issue #13 — without it, Piper/
+# Kokoro/KittenTTS/MeloTTS receive raw text instead of IPA phonemes and produce garbled audio): the
+# apk job installs the NDK, fetches the pinned espeak-ng source, builds its phoneme/dict data with
+# a host-native CMake pass, and builds the APK with -PwithEspeak=true so libphonetts_espeak.so +
+# the espeak-ng-data assets are bundled (see docs/espeak-ng-integration.md). The CosyVoice native
+# bridge is a separate opt-in build (-PwithCosyVoice) and is NOT included in this baseline APK (see
+# docs/COSYVOICE2.md) — the CrispASR native tree needs real integration work to cross-compile
+# (see the "ship CosyVoice" issue).
 
 on:
   push:
@@ -52,8 +56,31 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
+      # espeak-ng phonemizer (issue #13 — ship it so Piper/Kokoro/KittenTTS/MeloTTS get real IPA
+      # phonemes instead of raw text). Three steps: install the NDK the native JNI bridge needs,
+      # fetch the pinned espeak-ng source, then build ITS phoneme/dict data with a plain HOST
+      # (non-Android) CMake pass -- that data-compiler step runs the espeak-ng CLI it just built,
+      # which only works when it's compiled for the runner's own architecture, never the
+      # cross-compiled arm64/armeabi-v7a one (see app/build.gradle.kts's `targets(...)` comment for
+      # why the Android build itself is restricted to skip that data step entirely).
+      - name: Install NDK (for the espeak-ng JNI bridge)
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "ndk;27.0.12077973"
+      - name: Fetch espeak-ng source (pinned tag, docs/espeak-ng-integration.md)
+        run: sh scripts/fetch-espeak-ng.sh
+      - name: Build espeak-ng phoneme/dict data (host-native, shipped as an asset)
+        run: |
+          sudo apt-get install -y --no-install-recommends cmake build-essential
+          cmake -S app/src/main/cpp/espeak-ng -B app/src/main/cpp/espeak-ng/build-native \
+            -DCMAKE_INSTALL_PREFIX="$PWD/app/src/main/cpp/espeak-ng/install-native" \
+            -DUSE_ASYNC=OFF -DUSE_KLATT=OFF -DUSE_MBROLA=OFF -DUSE_LIBSONIC=OFF \
+            -DUSE_LIBPCAUDIO=OFF -DBUILD_SHARED_LIBS=ON
+          cmake --build app/src/main/cpp/espeak-ng/build-native --target data -j"$(nproc)"
+          mkdir -p app/src/main/assets
+          cp -r app/src/main/cpp/espeak-ng/build-native/espeak-ng-data app/src/main/assets/espeak-ng-data
       - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug -PwithEspeak=true --no-daemon
       - name: Resolve release tag
         id: rel
         run: |
@@ -106,5 +133,6 @@ jobs:
             **Install:** download the `.apk` below, enable "install unknown apps" for your browser/files app, and open it.
 
             Debug-signed build (installs without a Play account). ONNX engines (Piper/Kokoro/Kitten/Melo)
-            are included; espeak phonemization and CosyVoice are opt-in native builds — see the README.
-            Model weights download on first use into app-private storage.
+            and the espeak-ng phonemizer they rely on for IPA phonemes are included; CosyVoice is a
+            separate opt-in native build — see the README. Model weights download on first use into
+            app-private storage.
