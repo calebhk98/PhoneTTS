@@ -1,5 +1,12 @@
 package com.phonetts.app.manage
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,12 +21,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.model.Origin
@@ -39,8 +48,8 @@ import kotlin.math.pow
  * (issue #10 — the [ModelManagementViewModel] instance otherwise lives for the whole Activity and
  * would keep showing whatever was downloaded the FIRST time this screen was ever opened).
  *
- * Also lists downloaded-but-unidentified bundles (issue #8) so a download the resolver couldn't
- * identify is shown honestly instead of vanishing as if it were never fetched.
+ * Also lists downloaded-but-unidentified bundles (issue #8) and a storage-location picker so
+ * models can be kept somewhere that survives an uninstall (issue #4/#5).
  */
 @Composable
 fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
@@ -59,6 +68,13 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
         )
 
         state.error?.let { Text("Error: $it") }
+
+        StorageLocationSection(
+            description = state.storageDescription,
+            message = state.storageMessage,
+            onFolderPicked = viewModel::chooseFolder,
+            onResetToAppStorage = viewModel::resetStorageLocation,
+        )
 
         if (state.usage.isEmpty() && state.unresolved.isEmpty()) {
             Text("No models downloaded yet.")
@@ -154,6 +170,55 @@ private fun originLabel(origin: Origin): String =
         Origin.BUILT_IN -> "Built-in"
         Origin.SIDELOADED -> "Sideloaded"
     }
+
+/**
+ * Storage-location picker (issue #4/#5): shows where models live now, a button to pick a folder via
+ * the Storage Access Framework, and — when this device hasn't granted "All files access" yet — a
+ * button to request it (needed to read/write the picked folder as a plain file, not just through
+ * SAF). A folder pick that can't be used as a plain directory is refused with [message] rather than
+ * silently accepted; nothing here decides that itself, all of it is [ModelManagementViewModel]'s.
+ */
+@Composable
+private fun StorageLocationSection(
+    description: String,
+    message: String?,
+    onFolderPicked: (Uri) -> Unit,
+    onResetToAppStorage: () -> Unit,
+) {
+    val context = LocalContext.current
+    val folderPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
+            onFolderPicked(uri)
+        }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Storage location", style = MaterialTheme.typography.titleMedium)
+        Text(description, style = MaterialTheme.typography.bodyMedium)
+        message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { folderPicker.launch(null) }) { Text("Choose folder…") }
+            TextButton(onClick = onResetToAppStorage) { Text("Use app storage") }
+        }
+        if (!hasAllFilesAccess()) {
+            TextButton(onClick = { context.startActivity(allFilesAccessIntent(context.packageName)) }) {
+                Text("Grant \"All files access\" (needed for a picked folder)")
+            }
+        }
+    }
+    HorizontalDivider()
+}
+
+// MANAGE_EXTERNAL_STORAGE only exists from API 30 — below that there is no such gate to check, so
+// a picked folder either lives in app-private/media-store-reachable space or the write test in
+// StorageLocation.resolve() will already fail closed with a clear reason.
+private fun hasAllFilesAccess(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+
+private fun allFilesAccessIntent(packageName: String): Intent =
+    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
 
 /** "1.5 GB" / "320 KB" / "512 B" style formatting for a storage-usage display. */
 private fun formatBytes(bytes: Long): String {

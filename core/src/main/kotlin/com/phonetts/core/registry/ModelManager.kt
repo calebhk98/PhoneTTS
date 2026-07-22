@@ -1,6 +1,7 @@
 package com.phonetts.core.registry
 
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.OverrideStore
 
 /**
@@ -61,6 +62,11 @@ data class ModelRemoval(
  *
  * [overrideStore] and [engineManager] are optional: a caller that doesn't care about persisted
  * overrides or live-unload can omit them and still get catalog + file removal.
+ *
+ * [storageLocation] (issue #4/#5) is the same plain-`:core` preference the app's storage-location
+ * picker writes to; [onStorageLocationChanged] is the app-supplied callback that reacts to a
+ * change (rebuilding anything that captured a fixed base dir, and re-scanning the new location).
+ * Both are optional so existing callers that don't care about relocatable storage are unaffected.
  */
 class ModelManager(
     private val catalog: ModelCatalog,
@@ -68,6 +74,8 @@ class ModelManager(
     private val deleteModelDir: (String) -> Boolean,
     private val overrideStore: OverrideStore? = null,
     private val engineManager: EngineManager? = null,
+    private val storageLocation: StorageLocationPreference? = null,
+    private val onStorageLocationChanged: (() -> Unit)? = null,
 ) {
     /** Every model in the catalog, paired with its on-disk size. */
     fun usage(): List<ModelUsage> = catalog.list().map { ModelUsage(it, dirSizeBytes(it.modelId)) }
@@ -88,6 +96,22 @@ class ModelManager(
         val filesDeleted = deleteModelDir(bundleId)
         catalog.clearUnresolved(bundleId)
         return filesDeleted
+    }
+
+    /** Where models are currently stored — the app-private default, or a user-picked folder. */
+    fun currentStorageDescription(): String =
+        storageLocation?.customBasePath() ?: "App-private storage (default — removed on uninstall)"
+
+    /**
+     * Switch the models base directory (issue #4/#5). [absolutePath] null reverts to the
+     * app-private default. Persists the choice, then runs [onStorageLocationChanged] so the app
+     * layer can rebuild anything holding a fixed reference to the old base dir and re-scan the new
+     * location — so a folder that already holds previously-downloaded models loads them without a
+     * redownload. A no-op beyond persisting the preference if the app didn't wire that callback.
+     */
+    fun changeStorageLocation(absolutePath: String?) {
+        storageLocation?.setCustomBasePath(absolutePath)
+        onStorageLocationChanged?.invoke()
     }
 
     /** Remove [modelId] from the catalog, delete its weights, and clean up all references to it. */

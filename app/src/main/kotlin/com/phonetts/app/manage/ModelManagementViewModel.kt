@@ -1,7 +1,9 @@
 package com.phonetts.app.manage
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.phonetts.app.StorageLocation
 import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.ModelUsage
@@ -27,7 +29,9 @@ import kotlinx.coroutines.withContext
  *
  * Also lists bundles no engine could identify ([UnresolvedModelUsage], issue #8) so a download that
  * detection declined is shown honestly ("downloaded, no engine available") instead of silently
- * vanishing as if nothing were ever fetched.
+ * vanishing as if nothing were ever fetched, and drives the storage-location picker (issue #4/#5):
+ * [chooseFolder] resolves a SAF tree URI to a real folder and, if usable, hands it straight to
+ * [ModelManager.changeStorageLocation] — the same seam a future non-SAF caller could use too.
  */
 class ModelManagementViewModel(
     private val modelManager: ModelManager,
@@ -46,6 +50,10 @@ class ModelManagementViewModel(
         /** Downloaded bundles no engine claimed (issue #8) — shown, but never selectable. */
         val unresolved: List<UnresolvedModelUsage> = emptyList(),
         val deletingUnresolvedId: String? = null,
+        /** Where models are stored right now (issue #4/#5) — the app-private default or a picked folder. */
+        val storageDescription: String = "",
+        /** Feedback from the last storage-location action (folder picked / rejected / reset). */
+        val storageMessage: String? = null,
     )
 
     private val mutableState = MutableStateFlow(UiState())
@@ -67,6 +75,7 @@ class ModelManagementViewModel(
                 availableRamBytes = availableRamBytes(),
                 error = null,
                 unresolved = modelManager.unresolvedUsage(),
+                storageDescription = modelManager.currentStorageDescription(),
             )
         }
     }
@@ -91,4 +100,35 @@ class ModelManagementViewModel(
             refresh()
         }
     }
+
+    /**
+     * Handle a folder picked via `ActivityResultContracts.OpenDocumentTree()` (issue #4/#5). The
+     * caller has already taken a persistable permission on [treeUri]; this resolves it to a real
+     * filesystem path ([StorageLocation.resolve]) and, only if that path is genuinely readable and
+     * writable, switches the models base dir to it. A folder that can't be resolved to a plain
+     * `java.io.File` (or isn't actually writable — e.g. `MANAGE_EXTERNAL_STORAGE` wasn't granted)
+     * is refused with a message rather than silently left half-applied.
+     */
+    fun chooseFolder(treeUri: Uri) {
+        when (val resolution = StorageLocation.resolve(treeUri)) {
+            is StorageLocation.Resolution.Usable -> {
+                modelManager.changeStorageLocation(resolution.path)
+                mutableState.update { it.copy(storageMessage = "Now storing models in ${resolution.path}") }
+            }
+            is StorageLocation.Resolution.Unusable -> {
+                mutableState.update { it.copy(storageMessage = "Can't use that folder: ${resolution.reason}") }
+            }
+        }
+        refresh()
+    }
+
+    /** Revert to app-private storage (issue #4/#5) — note this does NOT move already-relocated files. */
+    fun resetStorageLocation() {
+        modelManager.changeStorageLocation(null)
+        mutableState.update { it.copy(storageMessage = "Back to app-private storage") }
+        refresh()
+    }
+
+    /** Dismiss the last storage-location feedback message. */
+    fun dismissStorageMessage() = mutableState.update { it.copy(storageMessage = null) }
 }

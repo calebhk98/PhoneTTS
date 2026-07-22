@@ -1,5 +1,7 @@
 package com.phonetts.core.registry
 
+import com.phonetts.core.prefs.InMemoryPreferenceStore
+import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.OverrideStore
 import com.phonetts.core.testing.FakeEngine
 import com.phonetts.core.testing.testDescriptor
@@ -221,5 +223,48 @@ class ModelManagerTest {
         assertTrue(filesDeleted)
         assertEquals("mystery", deleteCalledWith)
         assertEquals(emptyList(), manager.unresolvedUsage())
+    }
+
+    // Issue #4/#5: switching storage location persists the choice and runs the app's rebuild hook.
+    @Test
+    fun currentStorageDescriptionReportsTheAppPrivateDefaultWhenNoneIsSet() {
+        val manager = ModelManager(ModelCatalog(), dirSizeBytes = { 0L }, deleteModelDir = { true })
+        assertTrue(manager.currentStorageDescription().contains("default"))
+    }
+
+    @Test
+    fun changeStorageLocationPersistsThePathAndInvokesTheCallback() {
+        val storageLocation = StorageLocationPreference(InMemoryPreferenceStore())
+        var callbackRuns = 0
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                storageLocation = storageLocation,
+                onStorageLocationChanged = { callbackRuns++ },
+            )
+
+        manager.changeStorageLocation("/storage/1234-5678/PhoneTTS/models")
+
+        assertEquals("/storage/1234-5678/PhoneTTS/models", storageLocation.customBasePath())
+        assertEquals("/storage/1234-5678/PhoneTTS/models", manager.currentStorageDescription())
+        assertEquals(1, callbackRuns)
+    }
+
+    @Test
+    fun changeStorageLocationToNullRevertsToTheDefault() {
+        val storageLocation = StorageLocationPreference(InMemoryPreferenceStore()).apply { setCustomBasePath("/x") }
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                storageLocation = storageLocation,
+            )
+
+        manager.changeStorageLocation(null)
+
+        assertNull(storageLocation.customBasePath())
     }
 }
