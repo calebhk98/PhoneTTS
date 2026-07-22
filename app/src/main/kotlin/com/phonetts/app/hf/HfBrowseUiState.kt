@@ -57,6 +57,11 @@ data class HfBrowseUiState(
     // that's known to return nothing new.
     val loadingMore: Boolean = false,
     val canLoadMore: Boolean = false,
+    // "Piper voices" section (issue #71): collapsed by default — 166 curated voices is too many to
+    // show unfiltered — with its own search text, kept here (not local Composable state) so both
+    // survive the same recomposition/navigation lifecycle as every other Browse control.
+    val piperVoicesExpanded: Boolean = false,
+    val piperVoiceQuery: String = "",
 ) {
     /** True while [modelId] has an in-flight download (issue #2 — any number of these can be true
      * at once, one per repo). */

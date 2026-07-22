@@ -26,6 +26,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -163,6 +164,10 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             remember(state.results, state.sort, state.tagFilter, state.sizeEstimates, state.sizeFilter) {
                 viewModel.displayedResults(state)
             }
+        // Same rationale as displayedResults above: only recomputed when the query actually changes,
+        // not on every unrelated state tick (e.g. a download's progress).
+        val filteredPiperVoices =
+            remember(state.piperVoiceQuery) { viewModel.filterPiperVoices(state.piperVoiceQuery) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // Recommended one-tap models come first — they're the curated, known-good downloads most
             // users want; the broader Hugging Face results follow under their own header.
@@ -182,6 +187,46 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                                 onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.repoId)) },
                             ),
                     )
+                }
+            }
+
+            // "Piper voices" (issue #71): 166 curated voices, one BuiltInModel each — reuses the exact
+            // same downloadBuiltIn() path (and RecommendedRow styling) the "Recommended" grid above
+            // uses, no second download path. Collapsed by default; the filter field + rows only enter
+            // the LazyColumn once expanded, so nothing here is eagerly laid out.
+            if (viewModel.piperVoices.isNotEmpty()) {
+                item(key = "piper-voices-header") {
+                    PiperVoicesHeader(
+                        expanded = state.piperVoicesExpanded,
+                        totalCount = viewModel.piperVoices.size,
+                        onExpandedChange = viewModel::onPiperVoicesExpandedChange,
+                    )
+                }
+                if (state.piperVoicesExpanded) {
+                    item(key = "piper-voices-search") {
+                        PiperVoiceSearchField(state.piperVoiceQuery, viewModel::onPiperVoiceQueryChange)
+                    }
+                    items(filteredPiperVoices, key = { "piper:${it.id}" }) { voice ->
+                        RecommendedRow(
+                            model = voice,
+                            progress = state.downloads[voice.id],
+                            isInstalled = viewModel.isInstalled(voice.id),
+                            actions =
+                                RowActions(
+                                    onDownload = { viewModel.downloadBuiltIn(voice) },
+                                    onCancel = { viewModel.cancelDownload(voice.id) },
+                                    onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(voice.repoId)) },
+                                ),
+                        )
+                    }
+                    if (filteredPiperVoices.isEmpty()) {
+                        item(key = "piper-voices-empty") {
+                            Text(
+                                "No Piper voices match \"${state.piperVoiceQuery}\".",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -270,7 +315,7 @@ private fun SortAndFilterRow(
                 readOnly = true,
                 label = { Text("Sort by") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
             )
             ExposedDropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
                 HfSortOption.entries.forEach { option ->
@@ -295,7 +340,7 @@ private fun SortAndFilterRow(
                 readOnly = true,
                 label = { Text("Filter by tag") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = tagExpanded) },
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
             )
             ExposedDropdownMenu(expanded = tagExpanded, onDismissRequest = { tagExpanded = false }) {
                 DropdownMenuItem(
@@ -391,6 +436,43 @@ private fun NumberField(
         label = { Text(label) },
         singleLine = true,
         modifier = modifier,
+    )
+}
+
+/**
+ * Collapsible header for the "Piper voices" section (issue #71): 166 curated voices is too many
+ * to dump into the list unfiltered, so this starts collapsed (`expanded = false`) and nothing
+ * else in the section — not the search field, not a single row — enters the LazyColumn until the
+ * user taps it open.
+ */
+@Composable
+private fun PiperVoicesHeader(
+    expanded: Boolean,
+    totalCount: Int,
+    onExpandedChange: (Boolean) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HorizontalDivider()
+        TextButton(onClick = { onExpandedChange(!expanded) }) {
+            Text(if (expanded) "Piper voices ($totalCount) ▾" else "Piper voices ($totalCount) ▸")
+        }
+    }
+}
+
+/** Filters the expanded Piper section by voice name or language (issue #71) — see
+ * [HfBrowseViewModel.filterPiperVoices]; the display name already carries the language, so one
+ * field covers both. */
+@Composable
+private fun PiperVoiceSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        singleLine = true,
+        label = { Text("Filter by voice name or language") },
+        modifier = Modifier.fillMaxWidth(),
     )
 }
 

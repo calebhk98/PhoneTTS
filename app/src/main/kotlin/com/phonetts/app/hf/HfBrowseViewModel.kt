@@ -75,6 +75,15 @@ class HfBrowseViewModel(
     val recommended: List<BuiltInModel> =
         BuiltInCatalog.ALL.filter { model -> model.requiresRuntimeId?.let(isRuntimeAvailable) ?: true }
 
+    /**
+     * Every Piper voice this app can browse & download individually (issue #71) — a separate,
+     * much larger list from [recommended] so it doesn't crowd the curated one-tap grid; the
+     * screen renders it behind its own collapsible section. Sourced straight from
+     * [BuiltInCatalog.PIPER_VOICES] (SSOT — the same generated catalog [recommended]'s
+     * `PIPER_LESSAC` entry draws from), so this names no voice literal of its own.
+     */
+    val piperVoices: List<BuiltInModel> = BuiltInCatalog.PIPER_VOICES
+
     // Populate the list immediately so the screen isn't just the handful of recommended models until
     // the user types — a blank query lists the top TTS models (HfEndpoints.searchModelsUrl). Fail-
     // closed: no network just leaves results empty with an error line, the recommended list still shows.
@@ -176,6 +185,27 @@ class HfBrowseViewModel(
         return model.downloadItems().zip(model.files) { item, file ->
             item.copy(sizeBytes = sizesByRepoPath[file.repoPath])
         }
+    }
+
+    /** Toggles the collapsible "Piper voices" section (issue #71) — collapsed by default so 166
+     * voices aren't dumped onto the screen unasked; nothing in the section is even filtered/laid
+     * out until this flips true. */
+    fun onPiperVoicesExpandedChange(expanded: Boolean) =
+        mutableState.update { it.copy(piperVoicesExpanded = expanded) }
+
+    fun onPiperVoiceQueryChange(query: String) = mutableState.update { it.copy(piperVoiceQuery = query) }
+
+    /**
+     * [piperVoices] narrowed to those whose display name matches [query] (issue #71) — a pure,
+     * in-memory filter over the static catalog, never a network call. The display name already
+     * encodes the language (e.g. "Piper — Kareem (Arabic, Jordan, low)"), so one substring match
+     * covers both a voice-name search and a language search without a second field. A blank query
+     * matches every voice.
+     */
+    fun filterPiperVoices(query: String): List<BuiltInModel> {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return piperVoices
+        return piperVoices.filter { it.displayName.contains(trimmed, ignoreCase = true) }
     }
 
     fun onQueryChange(query: String) = mutableState.update { it.copy(query = query) }
