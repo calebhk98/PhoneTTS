@@ -417,6 +417,15 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         graph.lastUsedSelection.record(LastUsedSelection(descriptor.modelId, voiceId, s.params.speed))
     }
 
+    // Guards Play/Generate against empty text (issue #15): rather than a silent no-op that still
+    // pays the switchTo()/engine.load() cost for nothing, surface clear feedback and return before
+    // touching the engine at all — no model load for text that can't produce any sentences anyway.
+    private fun requireNonBlankText(text: String): Boolean {
+        if (text.isNotBlank()) return true
+        mutableState.update { it.copy(status = "Enter some text to speak") }
+        return false
+    }
+
     fun setText(text: String) =
         mutableState.update { it.copy(text = text, resumeSentenceIndex = resumeIndexFor(text)) }
 
@@ -503,6 +512,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     fun generateAudio() {
         val s = mutableState.value
         val descriptor = s.selected ?: return
+        if (!requireNonBlankText(s.text)) return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         stop()
         mutableState.update { it.copy(busy = true, status = "Generating…", stats = null) }
@@ -560,6 +570,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private fun startPlaybackFrom(startSentenceIndex: Int) {
         val s = mutableState.value
         val descriptor = s.selected ?: return
+        if (!requireNonBlankText(s.text)) return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         // Slice the sentence list at [startSentenceIndex] and feed only that onward through the SAME
         // one generation path (spec §6.1) — no second synthesis path. Index 0 keeps the full text.

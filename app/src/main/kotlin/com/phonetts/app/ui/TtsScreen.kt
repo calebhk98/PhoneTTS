@@ -600,7 +600,7 @@ private fun TempoBoostControl(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
 ) {
-    ToggleRow("Extra tempo boost — post-processed, not native", state.tempoBoost, viewModel::setTempoBoost)
+    ToggleRow("Playback speed (post-processed)", state.tempoBoost, viewModel::setTempoBoost)
     if (!state.tempoBoost) return
     Text(
         "Playback tempo ${"%.1f".format(state.tempoFactor)}x (pitch-preserving, not the model's Speed)",
@@ -622,9 +622,13 @@ private fun ToggleRow(
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(label)
+        // weight(1f) lets a long label (e.g. "Long-document mode (spill audio to disk)") wrap onto
+        // a second line within its own share of the row instead of pushing the fixed-size Switch
+        // past the row's bound — without it, a long label and the Switch fight over unbounded width
+        // and the Switch ends up overlapped or shoved off-screen (issues #20/#21).
+        Text(label, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChecked)
     }
 }

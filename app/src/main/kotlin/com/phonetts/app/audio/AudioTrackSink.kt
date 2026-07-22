@@ -15,6 +15,11 @@ class AudioTrackSink : AudioSink {
     private var track: AudioTrack? = null
 
     override fun onFormat(sampleRate: Int) {
+        // Defensive: release any still-live track from a previous session before replacing it — every
+        // real call site already routes through stop() first (TtsViewModel.stop()/startPlaybackFrom()),
+        // but leaving a track dangling here would leak the native AudioTrack if that discipline were
+        // ever missed, silently wasting the very memory this app is budget-hardware-conscious about.
+        release()
         val minBuffer = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, ENCODING)
         val built =
             AudioTrack.Builder()
