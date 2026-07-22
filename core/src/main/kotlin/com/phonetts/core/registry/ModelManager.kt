@@ -80,8 +80,15 @@ class ModelManager(
     /** Every model in the catalog, paired with its on-disk size. */
     fun usage(): List<ModelUsage> = catalog.list().map { ModelUsage(it, dirSizeBytes(it.modelId)) }
 
-    /** Sum of [usage] sizes — what a "storage used" header reads. */
-    fun totalBytes(): Long = usage().sumOf { it.sizeBytes }
+    /**
+     * Sum of every model's on-disk size — [usage] (identified models) AND [unresolvedUsage]
+     * (downloaded-but-unclaimed bundles, issue #8) — what a "storage used" header reads. A bundle
+     * with no engine still occupies real space on the phone; leaving it out of the total made a
+     * "0 B used" screen possible even while an unresolved download sat on disk (bug #7/#6:
+     * the two are the same root cause — a bundle isn't "not downloaded" just because it isn't
+     * identified yet).
+     */
+    fun totalBytes(): Long = usage().sumOf { it.sizeBytes } + unresolvedUsage().sumOf { it.sizeBytes }
 
     /**
      * Every bundle on disk no engine could identify (issue #8), paired with its on-disk size —

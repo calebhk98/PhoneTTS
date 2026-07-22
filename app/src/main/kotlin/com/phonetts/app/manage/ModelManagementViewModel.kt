@@ -70,7 +70,10 @@ class ModelManagementViewModel(
         mutableState.update {
             it.copy(
                 usage = usage,
-                totalBytes = usage.sumOf { row -> row.sizeBytes },
+                // Bug #7: this used to sum only `usage` (identified models), so a downloaded-but-
+                // unresolved bundle's very real disk space (issue #8/bug #6) never counted toward
+                // "storage used" — [ModelManager.totalBytes] is the SSOT for the total, covering both.
+                totalBytes = modelManager.totalBytes(),
                 peakRamByModelId = estimates,
                 availableRamBytes = availableRamBytes(),
                 error = null,

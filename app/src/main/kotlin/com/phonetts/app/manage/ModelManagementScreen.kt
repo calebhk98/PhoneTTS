@@ -125,8 +125,13 @@ private fun ModelUsageRow(
     }
 }
 
-// Issue #8: a downloaded bundle no engine claimed — shown honestly instead of vanishing as if it
-// were never fetched. Never selectable; deleting it just reclaims the disk space.
+// Issue #8/bug #6: a downloaded bundle no engine claimed — shown honestly instead of vanishing as
+// if it were never fetched, and worded to head off the natural (wrong) assumption that a bundle
+// with no engine must mean a failed/incomplete download that needs redoing. It's already fully on
+// disk (that's what [unresolved.sizeBytes] is showing); redownloading the same bytes changes
+// nothing without a matching engine. Deliberately offers no "use it anyway" affordance (that would
+// fake an engine, breaking rule 4's fail-closed guarantee) — Delete is the only action, so there is
+// no dead-end button pretending this row can be selected.
 @Composable
 private fun UnresolvedUsageRow(
     unresolved: UnresolvedModelUsage,
@@ -140,8 +145,8 @@ private fun UnresolvedUsageRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
-            Text("Downloaded, no engine available · " + formatBytes(unresolved.sizeBytes))
-            Text(unresolved.reason, style = MaterialTheme.typography.bodySmall)
+            Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
+            Text("Redownloading won't help — " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
         }
         DeleteControl(isDeleting, onDelete)
     }

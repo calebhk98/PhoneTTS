@@ -66,6 +66,20 @@ class ModelCatalogTest {
         assertEquals("eng", catalog.get("m1")?.engineId)
     }
 
+    // Bug #6: a UI deciding "is this already downloaded" (e.g. to offer/hide a Download button)
+    // must see an unresolved bundle as known too, or it wrongly invites a redownload.
+    @Test
+    fun isKnownIsTrueForBothIdentifiedAndUnresolvedBundles() {
+        val catalog =
+            ModelCatalog().apply {
+                add(testDescriptor("m1", "eng"))
+                markUnresolved("mystery", "no engine claimed it")
+            }
+        assertEquals(true, catalog.isKnown("m1"))
+        assertEquals(true, catalog.isKnown("mystery"))
+        assertEquals(false, catalog.isKnown("never-fetched"))
+    }
+
     @Test
     fun clearDropsBothIdentifiedAndUnresolvedEntries() {
         val catalog = ModelCatalog()
