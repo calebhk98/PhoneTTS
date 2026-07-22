@@ -25,6 +25,15 @@
     <!-- End-of-document haptic cue (issue #32): PlaybackChime's optional vibration pulse. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Issue #77: discover the installed system TextToSpeech engines (Google, Samsung, …) via
+         PackageManager. On Android 11+ (API 30) package visibility is filtered, so without this
+         <queries> the TTS-service lookup returns nothing and system voices are silently absent. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".PhoneTtsApplication"
         android:allowBackup="false"

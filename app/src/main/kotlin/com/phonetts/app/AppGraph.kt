@@ -7,6 +7,8 @@ import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
 import com.phonetts.app.runtime.NativeCosyVoiceRuntime
 import com.phonetts.app.runtime.OnnxRuntime
+import com.phonetts.app.runtime.SystemTtsDiscovery
+import com.phonetts.app.runtime.SystemTtsEngine
 import com.phonetts.app.sideload.SideloadCoordinator
 import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
@@ -36,6 +38,10 @@ import com.phonetts.core.sideload.DirectoryBundleReader
 import com.phonetts.core.sideload.ModelImporter
 import com.phonetts.core.storage.ModelStorageMigrator
 import com.phonetts.core.update.UpdateChecker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Raised when no engine can identify a bundle and no manual pick is wired yet (see resolver).
@@ -53,7 +59,9 @@ class UserPickRequiredException(bundleId: String, val explanation: String) :
  * assembles the resolver / catalog / importer / downloader / sideload chain over them.
  */
 class AppGraph(context: Context) {
-    private val appContext = context.applicationContext
+    // Public: the generation/download notifiers (built in TtsViewModel / MainActivity) need the
+    // application Context, and there is no reason to hide the already-app-scoped context from them.
+    val appContext = context.applicationContext
 
     // Both pluggable backends live in one registry (spec §5.3): the ONNX Runtime the Tier-A/B
     // engines use, and the non-ONNX ggml NativeTtsRuntime that runs CosyVoice3's whole text→audio
@@ -72,9 +80,28 @@ class AppGraph(context: Context) {
     private val phonemizer = EspeakPhonemizer(appContext)
     private val engineContext = EngineContext(runtimeRegistry, phonemizer)
 
-    val engineRegistry = EngineRegistry().also { EngineLoader.seed(it, engineContext) }
+    // The on-device Android TextToSpeech engine(s) — Google, Samsung, whatever the OS/vendor
+    // shipped (issue #77). Unlike every ServiceLoader-discovered engine below, it has no weights to
+    // download, so it is registered directly here rather than via [EngineLoader] — see
+    // [SystemTtsEngine]'s kdoc for why it lives in :app instead of an `engines/*` module.
+    private val systemTtsEngine = SystemTtsEngine(appContext)
+
+    val engineRegistry =
+        EngineRegistry().also { registry ->
+            EngineLoader.seed(registry, engineContext)
+            registry.register(systemTtsEngine)
+        }
     val engineManager = EngineManager(engineRegistry)
     val catalog = ModelCatalog()
+
+    // A small dedicated scope for the one-shot system-TTS discovery [hydrate] kicks off below.
+    // Deliberately NOT run inline/synchronously the way hydrate()'s own folder scan is: Android
+    // delivers TextToSpeech's init callback back through this process's main-thread Looper no
+    // matter which thread constructed it, so blocking any thread on a latch waiting for that
+    // callback risks starving the very Looper that would deliver it. Launching a coroutine instead
+    // never blocks a thread — the catalog picks up the discovered engines within about a second of
+    // startup, via the same catalog.list() re-reads the UI already does on every model-list refresh.
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Read-only "why did detection fail" narration (issue #19-2): explain() only calls the same
     // VoiceEngine.inspect() probe the resolver already used and changes no state, so it is safe to
@@ -246,8 +273,22 @@ class AppGraph(context: Context) {
      */
     fun hydrate() {
         val modelsDir = modelsBaseDir().resolve(ModelStorage.MODELS_DIR)
-        val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: return
+        val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
         folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
+        registerSystemTtsModels()
+    }
+
+    // Issue #77: discovers every installed Android TTS engine and registers one ModelDescriptor per
+    // engine directly with [catalog] — the least invasive registration path available, since
+    // ModelCatalog.add() already accepts any descriptor unconditionally; no core/registry change was
+    // needed. Best-effort and non-fatal: a device query failure here must never break hydrate()'s
+    // (synchronous, load-bearing) bundle re-import above, so it's wrapped and simply yields nothing.
+    private fun registerSystemTtsModels() {
+        appScope.launch {
+            runCatching { SystemTtsDiscovery.discover(appContext, systemTtsEngine.id) }
+                .getOrDefault(emptyList())
+                .forEach(catalog::add)
+        }
     }
 
     companion object {

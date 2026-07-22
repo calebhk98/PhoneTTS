@@ -33,6 +33,7 @@ import com.phonetts.app.benchmark.BenchmarkScreen
 import com.phonetts.app.benchmark.BenchmarkViewModel
 import com.phonetts.app.compare.CompareScreen
 import com.phonetts.app.compare.CompareViewModel
+import com.phonetts.app.hf.DownloadNotifier
 import com.phonetts.app.hf.HfBrowseScreen
 import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.library.ReadingLibraryScreen
@@ -213,6 +214,9 @@ private fun AppNav(
                                     graph.hfDownloader,
                                     graph.catalog,
                                     isRuntimeAvailable = { id -> graph.runtimeRegistry.get(id)?.isAvailable() == true },
+                                    // Turns on the per-download progress notification (#70); null would
+                                    // silently disable it. Uses the app context — no Activity leak.
+                                    notifier = DownloadNotifier(graph.appContext),
                                 )
                             }
                         },
