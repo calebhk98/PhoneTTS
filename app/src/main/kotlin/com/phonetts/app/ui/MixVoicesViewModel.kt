@@ -21,9 +21,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Drives the "Mix voices" screen (issue #42). It is a consumer of the same abstractions as the main
- * reader — it never special-cases a model. Whether mixing is even offered is DERIVED from the
- * selected model's [ModelDescriptor.supportsVoiceBlend] fact (SSOT), and a saved mix is applied to
+ * Drives the "Mix voices" screen (issue #42, model picker added for issue #11). It is a consumer of
+ * the same abstractions as the main reader — it never special-cases a model. Which models can even
+ * be mixed is DERIVED from [ModelDescriptor.supportsVoiceBlend] across the WHOLE catalog (issue #11:
+ * not just whatever the main reader happens to have selected), so this screen offers its own model
+ * picker and works even before anything is selected on the main screen. A saved mix is applied to
  * whatever engine the model loads only if that engine implements [BlendableVoices]. So this screen
  * automatically lights up for any future blendable model and stays dark for the rest, with no code
  * change here (rule 5 — no `when(modelType)`).
@@ -34,10 +36,12 @@ import kotlinx.coroutines.withContext
  */
 class MixVoicesViewModel(
     private val graph: AppGraph,
-    private val descriptor: ModelDescriptor?,
+    initialSelection: ModelDescriptor?,
 ) : ViewModel() {
     data class UiState(
-        val supported: Boolean = false,
+        // Every currently-registered model that can blend voices — the picker's SSOT list.
+        val availableModels: List<ModelDescriptor> = emptyList(),
+        val selectedModel: ModelDescriptor? = null,
         val voices: List<Voice> = emptyList(),
         val voiceAId: String? = null,
         val voiceBId: String? = null,
@@ -47,9 +51,12 @@ class MixVoicesViewModel(
         val saved: List<BlendedVoiceSpec> = emptyList(),
         val status: String? = null,
         val busy: Boolean = false,
-    )
+    ) {
+        /** Whether a blendable model is selected — derived, never a separately-stored duplicate. */
+        val supported: Boolean get() = selectedModel != null
+    }
 
-    private val mutableState = MutableStateFlow(initialState())
+    private val mutableState = MutableStateFlow(initialState(initialSelection))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
     private val sink = AudioTrackSink()
@@ -57,17 +64,33 @@ class MixVoicesViewModel(
     private var genJob: Job? = null
     private var playJob: Job? = null
 
-    private fun initialState(): UiState {
-        val model = descriptor
-        if (model == null || !model.supportsVoiceBlend) return UiState(supported = false)
+    private fun initialState(initialSelection: ModelDescriptor?): UiState {
+        val blendable = graph.catalog.list().filter { it.supportsVoiceBlend }
+        val model = initialSelection?.takeIf { it.supportsVoiceBlend } ?: blendable.firstOrNull()
+        return stateFor(blendable, model)
+    }
+
+    private fun stateFor(
+        availableModels: List<ModelDescriptor>,
+        model: ModelDescriptor?,
+    ): UiState {
+        if (model == null) return UiState(availableModels = availableModels)
         val voices = model.voices
         return UiState(
-            supported = true,
+            availableModels = availableModels,
+            selectedModel = model,
             voices = voices,
             voiceAId = voices.getOrNull(0)?.id,
             voiceBId = voices.getOrNull(1)?.id ?: voices.getOrNull(0)?.id,
             saved = graph.blendedVoices.forModel(model.modelId),
         )
+    }
+
+    /** Switch which (blendable) model is being mixed — resets voice picks/preview for the new model. */
+    fun selectModel(modelId: String) {
+        val model = graph.catalog.get(modelId)?.takeIf { it.supportsVoiceBlend } ?: return
+        stop()
+        mutableState.update { stateFor(it.availableModels, model) }
     }
 
     fun setVoiceA(id: String) = mutableState.update { it.copy(voiceAId = id) }
@@ -84,7 +107,7 @@ class MixVoicesViewModel(
      * usable immediately. Fails closed (a status message, no save) on missing input.
      */
     fun save() {
-        val model = descriptor ?: return
+        val model = mutableState.value.selectedModel ?: return
         val spec = buildSpec(model) ?: return
         graph.blendedVoices.save(spec)
         applyToEngine(model, spec)
@@ -95,7 +118,7 @@ class MixVoicesViewModel(
 
     /** Remove a previously saved mix. */
     fun delete(spec: BlendedVoiceSpec) {
-        val model = descriptor ?: return
+        val model = mutableState.value.selectedModel ?: return
         graph.blendedVoices.remove(model.modelId, spec.id)
         mutableState.update { it.copy(saved = graph.blendedVoices.forModel(model.modelId)) }
     }
@@ -106,7 +129,7 @@ class MixVoicesViewModel(
      * blend actually renders audio, not just persists.
      */
     fun preview(text: String) {
-        val model = descriptor ?: return
+        val model = mutableState.value.selectedModel ?: return
         val spec = buildSpec(model) ?: return
         stop()
         playback = BufferedPlayback()

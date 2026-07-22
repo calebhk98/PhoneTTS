@@ -15,14 +15,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.phonetts.app.playback.PlaybackService
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -48,6 +42,7 @@ import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.ui.HelpScreen
 import com.phonetts.app.ui.MixVoicesScreen
 import com.phonetts.app.ui.MixVoicesViewModel
+import com.phonetts.app.ui.NavDrawerScaffold
 import com.phonetts.app.ui.OnboardingScreen
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
@@ -55,7 +50,9 @@ import com.phonetts.app.ui.TtsViewModel
 import com.phonetts.app.ui.theme.PhoneTtsTheme
 import com.phonetts.core.prefs.AppTheme
 
-private enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE }
+// Not private: shared with NavDrawerScaffold (app/ui), which every sub-page uses to list every
+// destination in its own hamburger drawer (issue #1) — the same enum TtsScreen's drawer navigates.
+enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -220,9 +217,9 @@ private fun AppNav(
                             }
                         },
                 )
-            BackScaffold(title = "Browse models", onBack = {
+            BackScaffold(title = "Browse models", current = Screen.BROWSE, onNavigate = { target ->
                 ttsViewModel.refreshModels() // pick up anything downloaded while browsing
-                screen = Screen.MAIN
+                screen = target
             }) { HfBrowseScreen(hfViewModel) }
         }
         Screen.MANAGE -> {
@@ -239,35 +236,34 @@ private fun AppNav(
                             }
                         },
                 )
-            BackScaffold(title = "Downloaded models", onBack = {
+            BackScaffold(title = "Downloaded models", current = Screen.MANAGE, onNavigate = { target ->
                 ttsViewModel.refreshModels() // a delete removes it from the model dropdown too
-                screen = Screen.MAIN
+                screen = target
             }) { ModelManagementScreen(manageViewModel) }
         }
         Screen.BENCHMARK -> {
             val benchmarkViewModel: BenchmarkViewModel =
                 viewModel(factory = viewModelFactory { initializer { BenchmarkViewModel(graph) } })
-            BackScaffold(title = "Benchmarks", onBack = { screen = Screen.MAIN }) {
+            BackScaffold(title = "Benchmarks", current = Screen.BENCHMARK, onNavigate = { screen = it }) {
                 BenchmarkScreen(benchmarkViewModel)
             }
         }
         Screen.MIX -> {
             val ttsState by ttsViewModel.state.collectAsState()
+            // Not keyed to the main screen's selected model (issue #11) — Mix voices picks its own
+            // model from the whole catalog, so it works even before anything is selected on MAIN.
             val mixViewModel: MixVoicesViewModel =
-                viewModel(
-                    key = ttsState.selected?.modelId,
-                    factory = viewModelFactory { initializer { MixVoicesViewModel(graph, ttsState.selected) } },
-                )
-            BackScaffold(title = "Mix voices", onBack = {
+                viewModel(factory = viewModelFactory { initializer { MixVoicesViewModel(graph, ttsState.selected) } })
+            BackScaffold(title = "Mix voices", current = Screen.MIX, onNavigate = { target ->
                 ttsViewModel.refreshModels() // a saved mix may have become selectable
-                screen = Screen.MAIN
+                screen = target
             }) { MixVoicesScreen(mixViewModel) }
         }
         Screen.LIBRARY -> {
             val ttsState by ttsViewModel.state.collectAsState()
             val libraryViewModel: ReadingLibraryViewModel =
                 viewModel(factory = viewModelFactory { initializer { ReadingLibraryViewModel(graph, ttsState.text) } })
-            BackScaffold(title = "Reading library", onBack = { screen = Screen.MAIN }) {
+            BackScaffold(title = "Reading library", current = Screen.LIBRARY, onNavigate = { screen = it }) {
                 ReadingLibraryScreen(
                     viewModel = libraryViewModel,
                     onOpen = { document, resume ->
@@ -286,14 +282,14 @@ private fun AppNav(
             val ttsState by ttsViewModel.state.collectAsState()
             val compareViewModel: CompareViewModel =
                 viewModel(factory = viewModelFactory { initializer { CompareViewModel(graph, ttsState.text) } })
-            BackScaffold(title = "Compare voices (A/B)", onBack = {
+            BackScaffold(title = "Compare voices (A/B)", current = Screen.COMPARE, onNavigate = { target ->
                 compareViewModel.stop()
-                screen = Screen.MAIN
+                screen = target
             }) { CompareScreen(compareViewModel) }
         }
         Screen.HELP -> {
             val ttsState by ttsViewModel.state.collectAsState()
-            BackScaffold(title = "Help", onBack = { screen = Screen.MAIN }) {
+            BackScaffold(title = "Help", current = Screen.HELP, onNavigate = { screen = it }) {
                 HelpScreen(
                     currentVersion = BuildConfig.VERSION_NAME,
                     update = ttsState.update,
@@ -308,25 +304,23 @@ private fun AppNav(
     }
 }
 
-// A Scaffold's topBar reserves and pads for the status bar itself, so this is also what keeps
-// the back control (and every screen below it) clear of the notification/status bar area.
-@OptIn(ExperimentalMaterial3Api::class)
+// Every sub-page's topBar: a hamburger drawer (issue #1) listing every destination, so no sub-page
+// strands the user with only a back arrow. [current] is this screen's own [Screen] value so the
+// drawer highlights it; [onNavigate] receives whichever destination the arrow (always MAIN) or the
+// drawer picks, so each call site's own leaving-this-screen cleanup (refreshModels, stop, …) runs
+// no matter which way the user leaves.
 @Composable
 private fun BackScaffold(
     title: String,
-    onBack: () -> Unit,
+    current: Screen,
+    onNavigate: (Screen) -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Text("←", style = MaterialTheme.typography.titleLarge) }
-                },
-            )
-        },
-    ) { innerPadding ->
-        Surface(modifier = Modifier.fillMaxSize().padding(innerPadding)) { content() }
-    }
+    NavDrawerScaffold(
+        title = title,
+        current = current,
+        onNavigate = onNavigate,
+        onBack = { onNavigate(Screen.MAIN) },
+        content = content,
+    )
 }
