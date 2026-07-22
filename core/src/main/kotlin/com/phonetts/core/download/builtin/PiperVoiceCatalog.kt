@@ -14,6 +14,10 @@ package com.phonetts.core.download.builtin
 // paths verbatim) — a mechanical transform, not hand-picking.
 // Snapshot taken 2026-07-22 (main revision): 166 voices across every language
 // rhasspy/piper-voices publishes.
+// LargeClass is suppressed deliberately: this is a flat generated DATA list (one entry per
+// upstream voice), not a class accreting logic — the rule it guards (keep logic classes small)
+// doesn't apply, and splitting a manifest into arbitrary sub-lists would only obscure it.
+@Suppress("LargeClass")
 object PiperVoiceCatalog {
     /** Every voice rhasspy/piper-voices publishes, one [BuiltInModel] per `<voice>.onnx`. */
     val ALL: List<BuiltInModel> =

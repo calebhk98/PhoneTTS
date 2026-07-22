@@ -121,6 +121,5 @@ object ModelStorageMigrator {
 
     private fun treeSize(f: File): Long = if (f.isDirectory) (f.listFiles()?.sumOf(::treeSize) ?: 0L) else f.length()
 
-    private fun treeFileCount(f: File): Int =
-        if (f.isDirectory) (f.listFiles()?.sumOf(::treeFileCount) ?: 0) else 1
+    private fun treeFileCount(f: File): Int = if (f.isDirectory) (f.listFiles()?.sumOf(::treeFileCount) ?: 0) else 1
 }
