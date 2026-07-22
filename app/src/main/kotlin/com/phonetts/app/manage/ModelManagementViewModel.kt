@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.ModelUsage
+import com.phonetts.core.registry.UnresolvedModelUsage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +24,10 @@ import kotlinx.coroutines.withContext
  * engine's a-priori estimate from the descriptor, refined by observed peaks in [resourceUsage]), and
  * the screen shows the device's current free RAM at the top. This is an INLINE hint, never a
  * blocking pop-up — the user can still attempt a heavy model on a small phone.
+ *
+ * Also lists bundles no engine could identify ([UnresolvedModelUsage], issue #8) so a download that
+ * detection declined is shown honestly ("downloaded, no engine available") instead of silently
+ * vanishing as if nothing were ever fetched.
  */
 class ModelManagementViewModel(
     private val modelManager: ModelManager,
@@ -38,6 +43,9 @@ class ModelManagementViewModel(
         val availableRamBytes: Long = 0L,
         val deletingId: String? = null,
         val error: String? = null,
+        /** Downloaded bundles no engine claimed (issue #8) — shown, but never selectable. */
+        val unresolved: List<UnresolvedModelUsage> = emptyList(),
+        val deletingUnresolvedId: String? = null,
     )
 
     private val mutableState = MutableStateFlow(UiState())
@@ -58,6 +66,7 @@ class ModelManagementViewModel(
                 peakRamByModelId = estimates,
                 availableRamBytes = availableRamBytes(),
                 error = null,
+                unresolved = modelManager.unresolvedUsage(),
             )
         }
     }
@@ -68,6 +77,17 @@ class ModelManagementViewModel(
             runCatching { withContext(Dispatchers.IO) { modelManager.remove(modelId) } }
                 .onSuccess { mutableState.update { it.copy(deletingId = null) } }
                 .onFailure { e -> mutableState.update { it.copy(deletingId = null, error = e.message) } }
+            refresh()
+        }
+    }
+
+    /** Delete an unidentified bundle's files (issue #8) — the user reclaiming space on a dead download. */
+    fun deleteUnresolved(bundleId: String) {
+        mutableState.update { it.copy(deletingUnresolvedId = bundleId, error = null) }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { modelManager.removeUnresolved(bundleId) } }
+                .onSuccess { mutableState.update { it.copy(deletingUnresolvedId = null) } }
+                .onFailure { e -> mutableState.update { it.copy(deletingUnresolvedId = null, error = e.message) } }
             refresh()
         }
     }

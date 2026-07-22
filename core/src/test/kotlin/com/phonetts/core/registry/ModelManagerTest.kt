@@ -190,4 +190,36 @@ class ModelManagerTest {
             assertFalse(result.engineUnloaded)
             assertEquals(0, engineB.unloadCount)
         }
+
+    // Issue #8: an unidentified bundle must show up somewhere honest, not just disappear.
+    @Test
+    fun unresolvedUsageReportsUnclaimedBundlesWithTheirSize() {
+        val catalog = ModelCatalog().apply { markUnresolved("mystery", "no engine claimed it") }
+        val manager = ModelManager(catalog, dirSizeBytes = { 42L }, deleteModelDir = { true })
+
+        val usage = manager.unresolvedUsage()
+
+        assertEquals(listOf(UnresolvedModelUsage("mystery", 42L, "no engine claimed it")), usage)
+    }
+
+    @Test
+    fun removeUnresolvedDeletesFilesAndForgetsTheMarker() {
+        val catalog = ModelCatalog().apply { markUnresolved("mystery", "no engine claimed it") }
+        var deleteCalledWith: String? = null
+        val manager =
+            ModelManager(
+                catalog,
+                dirSizeBytes = { 0L },
+                deleteModelDir = { id ->
+                    deleteCalledWith = id
+                    true
+                },
+            )
+
+        val filesDeleted = manager.removeUnresolved("mystery")
+
+        assertTrue(filesDeleted)
+        assertEquals("mystery", deleteCalledWith)
+        assertEquals(emptyList(), manager.unresolvedUsage())
+    }
 }

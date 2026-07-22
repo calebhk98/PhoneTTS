@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -23,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.model.Origin
 import com.phonetts.core.registry.ModelUsage
+import com.phonetts.core.registry.UnresolvedModelUsage
 import kotlin.math.ln
 import kotlin.math.pow
 
@@ -33,12 +35,21 @@ import kotlin.math.pow
  * [ModelManagementViewModel.refresh] with no code change (same SSOT discipline as the model
  * dropdown).
  *
- * Not wired into app navigation by this change — callers add a nav entry that constructs
- * [ModelManagementViewModel] from a [com.phonetts.core.registry.ModelManager] and passes it here.
+ * Re-reads the catalog every time this screen is (re)entered, not just once at first creation
+ * (issue #10 — the [ModelManagementViewModel] instance otherwise lives for the whole Activity and
+ * would keep showing whatever was downloaded the FIRST time this screen was ever opened).
+ *
+ * Also lists downloaded-but-unidentified bundles (issue #8) so a download the resolver couldn't
+ * identify is shown honestly instead of vanishing as if it were never fetched.
  */
 @Composable
 fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
     val state by viewModel.state.collectAsState()
+
+    // Fixes issue #10: this composable re-enters every time the user navigates to this screen (the
+    // caller un-mounts it on the way out), so LaunchedEffect(Unit) re-fires here even though the
+    // ViewModel itself is a single long-lived instance whose init{} only ran once.
+    LaunchedEffect(Unit) { viewModel.refresh() }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Storage used: ${formatBytes(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
@@ -49,7 +60,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
 
         state.error?.let { Text("Error: $it") }
 
-        if (state.usage.isEmpty()) {
+        if (state.usage.isEmpty() && state.unresolved.isEmpty()) {
             Text("No models downloaded yet.")
         }
 
@@ -61,6 +72,14 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                     freeRamBytes = state.availableRamBytes,
                     isDeleting = state.deletingId == usage.descriptor.modelId,
                     onDelete = { viewModel.delete(usage.descriptor.modelId) },
+                )
+                HorizontalDivider()
+            }
+            items(state.unresolved, key = { it.bundleId }) { unresolved ->
+                UnresolvedUsageRow(
+                    unresolved = unresolved,
+                    isDeleting = state.deletingUnresolvedId == unresolved.bundleId,
+                    onDelete = { viewModel.deleteUnresolved(unresolved.bundleId) },
                 )
                 HorizontalDivider()
             }
@@ -85,6 +104,28 @@ private fun ModelUsageRow(
             Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold)
             Text(originLabel(usage.descriptor.origin) + " · " + formatBytes(usage.sizeBytes))
             Text(ramHint(peakRamBytes, freeRamBytes), style = MaterialTheme.typography.bodySmall)
+        }
+        DeleteControl(isDeleting, onDelete)
+    }
+}
+
+// Issue #8: a downloaded bundle no engine claimed — shown honestly instead of vanishing as if it
+// were never fetched. Never selectable; deleting it just reclaims the disk space.
+@Composable
+private fun UnresolvedUsageRow(
+    unresolved: UnresolvedModelUsage,
+    isDeleting: Boolean,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
+            Text("Downloaded, no engine available · " + formatBytes(unresolved.sizeBytes))
+            Text(unresolved.reason, style = MaterialTheme.typography.bodySmall)
         }
         DeleteControl(isDeleting, onDelete)
     }

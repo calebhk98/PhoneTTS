@@ -22,6 +22,17 @@ data class ModelUsage(
     val sizeBytes: Long,
 )
 
+/**
+ * One row's worth of info for a downloaded-but-unidentified bundle (issue #8): its on-disk
+ * footprint and why no engine claimed it, so a "manage models" UI can show it honestly ("downloaded,
+ * no engine available") instead of it silently vanishing as if it were never downloaded.
+ */
+data class UnresolvedModelUsage(
+    val bundleId: String,
+    val sizeBytes: Long,
+    val reason: String,
+)
+
 /** What happened when [ModelManager.remove] was asked to remove a model. */
 data class ModelRemoval(
     val modelId: String,
@@ -63,6 +74,21 @@ class ModelManager(
 
     /** Sum of [usage] sizes — what a "storage used" header reads. */
     fun totalBytes(): Long = usage().sumOf { it.sizeBytes }
+
+    /**
+     * Every bundle on disk no engine could identify (issue #8), paired with its on-disk size —
+     * present so a "manage models" UI can list it honestly instead of it looking like nothing was
+     * ever downloaded. These are never selectable (rule 4: `inspect()` fails closed, never guessed).
+     */
+    fun unresolvedUsage(): List<UnresolvedModelUsage> =
+        catalog.listUnresolved().map { UnresolvedModelUsage(it.bundleId, dirSizeBytes(it.bundleId), it.reason) }
+
+    /** Delete an unresolved bundle's files and forget it — the user freeing space on a dead download. */
+    fun removeUnresolved(bundleId: String): Boolean {
+        val filesDeleted = deleteModelDir(bundleId)
+        catalog.clearUnresolved(bundleId)
+        return filesDeleted
+    }
 
     /** Remove [modelId] from the catalog, delete its weights, and clean up all references to it. */
     fun remove(modelId: String): ModelRemoval {
