@@ -7,15 +7,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -124,26 +130,38 @@ private fun UpdatesSection(
     }
 }
 
-// The reading-friendly theme picker. Options are derived from AppTheme.entries (SSOT: the enum is
-// the single authority for which themes exist), so adding a scheme needs no edit here.
+// The reading-friendly theme picker (issue #12: a dropdown, not one radio row per theme). Options
+// are derived from AppTheme.entries and labeled by AppTheme.displayName (SSOT: the enum is the
+// single authority for which themes exist and what they're called), so adding a scheme needs no
+// edit here.
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ThemeSection(
     currentTheme: AppTheme,
     onThemeSelected: (AppTheme) -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Section("Appearance") {
         Body("Pick a color theme — sepia and true-black are tuned for long reading / OLED battery.")
-        AppTheme.entries.forEach { theme ->
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .selectable(selected = theme == currentTheme, onClick = { onThemeSelected(theme) }),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RadioButton(selected = theme == currentTheme, onClick = { onThemeSelected(theme) })
-                Text(theme.displayName)
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            TextField(
+                value = currentTheme.displayName,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Theme") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier.menuAnchor().fillMaxWidth(),
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                AppTheme.entries.forEach { theme ->
+                    DropdownMenuItem(
+                        text = { Text(theme.displayName) },
+                        onClick = {
+                            onThemeSelected(theme)
+                            expanded = false
+                        },
+                    )
+                }
             }
         }
     }

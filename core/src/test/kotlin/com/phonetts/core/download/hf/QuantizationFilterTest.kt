@@ -2,6 +2,7 @@ package com.phonetts.core.download.hf
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class QuantizationClassifierTest {
@@ -106,6 +107,54 @@ class QuantizationFilterTest {
         val picked = QuantizationFilter.filesForVariant(files, QuantizationVariant.UNKNOWN)
 
         assertEquals(setOf("config.json", "tokenizer.json"), picked.map { it.path }.toSet())
+    }
+}
+
+class QuantizationSingleVariantTest {
+    // Reproduces issue #9's coqui/XTTS-v2 example: a single-precision model whose auxiliary weight
+    // files (dvae.pth, mel_stats.pth) carry no fp16/q8/etc. token. "model" and "dvae" are bare
+    // stems (no separator) so they classify FP32; "mel_stats" has a separator but no recognized
+    // token so it classifies UNKNOWN — that must NOT read as "two precisions to choose between".
+    private val xttsLikeFiles =
+        listOf(
+            HfTreeEntry(type = "file", path = "config.json", size = 4_000),
+            HfTreeEntry(type = "file", path = "model.pth", size = 1_900_000_000),
+            HfTreeEntry(type = "file", path = "dvae.pth", size = 100_000_000),
+            HfTreeEntry(type = "file", path = "mel_stats.pth", size = 1_000),
+        )
+
+    @Test
+    fun aSingleKnownPrecisionPlusAnAmbiguousAuxiliaryFileIsNotTwoVariants() {
+        assertEquals(
+            setOf(QuantizationVariant.FP32, QuantizationVariant.UNKNOWN),
+            QuantizationFilter.availableVariants(xttsLikeFiles),
+            "sanity check: the raw classification is still ambiguous per-file",
+        )
+        assertEquals(setOf(QuantizationVariant.FP32), QuantizationFilter.knownVariants(xttsLikeFiles))
+        assertFalse(QuantizationFilter.requiresChoice(xttsLikeFiles))
+    }
+
+    @Test
+    fun pickingTheSoleKnownVariantDoesNotDropAnAmbiguouslyNamedAuxiliaryWeightFile() {
+        val picked = QuantizationFilter.filesForVariant(xttsLikeFiles, QuantizationVariant.FP32)
+
+        assertEquals(
+            setOf("config.json", "model.pth", "dvae.pth", "mel_stats.pth"),
+            picked.map { it.path }.toSet(),
+            "mel_stats.pth must not be silently dropped just because its name is ambiguous",
+        )
+    }
+
+    @Test
+    fun aGenuineSecondKnownPrecisionStillRequiresAChoice() {
+        val twoKnownPrecisions =
+            xttsLikeFiles + HfTreeEntry(type = "file", path = "model_fp16.pth", size = 950_000_000)
+
+        assertTrue(QuantizationFilter.requiresChoice(twoKnownPrecisions))
+        assertEquals(
+            setOf(QuantizationVariant.FP32, QuantizationVariant.FP16),
+            QuantizationFilter.knownVariants(twoKnownPrecisions),
+        )
     }
 }
 

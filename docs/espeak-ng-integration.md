@@ -5,6 +5,48 @@ This is the implementation doc for the espeak-ng phonemizer, following the explo
 threading gotchas, decision matrix); this doc is the "how do I actually build and verify it"
 companion.
 
+## Status (issue #13 — verified with a real NDK + espeak-ng 1.52.0 checkout)
+
+The assumptions below were originally written blind (no NDK/device available). They have now
+been validated end-to-end in a build environment with the Android NDK (r27.0.12077973, now pinned
+via `android.ndkVersion` in `app/build.gradle.kts`) and a real `espeak-ng` 1.52.0 checkout:
+`gradle -PwithEspeak=true :app:assembleDebug` succeeds, `libphonetts_espeak.so` links for both
+`arm64-v8a` and `armeabi-v7a` with the expected `Java_com_phonetts_app_text_EspeakNative_*` JNI
+symbols resolved against real `espeak_Initialize`/`espeak_SetVoiceByName`/`espeak_TextToPhonemes`
+(not the stub), and the `espeak-ng-data` asset packaging path (below) was exercised and produces a
+real APK with `assets/espeak-ng-data/*` and both native libs present. **CI now builds this
+automatically** — `.github/workflows/android.yml`'s `apk` job installs the NDK, fetches the
+pinned source, builds the phoneme/dict data with a host-native CMake pass, and passes
+`-PwithEspeak=true` to `assembleDebug`, so every published release APK includes real
+phonemization, not the passthrough fallback. Two real build bugs turned up and were fixed (see
+`app/src/main/cpp/CMakeLists.txt` and `app/build.gradle.kts` for the in-line explanations):
+
+1. espeak-ng's own `src/CMakeLists.txt` links its `espeak-ng` target **PUBLIC** against an
+   `espeak-include` interface library exposing both `include/` (the real public headers we need)
+   and `include/compat/` (libc portability shims for espeak-ng's *own* `.c` files only). Because
+   `-I` flags always win over the toolchain's system search paths, that second directory shadowed
+   the NDK libc++'s own `<wctype.h>`/`<cwctype>` for our JNI `.cpp` file too (which only needs
+   `<mutex>`/`<string>` plus `espeak-ng/speak_lib.h`), breaking the build with `'ucd/ucd.h' file
+   not found`. Fixed by re-exposing only the real `include/` dir after `add_subdirectory(...)`.
+2. Without restricting the CMake target list, Android Gradle Plugin asks ninja to build
+   espeak-ng's **entire** `all` graph reachable from its subdirectory — its CLI binary, its unit
+   tests, and a `data ALL` custom target that *executes* the just-cross-compiled arm64 binary on
+   the host to generate phoneme/dictionary data, which fails outright on an x86_64 build machine.
+   None of that is needed inside the Android cross-build: the data this app ships is produced
+   separately by a **host-native** CMake pass (unchanged from step 2 below) and copied in as an
+   asset. Fixed via `externalNativeBuild.cmake.targets(...)` restricting the build to only the
+   JNI `.so`(s) actually packaged.
+
+The include-path assumption and the `espeak_TextToPhonemes` clause-loop idiom noted below both
+held up as originally written — no changes were needed there.
+
+**Still unverified: real on-device phoneme output.** This environment has no Android device/
+emulator, so "does it actually initialize and produce sane IPA on a phone" (the "Verifying phoneme
+output" section below) remains to be checked on real hardware — everything up to a successful,
+loaded `.so` + installed data has been confirmed; whether `espeak_Initialize` on-device (a real ARM
+CPU, real filesystem paths under `/data/data/...`) succeeds and phonemization output actually fixes
+Piper/Kokoro/KittenTTS/MeloTTS's garbled audio needs a phone or emulator to confirm.
+
 ## What shipped
 
 | Piece | File |
@@ -31,8 +73,8 @@ in the research doc, confirmed against the upstream repo's tag list. `scripts/fe
 pins this exact tag; bump it deliberately (the CMake flags and JNI code were written against
 this release specifically) rather than tracking `master`.
 
-## Build steps (do this once, on a machine with network + the Android SDK/NDK — neither is
-available in the environment this integration was authored in)
+## Build steps (do this once, on a machine with network + the Android SDK/NDK — CI now does this
+automatically for every published release, see the "Status" section above)
 
 ### 1. Fetch the espeak-ng source
 
@@ -68,25 +110,34 @@ cp -r build-native/espeak-ng-data ../../../assets/espeak-ng-data
 
 To keep the APK small, trim `assets/espeak-ng-data/` down to the languages the shipped voices
 actually need (at minimum `en` for the Piper/KittenTTS/Kokoro voices named in
-`docs/research/model-facts.md`) before committing — full data is ~50 MB uncompressed. Both
-`app/src/main/cpp/espeak-ng/` and `app/src/main/assets/espeak-ng-data/` are git-ignored (see
-`.gitignore`) — this is generated/vendored content, never committed, consistent with the
-"weights are never bundled/committed" rule (CLAUDE.md rule 7 — this isn't weights but the same
-"large generated binary blob" logic applies).
+`docs/research/model-facts.md`) before committing — measured full data (all languages, dicts,
+`phondata`, `intonations`, `lang/`, `voices/!v`) is ~19 MB uncompressed, not the ~50 MB originally
+estimated here; CI currently ships the full set rather than trimming (simpler, still small enough
+not to matter). Both `app/src/main/cpp/espeak-ng/` and `app/src/main/assets/espeak-ng-data/` are
+git-ignored (see `.gitignore`) — this is generated/vendored content, never committed, consistent
+with the "weights are never bundled/committed" rule (CLAUDE.md rule 7 — this isn't weights but the
+same "large generated binary blob" logic applies).
 
 ### 3. Build normally
 
 ```bash
-./gradlew :app:assembleDebug
+./gradlew :app:assembleDebug -PwithEspeak=true
 ```
 
-`app/build.gradle.kts` wires `externalNativeBuild { cmake { path = "src/main/cpp/CMakeLists.txt";
-version = "3.22.1" } }` at the `android {}` level, and `-DANDROID_STL=c++_shared` in
-`defaultConfig.externalNativeBuild.cmake.arguments`. No NDK version is pinned in this repo yet —
-authored without a local NDK to validate against; pin `android.ndkVersion` once a real build has
-confirmed a working one (r23+ needed for CMake 3.22.1 compatibility).
+(Omit `-PwithEspeak=true` and the module still assembles — see "Do NOT break no-NDK dev builds"
+below — but without it you get the stub `.so` + `PassthroughPhonemizer` fallback, not real
+phonemization.)
 
-## Verifying phoneme output (on-device / emulator — cannot be done in this environment)
+`app/build.gradle.kts` wires `externalNativeBuild { cmake { path = "src/main/cpp/CMakeLists.txt";
+version = "3.22.1" } }` at the `android {}` level, `-DANDROID_STL=c++_shared` in
+`defaultConfig.externalNativeBuild.cmake.arguments`, and a `targets(...)` restriction so only the
+JNI `.so`(s) actually packaged get built (not espeak-ng's own CLI/tests/data-generation targets —
+see the "Status" section above for why). `android.ndkVersion` is now pinned to `27.0.12077973`,
+the version a real build confirmed working end-to-end (r23+ needed for CMake 3.22.1
+compatibility; bump deliberately if a future native bridge needs newer).
+
+## Verifying phoneme output (on-device / emulator — still cannot be done in this environment;
+no Android device/emulator is available here even though the native build itself is now verified)
 
 1. Confirm `libphonetts_espeak.so` loaded: `adb logcat -s EspeakNative` should show no
    `"failed to load"` warning at app start.
@@ -137,22 +188,27 @@ In every case the delegate is `PassthroughPhonemizer` (text returned unchanged),
 explicitly documented as "used only as a fallback" (see its kdoc) so it's never mistaken for the
 real implementation in code review.
 
-## Assumptions flagged as unverified (no NDK/device available while writing this)
+## Assumptions verified by a real NDK + espeak-ng 1.52.0 build (issue #13), vs. still open
 
-- **espeak-ng header include path** (`espeak_jni.cpp`): assumes `#include
-  <espeak-ng/speak_lib.h>` resolves once `phonetts_espeak` links against the `espeak-ng` CMake
-  target, based on upstream's own `target_include_directories(espeak-ng PUBLIC src/include)`. If
-  1.52.0's layout differs, this is the one include line to fix.
-- **`espeak_TextToPhonemes` clause-loop idiom**: the JNI wrapper loops `while (textPtr !=
-  nullptr)`, matching the pattern used by other espeak-ng JNI/C++ consumers (e.g.
-  piper-phonemize), rather than the single-call version sketched in the research doc (which
-  under-reads multi-clause input). Bounded by `kMaxClauseIterations` as a defensive cap.
+- **espeak-ng header include path** (`espeak_jni.cpp`): `#include <espeak-ng/speak_lib.h>`
+  resolves — **confirmed**, with a caveat: upstream doesn't actually mark this `PUBLIC` on the
+  `espeak-ng` target directly (it's `PUBLIC` via a separate `espeak-include` interface library),
+  and that same public exposure also leaked `include/compat` onto the include path, which broke
+  the build for an unrelated reason (see "Status" above) — fixed in `CMakeLists.txt`.
+- **`espeak_TextToPhonemes` clause-loop idiom**: compiles and links cleanly as written — the
+  `while (textPtr != nullptr)` loop bounded by `kMaxClauseIterations`. Compiling doesn't prove the
+  runtime behavior (does it correctly walk multi-clause input without hanging or truncating?) —
+  that still needs a real device/emulator call, per "Verifying phoneme output" below.
 - **Language → voice mapping** (`EspeakPhonemizer.toEspeakVoice`): only `"en"` is explicitly
   mapped to `"en-us"`; everything else passes through to espeak-ng's own language-code
-  resolution unchanged. Revisit once real voice language tags from shipped models are known.
-- **`espeak-ng-data` output path** from the `data` CMake target: the exact directory name has
-  moved across espeak-ng releases in the past; verify it for 1.52.0 specifically when running
-  step 2 above.
+  resolution unchanged. Still unverified against real voice language tags — this is Kotlin logic
+  the native build couldn't exercise; revisit once real voice language tags from shipped models
+  are known.
+- **`espeak-ng-data` output path** from the `data` CMake target — **confirmed** for 1.52.0: the
+  host-native `cmake --build ... --target data` pass produces `espeak-ng-data/` directly under
+  the build directory (`<build-native>/espeak-ng-data/`), containing `phondata*`, `phonindex`,
+  `phontab`, `intonations`, `lang/`, `voices/`, and one `<lang>_dict` per compiled language —
+  matching what this doc's step 2 already assumed.
 
 None of the above required changing `core/src/main/kotlin/com/phonetts/core/text/Phonemizer.kt`
 or any engine's `synthesize`/tensor code — the `Phonemizer` interface and every engine's

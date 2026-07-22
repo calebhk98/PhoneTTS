@@ -16,12 +16,19 @@ data class RtfResult(
     val audioSecondsProduced: Double,
     val wallClockElapsedSeconds: Double,
     val chunksProduced: Int,
+    /**
+     * Wall-clock seconds from generation start to the first emitted [FloatArray] chunk (issue #14) —
+     * a real measurement, taken at the moment the first chunk actually lands. `null` when no chunk
+     * ever arrived (nothing to measure), never a guessed value.
+     */
+    val timeToFirstAudioSeconds: Double? = null,
 ) {
     init {
         require(calibrationWordCount >= 0) { "calibrationWordCount must not be negative" }
         require(audioSecondsProduced >= 0.0) { "audioSecondsProduced must not be negative" }
         require(wallClockElapsedSeconds >= 0.0) { "wallClockElapsedSeconds must not be negative" }
         require(chunksProduced >= 0) { "chunksProduced must not be negative" }
+        timeToFirstAudioSeconds?.let { require(it >= 0.0) { "timeToFirstAudioSeconds must not be negative" } }
     }
 
     /** wall / audio: measured seconds of wall-clock per second of audio, this run. */
@@ -65,18 +72,23 @@ object RtfEstimator {
         val startNanos = now()
         var samplesProduced = 0L
         var chunksProduced = 0
+        var firstChunkNanos: Long? = null
 
         engine.synthesize(calibrationText, voiceId, params).collect { chunk ->
+            if (firstChunkNanos == null) firstChunkNanos = now()
             samplesProduced += chunk.size
             chunksProduced++
         }
 
         val elapsedSeconds = ((now() - startNanos) / NANOS_PER_SECOND).coerceAtLeast(0.0)
+        val timeToFirstAudioSeconds =
+            firstChunkNanos?.let { ((it - startNanos) / NANOS_PER_SECOND).coerceAtLeast(0.0) }
         return RtfResult(
             calibrationWordCount = wordCount,
             audioSecondsProduced = samplesProduced / sampleRate.toDouble(),
             wallClockElapsedSeconds = elapsedSeconds,
             chunksProduced = chunksProduced,
+            timeToFirstAudioSeconds = timeToFirstAudioSeconds,
         )
     }
 }

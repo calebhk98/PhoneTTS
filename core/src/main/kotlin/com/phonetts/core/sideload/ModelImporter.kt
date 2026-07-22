@@ -13,6 +13,13 @@ import com.phonetts.core.resolver.Resolver
  * This is the SAME pipeline the built-in models use (they are just resolved from a downloaded
  * manifest bundle instead of a sideloaded folder), which is exactly why auto-load is "almost
  * nothing new": inspect → resolve → register, triggered by a file drop.
+ *
+ * A bundle no engine can identify is a resolve failure, still surfaced to the caller (whoever
+ * triggered the import — the launch-time re-scan, a Hugging Face download, a sideload) exactly as
+ * before. But it is also recorded in the [catalog] as an [com.phonetts.core.registry.UnresolvedModel]
+ * (issue #8) first, so the model isn't just invisible on disk — a "manage models" screen can list it
+ * honestly as "downloaded, no engine available" rather than the app acting as if it were never
+ * downloaded and misleadingly telling the user to redownload it.
  */
 class ModelImporter(
     private val reader: BundleReader,
@@ -21,8 +28,9 @@ class ModelImporter(
 ) {
     fun import(location: String): ModelDescriptor {
         val bundle = reader.read(location)
-        val descriptor = resolver.resolve(bundle)
-        catalog.add(descriptor)
-        return descriptor
+        return runCatching { resolver.resolve(bundle) }
+            .onSuccess { catalog.add(it) }
+            .onFailure { e -> catalog.markUnresolved(bundle.id, e.message ?: "could not identify this model") }
+            .getOrThrow()
     }
 }

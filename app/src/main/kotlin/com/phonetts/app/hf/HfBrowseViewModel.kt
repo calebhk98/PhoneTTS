@@ -6,12 +6,18 @@ import com.phonetts.app.ModelStorage
 import com.phonetts.core.download.builtin.BuiltInCatalog
 import com.phonetts.core.download.builtin.BuiltInModel
 import com.phonetts.core.download.hf.HfCatalog
+import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.download.hf.HfDownloadPlan
+import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfQuantizedDownloadPlan
+import com.phonetts.core.download.hf.HfResultsView
+import com.phonetts.core.download.hf.HfSizeEstimator
+import com.phonetts.core.download.hf.HfSortOption
 import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.QuantizationVariant
+import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.registry.ModelCatalog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -24,9 +30,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Drives the HF browse screen: live search of text-to-speech models, and download → import of a
- * chosen repo. All model detection is delegated to the core resolver via [HfDownloader]; this class
- * holds UI state only and names no model family.
+ * Drives the HF browse screen: live search of text-to-speech models, sort/filter over the results
+ * (issue #6), download → import of a chosen repo with **multiple downloads running at once**
+ * (issue #2), on-demand size lookups (issue #7), and a retained/copyable error log (issue #3). All
+ * model detection is delegated to the core resolver via [HfDownloader]; this class holds UI state
+ * only and names no model family.
  */
 class HfBrowseViewModel(
     private val catalog: HfCatalog,
@@ -36,37 +44,17 @@ class HfBrowseViewModel(
     // model whose runtime isn't present (e.g. CosyVoice3 in a non-native build), so a one-tap
     // download never lands a model that can't load. Defaults to "not available" — fail-closed.
     private val isRuntimeAvailable: (String) -> Boolean = { false },
+    // Injectable wall-clock so progress/ETA math (issue #7) is deterministic to test; defaults to
+    // the real clock on device.
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
-    data class UiState(
-        val query: String = "",
-        val results: List<HfModelSummary> = emptyList(),
-        val loading: Boolean = false,
-        val downloadingId: String? = null,
-        val progress: Pair<Int, Int>? = null,
-        val error: String? = null,
-        // Every model already in the catalog (this session's downloads AND anything imported in a
-        // prior session) keyed by the SAME sanitized id every engine's descriptor.modelId uses
-        // (ModelStorage.sanitize) — so "is this row already installed" survives leaving/reopening
-        // this screen, not just the moment right after a fresh download completes.
-        val installedIds: Set<String> = emptySet(),
-        // Set when a chosen repo ships more than one weight precision and the user must pick one
-        // (a budget-device win: fetch only fp16/q8 instead of every variant). Null otherwise.
-        val variantChoice: VariantChoice? = null,
-    )
+    private val mutableState = MutableStateFlow(HfBrowseUiState(installedIds = installedIdsSnapshot()))
+    val state: StateFlow<HfBrowseUiState> = mutableState.asStateFlow()
 
-    /** A pending precision choice: the repo's files plus the distinct precisions it offers. */
-    data class VariantChoice(
-        val modelId: String,
-        val files: List<HfTreeEntry>,
-        val variants: List<QuantizationVariant>,
-    )
-
-    private val mutableState = MutableStateFlow(UiState(installedIds = installedIdsSnapshot()))
-    val state: StateFlow<UiState> = mutableState.asStateFlow()
-
-    // The in-flight download coroutine (file listing + fetch + import), tracked so the user can
-    // cancel a long download. Cancelling leaves any partial file on disk so a later retry resumes.
-    private var downloadJob: Job? = null
+    // One coroutine per repo id currently in flight (listing files, or fetching them) — a map, not
+    // a single slot, so the user can start a second download while the first is still running and
+    // still cancel each independently (issue #2).
+    private val downloadJobs = mutableMapOf<String, Job>()
 
     /**
      * Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md), minus any whose
@@ -88,6 +76,21 @@ class HfBrowseViewModel(
 
     private fun installedIdsSnapshot(): Set<String> = modelCatalog.list().map { it.modelId }.toSet()
 
+    /** The current results after [HfBrowseUiState.sort]/[HfBrowseUiState.tagFilter] are applied — a
+     * pure recompute over already-fetched data (issue #6), never a second network call. */
+    fun displayedResults(): List<HfModelSummary> {
+        val current = mutableState.value
+        return HfResultsView.apply(current.results, current.sort, current.tagFilter)
+    }
+
+    /** Every tag present in the current result set, for the filter menu's choices — derived from
+     * data, never a hardcoded list (issue #6 SSOT rule). */
+    fun availableTags(): List<String> = HfResultsView.availableTags(mutableState.value.results)
+
+    fun onSortChange(sort: HfSortOption) = mutableState.update { it.copy(sort = sort) }
+
+    fun onTagFilterChange(tag: String?) = mutableState.update { it.copy(tagFilter = tag) }
+
     /** Download a curated model directly — no search, no webpage — using its known file list. */
     fun downloadBuiltIn(model: BuiltInModel) = runDownload(model.id, model.downloadItems())
 
@@ -99,84 +102,173 @@ class HfBrowseViewModel(
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { catalog.search(query) } }
                 .onSuccess { results -> mutableState.update { it.copy(loading = false, results = results) } }
-                .onFailure { e -> mutableState.update { it.copy(loading = false, error = e.message) } }
+                .onFailure { e ->
+                    // logError does its own atomic state update, so it must NOT be called from
+                    // inside this update {} block below — MutableStateFlow.update retries its
+                    // transform on a compare-and-set conflict, and a nested update() call here would
+                    // re-run (and re-log) on every retry.
+                    val message = logError(null, e)
+                    mutableState.update { it.copy(loading = false, error = message) }
+                }
         }
     }
 
     fun download(model: HfModelSummary) {
-        mutableState.update { it.copy(downloadingId = model.id, progress = null, error = null) }
-        downloadJob =
+        if (mutableState.value.isDownloading(model.id)) return // already fetching this repo
+        beginTracking(model.id)
+        downloadJobs[model.id] =
             viewModelScope.launch {
                 runCatching { withContext(Dispatchers.IO) { catalog.listFiles(model.id) } }
                     .onSuccess { files -> onFilesListed(model.id, files) }
-                    .onFailure { e ->
-                        if (e is CancellationException) throw e
-                        mutableState.update { it.copy(downloadingId = null, progress = null, error = e.message) }
-                    }
+                    .onFailure { e -> failDownload(model.id, e) }
             }
     }
 
     /**
-     * Cancel the in-flight download. The coroutine is cancelled cooperatively (the fetch loop checks
-     * for it each buffer) and any partially-downloaded file is left on disk, so re-tapping Download
-     * resumes from where it stopped rather than starting the whole weight file over.
+     * Fetch just the repo's total download size, without downloading it (issue #7). Cached in
+     * state once known so re-opening the screen or scrolling doesn't refetch. A model whose size
+     * can't be determined (network hiccup) simply stays unknown — never a guessed number.
      */
-    fun cancelDownload() {
-        downloadJob?.cancel()
-        downloadJob = null
-        mutableState.update { it.copy(downloadingId = null, progress = null, variantChoice = null) }
+    fun loadSize(modelId: String) {
+        val current = mutableState.value
+        if (modelId in current.sizeEstimates || modelId in current.sizeLoading) return
+        mutableState.update { it.copy(sizeLoading = it.sizeLoading + modelId) }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { catalog.listFiles(modelId) } }
+                .onSuccess { files ->
+                    val estimate = HfSizeEstimator.estimate(files)
+                    mutableState.update {
+                        it.copy(
+                            sizeLoading = it.sizeLoading - modelId,
+                            sizeEstimates = it.sizeEstimates + (modelId to estimate),
+                        )
+                    }
+                }.onFailure { e ->
+                    if (e is CancellationException) throw e
+                    mutableState.update { it.copy(sizeLoading = it.sizeLoading - modelId) }
+                    logError(modelId, e)
+                }
+        }
+    }
+
+    /**
+     * Cancel one repo's in-flight download. The coroutine is cancelled cooperatively (the fetch
+     * loop checks for it each buffer) and any partially-downloaded file is left on disk, so
+     * re-tapping Download resumes from where it stopped rather than starting the whole thing over.
+     * Other repos' downloads are untouched (issue #2).
+     */
+    fun cancelDownload(modelId: String) {
+        downloadJobs.remove(modelId)?.cancel()
+        endTracking(modelId)
+        if (mutableState.value.variantChoice?.modelId == modelId) cancelVariantChoice()
     }
 
     // If the repo ships one precision (or none classifiable), download it straight away; if it
-    // ships several, surface a picker so the user fetches only the precision they want.
+    // genuinely ships more than one KNOWN precision, surface a picker so the user fetches only the
+    // one they want (issue #9: an ambiguously-named auxiliary weight file must not force a prompt).
     private fun onFilesListed(
         modelId: String,
         files: List<HfTreeEntry>,
     ) {
-        val variants = QuantizationFilter.availableVariants(files).toList()
-        if (variants.size <= 1) {
+        if (!QuantizationFilter.requiresChoice(files)) {
             runDownload(modelId, HfDownloadPlan.forFiles(modelId, files))
             return
         }
-        mutableState.update {
-            it.copy(downloadingId = null, variantChoice = VariantChoice(modelId, files, variants))
-        }
+        endTracking(modelId)
+        val variants = QuantizationFilter.knownVariants(files).toList()
+        mutableState.update { it.copy(variantChoice = VariantChoice(modelId, files, variants)) }
     }
 
     /** Download only the chosen precision's weights (plus the shared config/tokenizer files). */
     fun chooseVariant(variant: QuantizationVariant) {
         val choice = mutableState.value.variantChoice ?: return
-        mutableState.update { it.copy(variantChoice = null, downloadingId = choice.modelId, progress = null) }
+        mutableState.update { it.copy(variantChoice = null) }
         runDownload(choice.modelId, HfQuantizedDownloadPlan.forVariant(choice.modelId, choice.files, variant))
     }
 
-    fun cancelVariantChoice() = mutableState.update { it.copy(variantChoice = null, downloadingId = null) }
+    fun cancelVariantChoice() = mutableState.update { it.copy(variantChoice = null) }
 
     private fun runDownload(
         modelId: String,
-        items: List<com.phonetts.core.download.hf.HfDownloadItem>,
+        items: List<HfDownloadItem>,
     ) {
-        mutableState.update { it.copy(downloadingId = modelId, progress = null, error = null) }
-        downloadJob =
+        val sizeEstimate = HfSizeEstimator.estimateItems(items)
+        val exactBytesTotal = sizeEstimate.knownBytes.takeIf { sizeEstimate.isExact }
+        beginTracking(modelId, filesTotal = items.size, bytesTotal = exactBytesTotal)
+        downloadJobs[modelId] =
             viewModelScope.launch {
                 runCatching {
-                    downloader.downloadAndImport(modelId, items) { done, total ->
-                        mutableState.update { it.copy(progress = done to total) }
-                    }
-                }.onSuccess { descriptor ->
-                    mutableState.update {
-                        it.copy(
-                            downloadingId = null,
-                            progress = null,
-                            installedIds = it.installedIds + descriptor.modelId,
-                        )
-                    }
-                }.onFailure { e ->
-                    // Cancellation is a user action, not a failure — let it propagate; cancelDownload
-                    // already reset the UI. Only real errors surface an error line.
-                    if (e is CancellationException) throw e
-                    mutableState.update { it.copy(downloadingId = null, progress = null, error = e.message) }
-                }
+                    downloader.downloadAndImport(
+                        modelId = modelId,
+                        items = items,
+                        onProgress = { done, total ->
+                            updateProgress(modelId) { it.copy(filesDone = done, filesTotal = total) }
+                        },
+                        onBytesProgress = { bytesDone, bytesTotal ->
+                            updateProgress(modelId) {
+                                it.copy(bytesDone = bytesDone, bytesTotal = bytesTotal ?: it.bytesTotal)
+                            }
+                        },
+                    )
+                }.onSuccess { descriptor -> completeDownload(modelId, descriptor) }
+                    .onFailure { e -> failDownload(modelId, e) }
             }
+    }
+
+    private fun beginTracking(
+        modelId: String,
+        filesTotal: Int = 0,
+        bytesTotal: Long? = null,
+    ) {
+        val progress = HfDownloadProgress(filesTotal = filesTotal, bytesTotal = bytesTotal, startedAtMs = clock())
+        mutableState.update { it.copy(downloads = it.downloads + (modelId to progress), error = null) }
+    }
+
+    private fun endTracking(modelId: String) = mutableState.update { it.copy(downloads = it.downloads - modelId) }
+
+    private fun updateProgress(
+        modelId: String,
+        transform: (HfDownloadProgress) -> HfDownloadProgress,
+    ) {
+        mutableState.update { current ->
+            val progress = current.downloads[modelId] ?: return@update current
+            current.copy(downloads = current.downloads + (modelId to transform(progress)))
+        }
+    }
+
+    private fun completeDownload(
+        modelId: String,
+        descriptor: ModelDescriptor,
+    ) {
+        downloadJobs.remove(modelId)
+        mutableState.update {
+            it.copy(downloads = it.downloads - modelId, installedIds = it.installedIds + descriptor.modelId)
+        }
+    }
+
+    // Cancellation is a user action, not a failure — let it propagate; cancelDownload already reset
+    // the UI. Only real errors surface an error line AND join the retained/copyable log (issue #3).
+    private fun failDownload(
+        modelId: String,
+        e: Throwable,
+    ) {
+        if (e is CancellationException) throw e
+        downloadJobs.remove(modelId)
+        val message = logError(modelId, e)
+        mutableState.update { it.copy(downloads = it.downloads - modelId, error = message) }
+    }
+
+    /** Appends [e] to the retained error log (issue #3), bounded to [MAX_HF_ERROR_LOG] entries, and
+     * returns a display message for the caller's own inline banner. */
+    private fun logError(
+        modelId: String?,
+        e: Throwable,
+    ): String {
+        val message = e.message ?: e::class.simpleName ?: "Unknown error"
+        mutableState.update { current ->
+            val entry = HfBrowseError(atMs = clock(), modelId = modelId, message = message)
+            current.copy(errorLog = (listOf(entry) + current.errorLog).take(MAX_HF_ERROR_LOG))
+        }
+        return message
     }
 }

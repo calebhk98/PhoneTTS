@@ -94,15 +94,34 @@ android {
                     arguments += "-DANDROID_STL=c++_shared"
                     if (buildEspeak) arguments += "-DPHONETTS_BUILD_ESPEAK=ON"
                     if (buildCosyVoice) arguments += "-DPHONETTS_BUILD_COSYVOICE=ON"
+
+                    // BUG FIX (found building against a real espeak-ng 1.52.0 checkout): without
+                    // this, AGP asks CMake/ninja to build every target its "all" graph can reach,
+                    // not just the JNI libs we link into the APK. espeak-ng's own subdirectory
+                    // brings in the `espeak-ng` CLI binary, its unit tests, AND a `data ALL`
+                    // custom target (cmake/data.cmake) that *executes* the just-cross-compiled
+                    // arm64 `espeak-ng-bin` on the host to generate phoneme/dict data -- which
+                    // fails outright on an x86_64 build host (can't run an ARM binary). None of
+                    // that is needed: the phoneme DATA this app uses is produced separately, on a
+                    // host-native build (docs/espeak-ng-integration.md step 2), and shipped as an
+                    // asset, not linked into the APK. Restricting the target list to only the
+                    // JNI .so's we actually package sidesteps the whole broken cross-build data
+                    // step.
+                    val nativeTargets = mutableListOf<String>()
+                    if (buildEspeak) nativeTargets += "phonetts_espeak"
+                    if (buildCosyVoice) nativeTargets += "phonetts_cosyvoice"
+                    targets(*nativeTargets.toTypedArray())
                 }
             }
         }
     }
 
-    // NDK version is intentionally left to the installed default rather than pinned here: this
-    // module was authored without a local NDK to test against. Any NDK new enough for CMake 3.22.1
-    // (r23+) works for the opt-in -PwithEspeak/-PwithCosyVoice native bridges; pin it once a real
-    // native build resolves a known-good version (see the "ship CosyVoice" issue for the blockers).
+    // Pinned once a real build (issue #13) confirmed a known-good version: this is the NDK AGP
+    // auto-selected and successfully compiled/linked the espeak-ng JNI bridge against (arm64-v8a +
+    // armeabi-v7a) end to end. Pinning keeps CI and local builds deterministic instead of AGP
+    // silently downloading whatever its own default happens to be. Any NDK r23+ works for CMake
+    // 3.22.1 compatibility; bump deliberately if a future native bridge needs a newer one.
+    ndkVersion = "27.0.12077973"
 
     buildFeatures {
         compose = true

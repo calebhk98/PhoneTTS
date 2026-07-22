@@ -30,4 +30,51 @@ class ModelCatalogTest {
         assertNull(catalog.get("m1"))
         assertEquals(emptyList(), catalog.list())
     }
+
+    @Test
+    fun markUnresolvedRecordsAnUnclaimedBundle() {
+        val catalog = ModelCatalog()
+        catalog.markUnresolved("mystery", "no engine claimed it")
+        assertEquals(listOf(UnresolvedModel("mystery", "no engine claimed it")), catalog.listUnresolved())
+        // It stays out of the real model list — it isn't selectable, only visible (issue #8).
+        assertEquals(emptyList(), catalog.list())
+    }
+
+    @Test
+    fun clearingUnresolvedDropsItsMarker() {
+        val catalog = ModelCatalog()
+        catalog.markUnresolved("mystery", "no engine claimed it")
+        catalog.clearUnresolved("mystery")
+        assertEquals(emptyList(), catalog.listUnresolved())
+    }
+
+    @Test
+    fun addingAResolvedDescriptorSupersedesAStaleUnresolvedMarker() {
+        val catalog = ModelCatalog()
+        catalog.markUnresolved("m1", "no engine claimed it")
+        catalog.add(testDescriptor("m1", "eng"))
+        assertEquals(emptyList(), catalog.listUnresolved())
+        assertEquals(listOf("m1"), catalog.list().map { it.modelId })
+    }
+
+    @Test
+    fun markingUnresolvedNeverOverridesAnAlreadyIdentifiedModel() {
+        val catalog = ModelCatalog()
+        catalog.add(testDescriptor("m1", "eng"))
+        catalog.markUnresolved("m1", "stale retry")
+        assertEquals(emptyList(), catalog.listUnresolved())
+        assertEquals("eng", catalog.get("m1")?.engineId)
+    }
+
+    @Test
+    fun clearDropsBothIdentifiedAndUnresolvedEntries() {
+        val catalog = ModelCatalog()
+        catalog.add(testDescriptor("m1", "eng"))
+        catalog.markUnresolved("mystery", "no engine claimed it")
+
+        catalog.clear()
+
+        assertEquals(emptyList(), catalog.list())
+        assertEquals(emptyList(), catalog.listUnresolved())
+    }
 }

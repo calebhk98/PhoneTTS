@@ -417,6 +417,15 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         graph.lastUsedSelection.record(LastUsedSelection(descriptor.modelId, voiceId, s.params.speed))
     }
 
+    // Guards Play/Generate against empty text (issue #15): rather than a silent no-op that still
+    // pays the switchTo()/engine.load() cost for nothing, surface clear feedback and return before
+    // touching the engine at all — no model load for text that can't produce any sentences anyway.
+    private fun requireNonBlankText(text: String): Boolean {
+        if (text.isNotBlank()) return true
+        mutableState.update { it.copy(status = "Enter some text to speak") }
+        return false
+    }
+
     fun setText(text: String) =
         mutableState.update { it.copy(text = text, resumeSentenceIndex = resumeIndexFor(text)) }
 
@@ -503,6 +512,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     fun generateAudio() {
         val s = mutableState.value
         val descriptor = s.selected ?: return
+        if (!requireNonBlankText(s.text)) return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         stop()
         mutableState.update { it.copy(busy = true, status = "Generating…", stats = null) }
@@ -560,6 +570,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private fun startPlaybackFrom(startSentenceIndex: Int) {
         val s = mutableState.value
         val descriptor = s.selected ?: return
+        if (!requireNonBlankText(s.text)) return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         // Slice the sentence list at [startSentenceIndex] and feed only that onward through the SAME
         // one generation path (spec §6.1) — no second synthesis path. Index 0 keeps the full text.
@@ -925,28 +936,43 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /** Export the current text to a WAV [output], applying the enabled non-destructive transforms. */
     fun export(output: OutputStream) {
         val s = mutableState.value
-        val descriptor = s.selected ?: return
+        val descriptor = s.selected
+        // The SAF document behind [output] is already created (0 bytes) by the caller before this is
+        // reached, so every early-return path below must still close it — never leave a picked export
+        // destination dangling open just because there was nothing to export (issue #15/#17-adjacent).
+        if (!requireNonBlankText(s.text) || descriptor == null) {
+            runCatching { output.close() }
+            return
+        }
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         val transforms = buildTransforms(s)
         val documentId = documentIdFor(s.text)
         var chunksDone = 0
-        mutableState.update { it.copy(busy = true, status = null) }
+        mutableState.update { it.copy(busy = true, status = "Exporting…") }
         viewModelScope.launch {
             runCatching {
-                // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) — the
-                // encode() call below was already offloaded; this closes the gap before it.
-                withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
-                val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
-                // onEach counts fully-emitted sentences (one chunk == one sentence) without altering
-                // the flow the encoder consumes — the same resume-point tracking generate() does.
-                val tracked = engine.synthesize(s.text, voiceId, s.params).onEach { chunksDone++ }
-                withContext(Dispatchers.IO) {
-                    output.use { s.exportFormat.encode(tracked, descriptor.sampleRate, it, transforms) }
+                // output.use wraps the WHOLE export body, not just the final encode() call, so the
+                // destination stream/fd is finalized on EVERY path — including a switchTo()/engine-load
+                // failure before any audio is even generated. Previously only the encode() call was
+                // inside output.use, so a load failure left the SAF document's stream unclosed: a
+                // half-open 0-byte file the OS's own previewer then can't play ("fd://... can not be
+                // played") because it was never finalized, not because export produced no bytes.
+                output.use {
+                    // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) —
+                    // off Main so this never freezes the UI.
+                    withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
+                    val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
+                    // onEach counts fully-emitted sentences (one chunk == one sentence) without altering
+                    // the flow the encoder consumes — the same resume-point tracking generate() does.
+                    val tracked = engine.synthesize(s.text, voiceId, s.params).onEach { chunksDone++ }
+                    withContext(Dispatchers.IO) {
+                        s.exportFormat.encode(tracked, descriptor.sampleRate, it, transforms)
+                    }
                 }
             }
                 .onSuccess {
                     clearResume(documentId)
-                    mutableState.update { it.copy(busy = false, status = "Saved audio file") }
+                    mutableState.update { it.copy(busy = false, status = "Exported") }
                 }
                 .onFailure { e ->
                     graph.documentMemory.record(
@@ -955,7 +981,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                     mutableState.update {
                         it.copy(
                             busy = false,
-                            status = "Export stopped: ${e.message}",
+                            status = "Export failed: ${e.message}",
                             resumeSentenceIndex = chunksDone.takeIf { idx -> idx > 0 },
                         )
                     }

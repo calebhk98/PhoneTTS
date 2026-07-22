@@ -27,12 +27,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.engine.Voice
+import com.phonetts.core.model.ModelDescriptor
 
 /**
- * The "Mix voices" screen (issue #42): pick two of the selected model's voices, choose how far to
- * blend between them, then preview and save the in-between voice. Whether this screen has anything
- * to offer is DERIVED from [MixVoicesViewModel.UiState.supported] (the model descriptor's
- * `supportsVoiceBlend` fact) — no model name appears here.
+ * The "Mix voices" screen (issue #42; model picker added for issue #11): pick which downloaded
+ * model to mix, two of its voices, and how far to blend between them, then preview and save the
+ * in-between voice. The model choices themselves are DERIVED from
+ * [MixVoicesViewModel.UiState.availableModels] (every registered model whose descriptor sets
+ * `supportsVoiceBlend`) — no model name appears here as a literal.
  */
 @Composable
 fun MixVoicesScreen(viewModel: MixVoicesViewModel) {
@@ -42,15 +44,17 @@ fun MixVoicesScreen(viewModel: MixVoicesViewModel) {
         modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (!state.supported) {
+        if (state.availableModels.isEmpty()) {
             Text(
-                "The selected model can't blend voices. Pick a model whose voices are continuous " +
-                    "embeddings (e.g. Kokoro or KittenTTS) to mix them here.",
+                "No downloaded model can blend voices yet. Models whose voices are continuous " +
+                    "embeddings (e.g. Kokoro or KittenTTS) can be mixed here once downloaded.",
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
             )
             return@Column
         }
+
+        ModelPicker(state.availableModels, state.selectedModel, viewModel::selectModel)
 
         VoicePicker("Voice A", state.voices, state.voiceAId, viewModel::setVoiceA)
         VoicePicker("Voice B", state.voices, state.voiceBId, viewModel::setVoiceB)
@@ -84,6 +88,37 @@ fun MixVoicesScreen(viewModel: MixVoicesViewModel) {
                     Text(spec.name, modifier = Modifier.padding(end = 8.dp))
                     OutlinedButton(onClick = { viewModel.delete(spec) }) { Text("Delete") }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelPicker(
+    models: List<ModelDescriptor>,
+    selected: ModelDescriptor?,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        TextField(
+            value = selected?.displayName ?: "",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Model") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            models.forEach { model ->
+                DropdownMenuItem(
+                    text = { Text(model.displayName) },
+                    onClick = {
+                        onSelect(model.modelId)
+                        expanded = false
+                    },
+                )
             }
         }
     }
