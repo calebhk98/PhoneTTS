@@ -34,6 +34,7 @@ import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.prefs.DocumentPosition
 import com.phonetts.core.prefs.LastUsedSelection
 import com.phonetts.core.prefs.ReadingTextPreferences
+import com.phonetts.core.text.DocumentId
 import com.phonetts.core.text.TextChunker
 import com.phonetts.core.update.UpdateStatus
 import kotlinx.coroutines.Dispatchers
@@ -427,8 +428,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     // A stable id for the current text so DocumentMemory can key its resume position to this document
-    // (issues #24/#28). Content-derived: editing the text starts a fresh document, as expected.
-    private fun documentIdFor(text: String): String = text.hashCode().toString()
+    // (issues #24/#28). Content-derived: editing the text starts a fresh document, as expected. The
+    // SAME id (com.phonetts.core.text.DocumentId) is what ReadingLibraryViewModel saves a document
+    // under (issue #19-5), so opening a saved document here lines up with any resume point for free.
+    private fun documentIdFor(text: String): String = DocumentId.of(text)
 
     /** A+ : one step larger reading font (issue #29), persisted immediately. */
     fun increaseTextScale() = mutableState.update { it.copy(readingScale = graph.readingTextPreferences.increased()) }
@@ -1008,6 +1011,20 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 .onSuccess { text -> mutableState.update { it.copy(busy = false, text = text, status = "Imported text") } }
                 .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Import failed: ${e.message}") } }
         }
+    }
+
+    /**
+     * Save the current text into the reading library (issue #19-5), reachable right from the main
+     * screen (the library screen itself also offers this for the same text). Uses the SAME
+     * content-derived id [documentIdFor] uses for [graph.documentMemory], so a document saved here
+     * and later reopened from the library immediately lines up with any resume point (issue #28) —
+     * no separate plumbing needed. A no-op on blank text.
+     */
+    fun saveToLibrary() {
+        val text = mutableState.value.text
+        if (text.isBlank()) return
+        graph.documentLibrary.add(id = documentIdFor(text), text = text, savedAtMillis = System.currentTimeMillis())
+        mutableState.update { it.copy(status = "Saved to library") }
     }
 
     override fun onCleared() {

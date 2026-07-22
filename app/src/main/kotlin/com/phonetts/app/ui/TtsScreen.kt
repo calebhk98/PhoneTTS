@@ -93,6 +93,8 @@ fun TtsScreen(
     onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
     onMixVoices: () -> Unit = {},
+    onLibrary: () -> Unit = {},
+    onCompare: () -> Unit = {},
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
@@ -142,6 +144,8 @@ fun TtsScreen(
                 onBenchmarks = { navigate(onBenchmarks) },
                 onHelp = { navigate(onHelp) },
                 onMixVoices = { navigate(onMixVoices) },
+                onLibrary = { navigate(onLibrary) },
+                onCompare = { navigate(onCompare) },
             )
         },
     ) {
@@ -236,6 +240,8 @@ private fun AppDrawer(
     onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
     onMixVoices: () -> Unit = {},
+    onLibrary: () -> Unit = {},
+    onCompare: () -> Unit = {},
 ) {
     ModalDrawerSheet {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -252,6 +258,8 @@ private fun AppDrawer(
             DrawerLink("Manage models", onManageModels)
             DrawerLink("Sideload folder", onSideload)
             DrawerLink("Mix voices", onMixVoices)
+            DrawerLink("Reading library", onLibrary)
+            DrawerLink("Compare voices (A/B)", onCompare)
             DrawerLink("Benchmarks", onBenchmarks)
             DrawerLink("Help", onHelp)
         }
@@ -340,6 +348,12 @@ private fun TextCard(
                 onClick = { viewModel.playFromCursor(fieldValue.selection.start) },
                 enabled = state.selected != null && !state.playing && state.text.isNotBlank(),
             ) { Text("Read from cursor") }
+            // Save into the reading library (issue #19-5) — reachable from here or the library
+            // screen itself, which lists everything saved from either place.
+            OutlinedButton(
+                onClick = viewModel::saveToLibrary,
+                enabled = state.text.isNotBlank(),
+            ) { Text("Save to library") }
             FontSizeControls(state, viewModel)
         }
     }

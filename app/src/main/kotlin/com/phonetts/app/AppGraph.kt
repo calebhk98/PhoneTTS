@@ -15,6 +15,7 @@ import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
+import com.phonetts.core.prefs.DocumentLibrary
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
 import com.phonetts.core.prefs.LastUsedSelectionStore
@@ -116,6 +117,11 @@ class AppGraph(context: Context) {
     val documentMemory = DocumentMemory(preferenceStore)
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
     val lastUsedSelection = LastUsedSelectionStore(preferenceStore)
+
+    // Saved multi-document library (issue #19-5): titles/text only, keyed by the same content-derived
+    // id DocumentMemory uses for resume positions (see TtsViewModel.documentIdFor), so opening a saved
+    // document lines up with its resume point automatically.
+    val documentLibrary = DocumentLibrary(preferenceStore)
 
     // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
     // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
