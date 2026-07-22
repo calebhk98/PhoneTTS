@@ -61,12 +61,11 @@ internal class PiperEngine(
     override fun isLoaded(): Boolean = loadedVoices.isNotEmpty()
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
-        val entries =
-            bundle.fileNames
-                .filter { it.endsWith(ONNX_SUFFIX) }
-                .mapNotNull { onnxFile -> validVoiceEntry(bundle, onnxFile) }
-        if (entries.isEmpty()) return null
-        return EngineMatch(id, buildDescriptor(bundle, entries, Origin.BUILT_IN))
+        val onnxFiles = bundle.fileNames.filter { it.endsWith(ONNX_SUFFIX) }
+        val entries = onnxFiles.mapNotNull { onnxFile -> validVoiceEntry(bundle, onnxFile) }
+        val resolved = entries.ifEmpty { listOfNotNull(singleOnnxConfigJsonEntry(bundle, onnxFiles)) }
+        if (resolved.isEmpty()) return null
+        return EngineMatch(id, buildDescriptor(bundle, resolved, Origin.BUILT_IN))
     }
 
     override fun forcedMatch(bundle: ModelBundle): EngineMatch {
@@ -74,7 +73,7 @@ internal class PiperEngine(
         require(onnxFiles.isNotEmpty()) {
             "Piper forcedMatch requires at least one .onnx file in bundle '${bundle.id}'"
         }
-        val entries = onnxFiles.map { onnxFile -> forcedVoiceEntry(bundle, onnxFile) }
+        val entries = onnxFiles.map { onnxFile -> forcedVoiceEntry(bundle, onnxFile, onnxFiles.size) }
         return EngineMatch(id, buildDescriptor(bundle, entries, Origin.SIDELOADED))
     }
 
@@ -200,13 +199,41 @@ internal class PiperEngine(
         return PiperVoiceEntry(onnxFile.removeSuffix(ONNX_SUFFIX), onnxFile, sidecarName, config)
     }
 
+    // issue #95: many valid Piper repos (speaches-ai/*, ufozone/*, Lucasllfs/Razo-piper-voice) ship
+    // the exact same sidecar shape but name it plain "config.json" instead of "<voice>.onnx.json".
+    // Only accepted when the bundle has EXACTLY ONE .onnx — with two or more graphs a single
+    // "config.json" is ambiguous about which one it pairs with, so it is never guessed at (rule 4).
+    // Content still has to pass [PiperVoiceConfig.parse]'s fail-closed gate, so a foreign
+    // "config.json" (a different model family entirely) is still rejected. Deliberately out of
+    // scope: `ayousanz/piper-plus-*`, whose "config.json" is Piper-shaped but the graph needs extra
+    // language_id/prosody inputs this engine does not feed.
+    private fun singleOnnxConfigJsonEntry(
+        bundle: ModelBundle,
+        onnxFiles: List<String>,
+    ): PiperVoiceEntry? {
+        val onnxFile = onnxFiles.singleOrNull() ?: return null
+        if (!bundle.hasFile(CONFIG_JSON_NAME)) return null
+        val configText = bundle.sideFile(CONFIG_JSON_NAME) ?: return null
+        val config = PiperVoiceConfig.parse(configText) ?: return null
+        return PiperVoiceEntry(onnxFile.removeSuffix(ONNX_SUFFIX), onnxFile, CONFIG_JSON_NAME, config)
+    }
+
     private fun forcedVoiceEntry(
         bundle: ModelBundle,
         onnxFile: String,
+        onnxFileCount: Int,
     ): PiperVoiceEntry {
         val sidecarName = onnxFile + SIDECAR_EXTRA_SUFFIX
-        val config = bundle.sideFile(sidecarName)?.let(PiperVoiceConfig::parse) ?: PiperVoiceConfig.fallback()
-        return PiperVoiceEntry(onnxFile.removeSuffix(ONNX_SUFFIX), onnxFile, sidecarName, config)
+        val stemConfig = bundle.sideFile(sidecarName)?.let(PiperVoiceConfig::parse)
+        if (stemConfig != null) {
+            return PiperVoiceEntry(onnxFile.removeSuffix(ONNX_SUFFIX), onnxFile, sidecarName, stemConfig)
+        }
+        // Same single-onnx "config.json" fallback as inspect() (issue #95), kept consistent so a
+        // forced sideload of one of these repos also records the real sidecar path load() reads,
+        // instead of silently landing on family defaults it didn't need to.
+        val configEntry = if (onnxFileCount == 1) singleOnnxConfigJsonEntry(bundle, listOf(onnxFile)) else null
+        if (configEntry != null) return configEntry
+        return PiperVoiceEntry(onnxFile.removeSuffix(ONNX_SUFFIX), onnxFile, sidecarName, PiperVoiceConfig.fallback())
     }
 
     private fun buildDescriptor(
@@ -221,7 +248,7 @@ internal class PiperEngine(
         return ModelDescriptor(
             modelId = bundle.id,
             engineId = id,
-            displayName = descriptorDisplayName(bundle, entries),
+            displayName = if (entries.size == 1) "Piper - ${entries.first().voiceId}" else "Piper - ${bundle.id}",
             origin = origin,
             sampleRate = entries.first().config.sampleRate,
             voices = voices,
@@ -235,11 +262,6 @@ internal class PiperEngine(
             resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB_PER_VOICE * entries.size),
         )
     }
-
-    private fun descriptorDisplayName(
-        bundle: ModelBundle,
-        entries: List<PiperVoiceEntry>,
-    ): String = if (entries.size == 1) "Piper - ${entries.first().voiceId}" else "Piper - ${bundle.id}"
 
     // One .onnx graph -> its asset paths (keyed by the graph's base name) + its public voice(s):
     // the whole graph for a single-speaker voice, or one voice per speaker for a multi-speaker one.
@@ -275,6 +297,11 @@ internal class PiperEngine(
         private const val ONNX_SUFFIX = ".onnx"
         private const val SIDECAR_SUFFIX = ".onnx.json"
         private const val SIDECAR_EXTRA_SUFFIX = ".json"
+
+        // issue #95: the plain "config.json" name several valid Piper repos use instead of
+        // "<voice>.onnx.json" — only ever tried for a single-.onnx bundle, see
+        // [singleOnnxConfigJsonEntry].
+        private const val CONFIG_JSON_NAME = "config.json"
         private const val ONNX_RUNTIME_ID = "onnx"
 
         private const val INPUT_TENSOR = "input"
