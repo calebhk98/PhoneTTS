@@ -157,6 +157,37 @@ class CompareViewModel(
     private fun defaultSelection(descriptor: ModelDescriptor?): Selection =
         Selection(descriptor, descriptor?.defaultVoiceId)
 
+    /**
+     * Re-read the catalog so models (and their voices) downloaded or engine-discovered AFTER this
+     * screen was first opened actually appear in the pickers and the tournament roster builder
+     * (bug: Compare showed a one-time snapshot taken at construction and never refreshed, unlike the
+     * main reader which re-reads on every entry). Called on screen (re)entry. Keeps the current A/B
+     * picks when their models still exist; re-seeds a default only when a pick's model is gone or was
+     * never made.
+     */
+    fun refreshModels() {
+        val models = graph.catalog.list()
+        mutableState.update { current ->
+            current.copy(
+                models = models,
+                a = reconcile(current.a, models) ?: defaultSelection(models.getOrNull(0)),
+                b = reconcile(current.b, models) ?: defaultSelection(models.getOrNull(1) ?: models.getOrNull(0)),
+            )
+        }
+    }
+
+    // Keeps [selection] if its model is still installed (matched by modelId, refreshed to the new
+    // descriptor instance); returns null when the model is gone or was never picked, so the caller
+    // seeds a fresh default instead of leaving a dangling reference.
+    private fun reconcile(
+        selection: Selection,
+        models: List<ModelDescriptor>,
+    ): Selection? {
+        val modelId = selection.descriptor?.modelId ?: return null
+        val current = models.firstOrNull { it.modelId == modelId } ?: return null
+        return selection.copy(descriptor = current)
+    }
+
     fun setText(text: String) = mutableState.update { it.copy(text = text) }
 
     fun selectModelA(descriptor: ModelDescriptor) =
@@ -362,6 +393,29 @@ class TournamentController(
     fun removeEntry(id: String) {
         if (currentState().running) return
         update { it.copy(roster = it.roster.filterNot { entry -> entry.id == id }) }
+    }
+
+    /**
+     * Add every installed model (each with its default voice) to the roster in one tap, skipping any
+     * model+voice pair already present — so building a full-field tournament doesn't mean adding each
+     * model one at a time (issue: "the tournament requires me to select all of them"; you can still
+     * curate a subset with Add/Remove). No-op while a tournament is running.
+     */
+    fun addAllModels(models: List<ModelDescriptor>) {
+        if (currentState().running) return
+        val present = currentState().roster.map { it.descriptor.modelId to it.voiceId }.toSet()
+        val additions =
+            models
+                .filter { (it.modelId to it.defaultVoiceId) !in present }
+                .map {
+                    CompareViewModel.TournamentEntry(
+                        id = "entry-${entrySeq++}",
+                        descriptor = it,
+                        voiceId = it.defaultVoiceId,
+                    )
+                }
+        if (additions.isEmpty()) return
+        update { it.copy(roster = it.roster + additions) }
     }
 
     /**

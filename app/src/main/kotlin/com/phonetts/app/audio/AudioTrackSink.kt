@@ -191,6 +191,22 @@ class AudioTrackSink : AudioSink {
         return nextStreak
     }
 
+    // Instant, hardware-level pause (issue: Pause didn't stop until the current sentence finished).
+    // AudioTrack.pause() halts output immediately but KEEPS the buffered PCM, so a WRITE_BLOCKING
+    // write in flight simply blocks (the ring buffer stops draining) until resume(), and no queued
+    // audio is lost — the opposite of stop()'s flush. A no-op if there's no live track.
+    override fun pause() {
+        track?.let { active -> runCatching { active.pause() } }
+    }
+
+    // Resume after [pause]: re-arm the track so the parked write continues and playback picks up
+    // exactly where it stopped. Guarded so resuming a track that's somehow already playing is a no-op.
+    override fun resume() {
+        track?.let { active ->
+            if (active.playState != AudioTrack.PLAYSTATE_PLAYING) runCatching { active.play() }
+        }
+    }
+
     // A negative return is one of AudioTrack's ERROR_* codes (bad state, dead object, invalid
     // operation, ...) — surfaced instead of silently dropping the rest of the utterance; the
     // ViewModel's runCatching around playback.play() turns this into a "Playback failed" status.

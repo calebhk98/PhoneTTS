@@ -24,6 +24,28 @@ private class GainTransform(
     ): List<FloatArray> = segments.map { seg -> FloatArray(seg.size) { seg[it] * gain } }
 }
 
+// Counts pause()/resume() so a test can prove the decorator forwards them to the real sink.
+private class PauseCountingSink : AudioSink {
+    var pauses = 0
+        private set
+    var resumes = 0
+        private set
+
+    override fun onFormat(sampleRate: Int) = Unit
+
+    override fun onChunk(samples: FloatArray) = Unit
+
+    override fun onEnd() = Unit
+
+    override fun pause() {
+        pauses++
+    }
+
+    override fun resume() {
+        resumes++
+    }
+}
+
 class TransformingSinkTest {
     @Test
     fun forwardsFormatAndEndAndAppliesTransformToEachChunk() {
@@ -41,6 +63,21 @@ class TransformingSinkTest {
             floatArrayOf(0.2f, -0.4f, 0.6f).contentEquals(downstream.recorded),
             "each chunk should pass through the transform",
         )
+    }
+
+    @Test
+    fun forwardsPauseAndResumeToDownstream() {
+        // Instant pause must survive the tempo-boost decorator, or enabling "Extra tempo boost" would
+        // silently lose hardware-level pause on the playback path.
+        val downstream = PauseCountingSink()
+        val sink = TransformingSink(downstream, GainTransform(1f))
+
+        sink.pause()
+        sink.resume()
+        sink.pause()
+
+        assertEquals(2, downstream.pauses)
+        assertEquals(1, downstream.resumes)
     }
 
     @Test

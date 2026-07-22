@@ -144,12 +144,34 @@ android {
         }
     }
 
+    signingConfigs {
+        // A STABLE debug key committed at keystore/phonetts-debug.keystore, so every build — local or
+        // CI, on any machine — signs with the SAME certificate. Without this, each CI runner
+        // auto-generates its own throwaway ~/.android/debug.keystore, so consecutive released APKs had
+        // DIFFERENT signatures and Android refused to update one over another ("App not installed" /
+        // signatures-do-not-match), forcing a full uninstall+reinstall for every update. This is a
+        // debug certificate with the well-known "android" password and grants no security, so
+        // committing it is safe for a personal, sideloaded app. (A real Play release key would live in
+        // a CI secret instead — see issue #51.)
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/phonetts-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        // The published APK is the DEBUG build (see .github/workflows/android.yml), so the stable
+        // signingConfig above is what actually ships; it's applied to the debug type automatically.
         release {
             // R8/shrinking is OFF until validated on-device: proguard-rules.pro already carries the
             // critical keeps (ServiceLoader EngineProviders, kotlinx.serialization) for when it's enabled.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Sign release with the same stable key so a release APK is also installable over a debug
+            // one during personal sideloading (CI ships debug today; this keeps them interchangeable).
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
