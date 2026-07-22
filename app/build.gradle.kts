@@ -225,4 +225,5 @@ dependencies {
 
     // ONNX Runtime for the Tier-A/B engines (a second, LLM-style runtime is added for CosyVoice2).
     implementation(libs.onnxruntime.android)
+    implementation(libs.executorch.android) // ExecuTorch .pte runtime — ships in the main APK (BSD-3, ~7 MB, no NDK)
 }

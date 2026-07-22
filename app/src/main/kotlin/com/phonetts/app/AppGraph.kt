@@ -5,7 +5,9 @@ import com.phonetts.app.audio.export.ExportFormats
 import com.phonetts.app.device.DeviceInfo
 import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
+import com.phonetts.app.runtime.ExecuTorchRuntime
 import com.phonetts.app.runtime.NativeCosyVoiceRuntime
+import com.phonetts.app.runtime.NativeGgmlTtsRuntime
 import com.phonetts.app.runtime.OnnxRuntime
 import com.phonetts.app.sideload.SideloadCoordinator
 import com.phonetts.app.text.EspeakPhonemizer
@@ -81,6 +83,12 @@ class AppGraph(context: Context) {
         RuntimeRegistry().apply {
             register(OnnxRuntime())
             register(NativeCosyVoiceRuntime())
+            // Registered UNCONDITIONALLY (never hidden behind a flag): ExecuTorch ships in the APK
+            // via its Maven AAR, and the ggml bridge is present too. Both report isAvailable()=false
+            // gracefully — no crash — when their native piece isn't built/loaded on this build, so a
+            // model that needs them surfaces a clear error rather than silently disappearing.
+            register(ExecuTorchRuntime())
+            register(NativeGgmlTtsRuntime())
         }
 
     // EspeakPhonemizer never throws (see its kdoc): it falls back to PassthroughPhonemizer
