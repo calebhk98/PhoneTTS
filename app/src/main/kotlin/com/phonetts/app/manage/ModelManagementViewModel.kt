@@ -4,6 +4,9 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.StorageLocation
+import com.phonetts.core.metrics.BenchmarkHistory
+import com.phonetts.core.model.InstalledModelFacts
+import com.phonetts.core.model.ManageModelFacts
 import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.ModelUsage
@@ -32,17 +35,33 @@ import kotlinx.coroutines.withContext
  * vanishing as if nothing were ever fetched, and drives the storage-location picker (issue #4/#5):
  * [chooseFolder] resolves a SAF tree URI to a real folder and, if usable, hands it straight to
  * [ModelManager.changeStorageLocation] — the same seam a future non-SAF caller could use too.
+ *
+ * Also surfaces, per downloaded model, an "Open on Hugging Face" link plus RAM/RTF/parameter-count
+ * facts ([ManageModelFacts], derived by [InstalledModelFacts] — never a hardcoded per-model literal).
+ * [benchmarkHistory]/[deviceName] are optional: without them (the current wiring — see NOTE below)
+ * every model still shows a formula-predicted RTF, just never a measured one.
+ *
+ * NOTE for whoever wires this next: [benchmarkHistory] and [deviceName] default to "not available"
+ * so this class stays constructible exactly as it was before this feature (no other file needed to
+ * change). To actually surface MEASURED (not just predicted) RTF here, the call site
+ * (`MainActivity.kt`'s `ModelManagementViewModel(...)` initializer) should pass
+ * `graph.benchmarkHistory` and `graph.deviceName` — both already exist on `AppGraph` for the
+ * Benchmark screen, so no `AppGraph` change is needed, only that one call site.
  */
 class ModelManagementViewModel(
     private val modelManager: ModelManager,
     private val resourceUsage: ResourceUsageStore,
     private val availableRamBytes: () -> Long,
+    private val benchmarkHistory: BenchmarkHistory? = null,
+    private val deviceName: String = "",
 ) : ViewModel() {
     data class UiState(
         val usage: List<ModelUsage> = emptyList(),
         val totalBytes: Long = 0L,
         /** modelId → estimated peak RAM in bytes (null = unknown), shown inline next to each model. */
         val peakRamByModelId: Map<String, Long?> = emptyMap(),
+        /** modelId → derived link/RAM/RTF/param-count facts (issue: Manage screen model info). */
+        val factsByModelId: Map<String, ManageModelFacts> = emptyMap(),
         /** Device free RAM right now, shown at the top so the estimates have a reference point. */
         val availableRamBytes: Long = 0L,
         val deletingId: String? = null,
@@ -67,17 +86,41 @@ class ModelManagementViewModel(
     fun refresh() {
         val usage = modelManager.usage()
         val estimates = usage.associate { it.descriptor.modelId to resourceUsage.peakRamEstimate(it.descriptor) }
+        val facts = usage.associate { it.descriptor.modelId to factsFor(it) }
         mutableState.update {
             it.copy(
                 usage = usage,
-                totalBytes = usage.sumOf { row -> row.sizeBytes },
+                // Bug #7: this used to sum only `usage` (identified models), so a downloaded-but-
+                // unresolved bundle's very real disk space (issue #8/bug #6) never counted toward
+                // "storage used" — [ModelManager.totalBytes] is the SSOT for the total, covering both.
+                totalBytes = modelManager.totalBytes(),
                 peakRamByModelId = estimates,
+                factsByModelId = facts,
                 availableRamBytes = availableRamBytes(),
                 error = null,
                 unresolved = modelManager.unresolvedUsage(),
                 storageDescription = modelManager.currentStorageDescription(),
             )
         }
+    }
+
+    // Combines this model's on-disk size, any REAL observed peak RAM (beats the engine's a-priori
+    // guess), and this device's own benchmark history for its engine (beats the formula-predicted
+    // RTF) into one derived, honestly-labeled fact bundle — see [InstalledModelFacts].
+    private fun factsFor(usage: ModelUsage): ManageModelFacts =
+        InstalledModelFacts.of(
+            descriptor = usage.descriptor,
+            sizeBytes = usage.sizeBytes,
+            observedPeakRamBytes = resourceUsage.observedPeakRam(usage.descriptor.modelId),
+            measuredRealTimeFactors = measuredRealTimeFactors(usage.descriptor.engineId),
+        )
+
+    // Empty (never a fabricated sample) when history isn't wired in yet (see the class kdoc NOTE)
+    // or this device has no recorded runs for this engine.
+    private fun measuredRealTimeFactors(engineId: String): List<Double> {
+        val history = benchmarkHistory ?: return emptyList()
+        if (deviceName.isBlank()) return emptyList()
+        return history.history(engineId, deviceName).map { it.realTimeFactor }
     }
 
     fun delete(modelId: String) {
@@ -108,12 +151,18 @@ class ModelManagementViewModel(
      * writable, switches the models base dir to it. A folder that can't be resolved to a plain
      * `java.io.File` (or isn't actually writable — e.g. `MANAGE_EXTERNAL_STORAGE` wasn't granted)
      * is refused with a message rather than silently left half-applied.
+     *
+     * [ModelManager.changeStorageLocation] MIGRATES any already-downloaded models from the previous
+     * location to this one and returns a warning message if any of them couldn't be moved (left
+     * safely in place at the old location, never lost) — that warning, when present, replaces the
+     * generic "now storing models in…" confirmation so the user actually sees it.
      */
     fun chooseFolder(treeUri: Uri) {
         when (val resolution = StorageLocation.resolve(treeUri)) {
             is StorageLocation.Resolution.Usable -> {
-                modelManager.changeStorageLocation(resolution.path)
-                mutableState.update { it.copy(storageMessage = "Now storing models in ${resolution.path}") }
+                val warning = modelManager.changeStorageLocation(resolution.path)
+                val message = warning ?: "Now storing models in ${resolution.path}"
+                mutableState.update { it.copy(storageMessage = message) }
             }
             is StorageLocation.Resolution.Unusable -> {
                 mutableState.update { it.copy(storageMessage = "Can't use that folder: ${resolution.reason}") }
@@ -122,10 +171,14 @@ class ModelManagementViewModel(
         refresh()
     }
 
-    /** Revert to app-private storage (issue #4/#5) — note this does NOT move already-relocated files. */
+    /**
+     * Revert to app-private storage (issue #4/#5). Like [chooseFolder], this now MIGRATES any
+     * models that were sitting under the custom folder back into app-private storage rather than
+     * abandoning them there.
+     */
     fun resetStorageLocation() {
-        modelManager.changeStorageLocation(null)
-        mutableState.update { it.copy(storageMessage = "Back to app-private storage") }
+        val warning = modelManager.changeStorageLocation(null)
+        mutableState.update { it.copy(storageMessage = warning ?: "Back to app-private storage") }
         refresh()
     }
 

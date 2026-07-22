@@ -11,14 +11,23 @@ object HfEndpoints {
     const val RESOLVE_BASE = "https://huggingface.co"
     const val TTS_PIPELINE_TAG = "text-to-speech"
 
-    /** Search text-to-speech models, most-downloaded first. Blank [query] lists top TTS models. */
+    /**
+     * Search text-to-speech models, most-downloaded first. Blank [query] lists top TTS models.
+     * [skip] pages past the first [skip] results of that same ordering — the Hub's `/api/models`
+     * list endpoint accepts a plain `skip` offset alongside `limit` (verified against the live API:
+     * `limit=N&skip=M` returns exactly the same slice as the tail of a single `limit=N+M` call, for
+     * the same query/sort), so "load more" is just a bigger offset, never a second query mechanism.
+     * Omitted when 0 so the very first page's URL is unchanged from before pagination existed.
+     */
     fun searchModelsUrl(
         query: String,
         limit: Int,
+        skip: Int = 0,
     ): String {
         val base = "$API_BASE/models?pipeline_tag=$TTS_PIPELINE_TAG&sort=downloads&direction=-1&limit=$limit"
-        if (query.isBlank()) return base
-        return "$base&search=${encodeQuery(query)}"
+        val paged = if (skip > 0) "$base&skip=$skip" else base
+        if (query.isBlank()) return paged
+        return "$paged&search=${encodeQuery(query)}"
     }
 
     /** The full (recursive) file tree of a repo at a revision. Owner/name keeps its '/', segments encoded. */

@@ -12,11 +12,18 @@ class HfCatalog(
     private val http: HttpClient,
     private val json: Json = defaultJson,
 ) {
+    /**
+     * @param skip pages past the first [skip] results of the same query/ordering (issue: Browse
+     * pagination) — see [HfEndpoints.searchModelsUrl]. A page shorter than [limit] means the Hub
+     * has no more results for this query; the caller (not this class) tracks that, since it's a UI
+     * concern (when to keep showing "Load more"), not a fact about one page's request.
+     */
     fun search(
         query: String,
         limit: Int = DEFAULT_LIMIT,
+        skip: Int = 0,
     ): List<HfModelSummary> {
-        val body = http.getText(HfEndpoints.searchModelsUrl(query, limit), USER_AGENT)
+        val body = http.getText(HfEndpoints.searchModelsUrl(query, limit, skip), USER_AGENT)
         return json.decodeFromString(ListSerializer(HfModelSummary.serializer()), body)
     }
 

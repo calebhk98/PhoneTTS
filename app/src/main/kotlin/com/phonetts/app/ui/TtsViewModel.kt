@@ -7,6 +7,7 @@ import com.phonetts.app.AppGraph
 import com.phonetts.app.BuildConfig
 import com.phonetts.app.UserPickRequiredException
 import com.phonetts.app.audio.AudioTrackSink
+import com.phonetts.app.playback.GenerationNotifier
 import com.phonetts.core.audio.AudioSink
 import com.phonetts.core.audio.TransformingSink
 import com.phonetts.core.audio.buffer.BufferedPlayback
@@ -197,6 +198,14 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     var onUserStopRequested: (() -> Unit)? = null
 
     private val sink = AudioTrackSink()
+
+    // Live "Generating sentence X of Y" system notification (spec: generation progress) — a
+    // generation over more than a couple sentences easily outlasts the user staying on this screen.
+    // NOTE: this reads `graph.appContext`, which AppGraph currently declares `private` — that one
+    // field needs to become non-private (or gain a public accessor) for this to compile; not changed
+    // here because AppGraph.kt is outside this session's owned files (see task scope).
+    private val generationNotifier = GenerationNotifier(graph.appContext)
+
     // A fresh BufferedPlayback per play session — see play(): the class is documented/tested
     // (core BufferedAudioTest) as single-use, since stop() latches its internal "stopped" flag
     // with no reset. Reusing one instance across sessions would make every play() after the first
@@ -734,6 +743,8 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         documentId: String,
     ): Boolean {
         var chunksDone = 0
+        val totalChunks = TextChunker.intoSentences(text).size
+        generationNotifier.start(totalChunks)
         val result =
             runCatching {
                 // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) — off
@@ -744,10 +755,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 refreshBlendedVoices(descriptor)
                 val totalWords = WordCounter.count(text)
                 engine.synthesize(text, voiceId, params)
-                    .trackGeneration(descriptor.sampleRate, totalWords = totalWords)
+                    .trackGeneration(descriptor.sampleRate, totalWords = totalWords, totalChunks = totalChunks)
                     .collect { (chunk, stats) ->
                         audio.append(chunk)
                         chunksDone = stats.chunksDone
+                        generationNotifier.update(stats)
                         // "Loading voice…"/"Generating…" only cover the gap before audio exists;
                         // once the first chunk lands, the live GenerationStatsView (rendered off
                         // `stats`) takes over.
@@ -759,6 +771,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 recordStop(descriptor, voiceId, params, documentId, startSentenceIndex + chunksDone, e)
             }
         audio.markComplete()
+        generationNotifier.clear() // dismiss on completion or failure alike — nothing left in flight
         if (result.isSuccess) clearResume(documentId)
         return result.isSuccess
     }
@@ -826,6 +839,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         progressJob = null
         sentenceProgressJob = null
         sink.stop() // steps 2b + 3: flush queued PCM and stop the AudioTrack
+        // A cancelled genJob's post-runCatching cleanup (see generate()) may never run — dismiss the
+        // progress notification explicitly here too so a barge-in never leaves it claiming generation
+        // is still going.
+        generationNotifier.clear()
         mutableState.update {
             it.copy(
                 playing = false,
@@ -1054,7 +1071,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     override fun onCleared() {
-        stop()
+        stop() // also clears the generation notification (see stop()'s own note)
         cachedAudio?.close() // release the last buffer's spill scratch file, if any (issue #34)
     }
 

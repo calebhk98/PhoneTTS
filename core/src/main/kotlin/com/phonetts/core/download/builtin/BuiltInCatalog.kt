@@ -4,12 +4,20 @@ package com.phonetts.core.download.builtin
 // model immediately instead of having to search Hugging Face. Only models that are BOTH proven to
 // produce valid audio (docs/MODEL-VERIFICATION.md) AND handled end-to-end by an engine's
 // inspect()/load() belong here — a one-tap download must not land a model that then fails to load.
+// [ALL] stays deliberately small (one per engine family). The much larger set of every voice
+// rhasspy/piper-voices publishes is NOT listed here as static data — it's fetched and parsed at
+// runtime from upstream's own `voices.json` (see [PiperVoicesIndex]) so the browsable Piper list
+// is always current with upstream instead of a hand-maintained snapshot of it.
 object BuiltInCatalog {
+    // The one legitimately hand-curated Piper voice: a known-good "first download" pick, not a
+    // stand-in for the full voice list (that's fetched dynamically — see [PiperVoicesIndex]).
+    // repoId is sourced from PiperVoicesIndex.REPO_ID (SSOT: the one place that literal lives),
+    // never re-typed here.
     val PIPER_LESSAC =
         BuiltInModel(
             id = "piper-en_US-lessac-medium",
-            displayName = "Piper — Lessac (English, medium)",
-            repoId = "rhasspy/piper-voices",
+            displayName = "Piper — Lessac (English, United States, medium)",
+            repoId = PiperVoicesIndex.REPO_ID,
             approxSizeMb = 63,
             files =
                 listOf(

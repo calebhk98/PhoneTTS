@@ -2,6 +2,7 @@ package com.phonetts.app.hf
 
 import com.phonetts.app.ModelStorage
 import com.phonetts.core.download.SafePath
+import com.phonetts.core.download.hf.DownloadDiagnosticsLog
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.download.hf.HfResume
@@ -9,6 +10,7 @@ import com.phonetts.core.download.hf.ResumeAction
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.sideload.ModelImporter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -34,6 +36,15 @@ import kotlin.coroutines.coroutineContext
  * arbitrary repo; integrity for browsed models rests on HTTPS + the resolver refusing anything it
  * can't identify. (Curated/manifest downloads still verify SHA-256 via
  * com.phonetts.core.download.Sha256Verifier.)
+ *
+ * A dropped connection mid-file ("Software caused connection abort", "unexpected end of stream",
+ * a socket reset, a premature EOF) is common on flaky mobile networks and is NOT treated as a hard
+ * failure: each file fetch is retried with exponential backoff (the resume logic above means a
+ * retry continues from the partial file, not from scratch — see the private `fetch` function).
+ * Only after the retries are exhausted, or for an obviously permanent error (HTTP 404/403, the
+ * byte-cap guard), does this surface a failure — always naming the file and the reason, never a
+ * bare URL (the previous behavior for e.g. sesame/csm-1b, whose surfaced "error" was literally a
+ * `resolve/main/...` URL).
  */
 class HfDownloader(
     private val filesDir: File,
@@ -41,6 +52,11 @@ class HfDownloader(
     private val userAgent: Map<String, String> = HfCatalog.USER_AGENT,
     private val timeoutMs: Int = DEFAULT_TIMEOUT_MS,
     private val maxFileBytes: Long = DEFAULT_MAX_FILE_BYTES,
+    /** Persistent, user-viewable record of download failures and "downloaded, no engine yet"
+     * imports (see [DownloadDiagnosticsLog]). Defaults to a small file under [filesDir] so callers
+     * that already construct an [HfDownloader] with just a base dir + importer (the common case)
+     * get it for free; the Browse screen reads/records through this same instance. */
+    val diagnosticsLog: DownloadDiagnosticsLog = DownloadDiagnosticsLog(File(filesDir, DIAGNOSTICS_LOG_FILENAME)),
 ) {
     /**
      * @param onBytesProgress cumulative bytes written across ALL of [items] so far, plus the
@@ -86,23 +102,49 @@ class HfDownloader(
         target: File,
     ): Long = item.sizeBytes ?: if (target.isFile) target.length() else 0L
 
-    // Resume-aware fetch of one file: skip if already complete, resume from the on-disk offset if
-    // partial, else download fresh. The resume/skip/restart decision is the tested core policy.
+    // Resume-aware, retrying fetch of one file: skip if already complete, else (re)try a download
+    // that resumes from whatever is currently on disk, backing off between attempts. The
+    // resume/skip/restart decision is the tested core policy — re-consulted before EVERY attempt
+    // (including retries), since a dropped connection can leave more bytes on disk than the
+    // previous attempt started with.
     private suspend fun fetch(
         item: HfDownloadItem,
         target: File,
         reportWithinFile: (Long) -> Unit,
     ) {
-        val onDisk = if (target.isFile) target.length() else 0L
-        val decision = HfResume.decide(onDisk, item.sizeBytes)
-        if (decision.action == ResumeAction.SKIP) {
-            reportWithinFile(onDisk)
-            return
+        var attempt = 1
+        while (true) {
+            val onDisk = if (target.isFile) target.length() else 0L
+            val decision = HfResume.decide(onDisk, item.sizeBytes)
+            if (decision.action == ResumeAction.SKIP) {
+                reportWithinFile(onDisk)
+                return
+            }
+            val resumeFrom = if (decision.action == ResumeAction.RESUME) decision.offsetBytes else 0L
+            reportWithinFile(resumeFrom)
+            val failure = attemptDownload(item, target, resumeFrom, reportWithinFile) ?: return
+            val giveUp = attempt >= MAX_ATTEMPTS || !isRetryable(failure)
+            if (giveUp) throw describedFailure(item, failure, attempt)
+            delay(RETRY_BACKOFF_MS[attempt - 1])
+            attempt++
         }
-        val resumeFrom = if (decision.action == ResumeAction.RESUME) decision.offsetBytes else 0L
-        reportWithinFile(resumeFrom)
-        downloadFile(item.url, target, resumeFrom, reportWithinFile)
     }
+
+    // Runs one download attempt and returns the [IOException] it failed with, or null on success —
+    // a return value rather than a caught-and-rethrown exception so [fetch]'s retry loop stays a
+    // flat while-loop instead of nesting a try/catch inside it (never-nesting).
+    private suspend fun attemptDownload(
+        item: HfDownloadItem,
+        target: File,
+        resumeFrom: Long,
+        reportWithinFile: (Long) -> Unit,
+    ): IOException? =
+        try {
+            downloadFile(item.url, target, resumeFrom, reportWithinFile)
+            null
+        } catch (e: IOException) {
+            e
+        }
 
     private suspend fun downloadFile(
         url: String,
@@ -113,10 +155,14 @@ class HfDownloader(
         target.parentFile?.mkdirs()
         val connection = openConnection(url, resumeFrom)
         try {
+            val responseCode = connection.responseCode
+            if (responseCode !in HTTP_SUCCESS_RANGE) {
+                throw HttpStatusException(responseCode, connection.responseMessage)
+            }
             // If we asked to resume but the server sent a full body (200, not 206 Partial Content),
             // it ignored the Range header — so overwrite from the start rather than append onto a
             // prefix that would then be duplicated.
-            val serverResumed = resumeFrom > 0L && connection.responseCode == HttpURLConnection.HTTP_PARTIAL
+            val serverResumed = resumeFrom > 0L && responseCode == HttpURLConnection.HTTP_PARTIAL
             val startOffset = if (serverResumed) resumeFrom else 0L
             connection.inputStream.use { input ->
                 java.io.FileOutputStream(target, serverResumed).use { output ->
@@ -126,6 +172,31 @@ class HfDownloader(
         } finally {
             connection.disconnect()
         }
+    }
+
+    // A permanent client error (404 the file doesn't exist, 403 access denied) is never worth
+    // retrying — nothing about waiting and asking again will change the answer. Everything else
+    // (a 5xx from an overloaded/flaky edge, or a connection-level IOException such as "Software
+    // caused connection abort" / "unexpected end of stream" / a socket reset / a premature EOF) is
+    // treated as transient. [DownloadCapExceededException] is likewise permanent: retrying a file
+    // that is genuinely larger than the cap cannot succeed.
+    private fun isRetryable(e: IOException): Boolean =
+        when (e) {
+            is DownloadCapExceededException -> false
+            is HttpStatusException -> e.code !in NON_RETRYABLE_HTTP_CODES
+            else -> true
+        }
+
+    // Always names the FILE and the REASON — never a bare URL (the sesame/csm-1b bug this fixes:
+    // its surfaced "error" used to be exactly a `resolve/main/...` URL with no context).
+    private fun describedFailure(
+        item: HfDownloadItem,
+        cause: IOException,
+        attempts: Int,
+    ): IOException {
+        val reason = cause.message?.takeIf { it.isNotBlank() } ?: cause::class.simpleName ?: "unknown error"
+        val attemptsNote = if (attempts > 1) " (gave up after $attempts attempts)" else ""
+        return IOException("Couldn't download ${item.relativePath}: $reason$attemptsNote", cause)
     }
 
     private fun openConnection(
@@ -159,7 +230,7 @@ class HfDownloader(
             coroutineContext.ensureActive()
             total += read
             sinceReport += read
-            if (total > maxFileBytes) throw IOException("download exceeds $maxFileBytes bytes cap")
+            if (total > maxFileBytes) throw DownloadCapExceededException("download exceeds $maxFileBytes bytes cap")
             output.write(buffer, 0, read)
             if (sinceReport >= BYTES_PROGRESS_STEP) {
                 reportWithinFile(total)
@@ -175,5 +246,27 @@ class HfDownloader(
         private const val DEFAULT_MAX_FILE_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB per file
         private const val BUFFER_SIZE = 8192
         private const val BYTES_PROGRESS_STEP = 256L * 1024 // throttle progress callbacks to every 256 KB
+        private const val DIAGNOSTICS_LOG_FILENAME = "hf_download_diagnostics.json"
+
+        // 1 initial attempt + up to 3 retries, backing off ~1s/2s/4s between them so a resumable
+        // partial file has time for a flaky connection/CDN edge to recover before trying again.
+        private const val MAX_ATTEMPTS = 4
+        private val RETRY_BACKOFF_MS = longArrayOf(1_000L, 2_000L, 4_000L)
+        private val HTTP_SUCCESS_RANGE = HttpURLConnection.HTTP_OK..HttpURLConnection.HTTP_PARTIAL
+
+        // 404 the file genuinely doesn't exist, 403 access is denied — waiting and retrying changes
+        // neither answer. Any other status (a 5xx from an overloaded/flaky edge, 429 rate limiting,
+        // ...) is treated as transient and retried.
+        private val NON_RETRYABLE_HTTP_CODES = setOf(HttpURLConnection.HTTP_NOT_FOUND, HttpURLConnection.HTTP_FORBIDDEN)
     }
 }
+
+/** A non-2xx HTTP response for a repo file fetch. [code] drives the retry decision (404/403 are
+ * permanent — see [HfDownloader.isRetryable] — anything else, e.g. a 5xx, is treated as transient). */
+private class HttpStatusException(val code: Int, statusMessage: String?) :
+    IOException("HTTP $code${statusMessage?.let { " $it" } ?: ""}")
+
+/** The per-file byte cap ([HfDownloader]'s `maxFileBytes`) was exceeded. Distinct from a generic
+ * [IOException] so it is never retried — the file will never fit no matter how many times it's
+ * fetched. */
+private class DownloadCapExceededException(message: String) : IOException(message)

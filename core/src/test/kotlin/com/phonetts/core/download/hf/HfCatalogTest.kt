@@ -35,6 +35,14 @@ class HfCatalogTest {
     }
 
     @Test
+    fun searchWithSkipRequestsTheSkipParam() {
+        val http = FakeHttpClient(listOf("/api/models?" to modelsJson))
+        HfCatalog(http).search("kokoro", limit = 10, skip = 10)
+
+        assertTrue(http.requested.last().contains("skip=10"), "expected skip in URL: ${http.requested.last()}")
+    }
+
+    @Test
     fun listFilesParsesTheTree() {
         val http = FakeHttpClient(listOf("/tree/" to treeJson))
         val files = HfCatalog(http).listFiles("hexgrad/Kokoro-82M")

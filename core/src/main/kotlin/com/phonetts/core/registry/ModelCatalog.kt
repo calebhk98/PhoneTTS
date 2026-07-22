@@ -68,6 +68,18 @@ class ModelCatalog {
     @Synchronized
     fun listUnresolved(): List<UnresolvedModel> = unresolved.values.toList()
 
+    /**
+     * True if [bundleId] is present on disk in ANY form — identified or not (bug #6). A caller that
+     * only wants to know "did the user already fetch this" (e.g. a browse screen deciding whether to
+     * offer a Download button) must ask this, not [get]/[list] alone: [list] only covers models a
+     * registered engine claimed, so a UI that used it as "is this downloaded" would wrongly invite
+     * the user to redownload a bundle that's already sitting on disk, just unresolved. `null` from
+     * `inspect()` means "unidentified," not "absent" — a real, surfaced state (spec rule 4), and this
+     * is the one place that distinction is collapsed back into a plain yes/no on purpose.
+     */
+    @Synchronized
+    fun isKnown(bundleId: String): Boolean = models.containsKey(bundleId) || unresolved.containsKey(bundleId)
+
     /** Drop every identified and unresolved entry (issue #4/#5 — switching the storage location). */
     @Synchronized
     fun clear() {

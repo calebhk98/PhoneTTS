@@ -29,8 +29,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.model.ManageModelFacts
 import com.phonetts.core.model.Origin
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
@@ -86,6 +89,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                     usage = usage,
                     peakRamBytes = state.peakRamByModelId[usage.descriptor.modelId],
                     freeRamBytes = state.availableRamBytes,
+                    facts = state.factsByModelId[usage.descriptor.modelId],
                     isDeleting = state.deletingId == usage.descriptor.modelId,
                     onDelete = { viewModel.delete(usage.descriptor.modelId) },
                 )
@@ -108,6 +112,7 @@ private fun ModelUsageRow(
     usage: ModelUsage,
     peakRamBytes: Long?,
     freeRamBytes: Long,
+    facts: ManageModelFacts?,
     isDeleting: Boolean,
     onDelete: () -> Unit,
 ) {
@@ -120,13 +125,67 @@ private fun ModelUsageRow(
             Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold)
             Text(originLabel(usage.descriptor.origin) + " · " + formatBytes(usage.sizeBytes))
             Text(ramHint(peakRamBytes, freeRamBytes), style = MaterialTheme.typography.bodySmall)
+            ModelFactsBlock(facts)
         }
         DeleteControl(isDeleting, onDelete)
     }
 }
 
-// Issue #8: a downloaded bundle no engine claimed — shown honestly instead of vanishing as if it
-// were never fetched. Never selectable; deleting it just reclaims the disk space.
+/**
+ * The per-downloaded-model info block: an "Open on Hugging Face" link (only when a repo id could
+ * be recovered — fail-closed, never a guessed URL), plus RTF and parameter-count lines, each
+ * labeled "measured" or "estimated" so the user never mistakes a formula guess for a real
+ * benchmark. Nothing here is a per-model literal — every value comes from [ManageModelFacts]
+ * ([com.phonetts.core.model.InstalledModelFacts], CLAUDE.md rule 1). Renders nothing extra when
+ * [facts] isn't available yet (e.g. mid-refresh).
+ */
+@Composable
+private fun ModelFactsBlock(facts: ManageModelFacts?) {
+    if (facts == null) return
+    val uriHandler = LocalUriHandler.current
+
+    paramCountLine(facts)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    realtimeLine(facts)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    facts.hfRepoId?.let { repoId ->
+        TextButton(onClick = { uriHandler.openUri(HfEndpoints.modelPageUrl(repoId)) }) {
+            Text("Open on Hugging Face ↗")
+        }
+    }
+}
+
+private fun paramCountLine(facts: ManageModelFacts): String? {
+    val count = facts.paramCount ?: return null
+    return "~${formatParamCount(count)} params (estimated)"
+}
+
+private fun realtimeLine(facts: ManageModelFacts): String? {
+    val multiple = facts.realtimeMultiple ?: return null
+    val label = if (facts.realtimeIsMeasured) "measured" else "estimated"
+    return "~${formatRealtimeMultiple(multiple)}x real-time ($label)"
+}
+
+/** A compact "82M"/"1.2B" parameter-count label — mirrors the Browse screen's own formatter
+ * ([com.phonetts.app.hf.HfBrowseScreen]'s `formatParamCount`), duplicated here rather than shared
+ * since it is pure display formatting, not a model fact. */
+private fun formatParamCount(count: Long): String {
+    if (count <= 0L) return "?"
+    val millions = count / 1_000_000.0
+    if (millions >= THOUSAND) return "%.1fB".format(millions / THOUSAND)
+    if (millions >= 1.0) return "%.0fM".format(millions)
+    val thousands = count / 1_000.0
+    if (thousands >= 1.0) return "%.0fK".format(thousands)
+    return count.toString()
+}
+
+private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
+
+// Issue #8/bug #6: a downloaded bundle no engine claimed — shown honestly instead of vanishing as
+// if it were never fetched, and worded to head off the natural (wrong) assumption that a bundle
+// with no engine must mean a failed/incomplete download that needs redoing. It's already fully on
+// disk (that's what [unresolved.sizeBytes] is showing); redownloading the same bytes changes
+// nothing without a matching engine. Deliberately offers no "use it anyway" affordance (that would
+// fake an engine, breaking rule 4's fail-closed guarantee) — Delete is the only action, so there is
+// no dead-end button pretending this row can be selected.
 @Composable
 private fun UnresolvedUsageRow(
     unresolved: UnresolvedModelUsage,
@@ -140,8 +199,8 @@ private fun UnresolvedUsageRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
-            Text("Downloaded, no engine available · " + formatBytes(unresolved.sizeBytes))
-            Text(unresolved.reason, style = MaterialTheme.typography.bodySmall)
+            Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
+            Text("Redownloading won't help — " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
         }
         DeleteControl(isDeleting, onDelete)
     }
@@ -232,3 +291,4 @@ private fun formatBytes(bytes: Long): String {
 private const val UNIT = 1024L
 private const val ROUNDING_FACTOR = 10.0
 private val UNIT_PREFIXES = charArrayOf('K', 'M', 'G', 'T')
+private const val THOUSAND = 1000.0

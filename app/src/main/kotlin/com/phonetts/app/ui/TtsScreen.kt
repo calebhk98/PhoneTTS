@@ -29,6 +29,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -324,13 +325,18 @@ private fun TextCard(
             fieldValue = fieldValue.copy(text = state.text, selection = TextRange(state.text.length))
         }
         val baseStyle = MaterialTheme.typography.bodyLarge
+        // Bounded height (issue #75): a large loaded/typed document used to grow this field to fit
+        // all its text, pushing Play/Generate off-screen by minutes of scrolling. Capping the height
+        // and letting the field scroll internally (OutlinedTextField already does this once its
+        // content exceeds its box) keeps the controls below reachable regardless of document length,
+        // while short text still renders naturally down to minLines.
         OutlinedTextField(
             value = fieldValue,
             onValueChange = {
                 fieldValue = it
                 if (it.text != state.text) viewModel.setText(it.text)
             },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().heightIn(min = TEXT_FIELD_MIN_HEIGHT, max = TEXT_FIELD_MAX_HEIGHT),
             label = { Text("Text to speak") },
             textStyle = baseStyle.copy(fontSize = baseStyle.fontSize * state.readingScale),
             minLines = 3,
@@ -427,6 +433,12 @@ private fun KaraokeText(
 }
 
 private val KARAOKE_MAX_HEIGHT = 160.dp
+
+// Issue #75: caps the "Text to speak" field so a large loaded/typed document can't push Play/Generate
+// off-screen — the field scrolls internally past this height instead of growing unbounded inside the
+// page's own scrolling Column. min keeps short text from collapsing below the 3-line minLines floor.
+private val TEXT_FIELD_MIN_HEIGHT = 96.dp
+private val TEXT_FIELD_MAX_HEIGHT = 280.dp
 
 /**
  * Playback controls. Play is the single primary action (it generates on first tap, then replays
@@ -554,7 +566,7 @@ private fun ExportFormatPicker(
             readOnly = true,
             label = { Text("Export format") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             formats.forEach { encoder ->
@@ -661,7 +673,7 @@ private fun ModelPicker(
             readOnly = true,
             label = { Text("Model") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             models.forEach { model ->
@@ -701,7 +713,7 @@ private fun VoicePicker(
             readOnly = true,
             label = { Text("Voice") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             ordered.forEach { voice ->

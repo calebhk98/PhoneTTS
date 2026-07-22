@@ -201,7 +201,17 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     private fun ramText(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "unknown"
 
     companion object {
-        const val BENCH_PHRASE = "The quick brown fox jumps over the lazy dog."
+        // Multiple sentences on purpose (issue: TTFA == total Gen time): AbstractVoiceEngine emits
+        // one Flow<FloatArray> chunk per TextChunker sentence (spec §8), and RtfEstimator measures
+        // TTFA at the FIRST emitted chunk vs total elapsed at the LAST — both correct (see
+        // RtfEstimatorTest). But a single-sentence phrase can only ever produce one chunk, so TTFA
+        // and total generation time are mathematically forced to be identical no matter how correct
+        // the measurement code is. Three sentences exercise the actual streaming/chunking path so the
+        // benchmark table shows a real TTFA distinct from total Gen time, as issue #14 intends.
+        const val BENCH_PHRASE =
+            "The quick brown fox jumps over the lazy dog. " +
+                "Pack my box with five dozen liquor jugs. " +
+                "The five boxing wizards jump quickly."
         private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
     }
 }

@@ -1,8 +1,11 @@
 package com.phonetts.app.hf
 
+import com.phonetts.core.download.builtin.BuiltInModel
+import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
+import com.phonetts.core.download.hf.HfSizeParamFilter
 import com.phonetts.core.download.hf.HfSortOption
 import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.QuantizationVariant
@@ -18,11 +21,6 @@ data class HfBrowseUiState(
     // The most recent error, for a quick inline banner; every error (this one included) is also
     // retained in [errorLog] for the session so it can be read/copied later (issue #3).
     val error: String? = null,
-    // Every model already in the catalog (this session's downloads AND anything imported in a
-    // prior session) keyed by the SAME sanitized id every engine's descriptor.modelId uses
-    // (ModelStorage.sanitize) — so "is this row already installed" survives leaving/reopening
-    // this screen, not just the moment right after a fresh download completes.
-    val installedIds: Set<String> = emptySet(),
     // Set when a chosen repo ships more than one weight precision and the user must pick one
     // (a budget-device win: fetch only fp16/q8 instead of every variant). Null otherwise.
     val variantChoice: VariantChoice? = null,
@@ -33,13 +31,47 @@ data class HfBrowseUiState(
     // until its file tree has been listed, so this starts empty and fills in as the user asks.
     val sizeEstimates: Map<String, HfSizeEstimate> = emptyMap(),
     val sizeLoading: Set<String> = emptySet(),
+    // Repo ids whose file tree, once listed, had no file a registered runtime in this app can load
+    // yet (see com.phonetts.core.download.hf.HfCompatibility) — drives the "Not yet supported" grey
+    // badge. Filled in alongside [sizeEstimates] since both need the same file-tree fetch; a repo
+    // not yet checked is simply absent here (no badge shown), never assumed unsupported.
+    val notYetSupportedIds: Set<String> = emptySet(),
     // Retained for the whole session (not just a transient toast) so the user can scroll back and
     // copy an error that already scrolled off screen (issue #3).
     val errorLog: List<HfBrowseError> = emptyList(),
+    // Persistent (not just this session — see DownloadDiagnosticsLog) record of download failures
+    // and "downloaded, no engine yet" imports, mirrored into state so the Browse screen's dialog is
+    // driven by the same collectAsState() flow as everything else.
+    val diagnostics: List<DiagnosticsEntry> = emptyList(),
     // Sort/filter controls (issue #6) — the *choices* for tagFilter come from the current results
     // (see HfResultsView.availableTags), never a hardcoded list.
     val sort: HfSortOption = HfSortOption.MOST_DOWNLOADS,
     val tagFilter: String? = null,
+    // Size/param-count filter (issue: sort+filter by size/params) — see HfSizeParamFilter. Applying
+    // any bound here (or picking a size/param HfSortOption) is what triggers eagerly fetching sizes
+    // for the whole current result set — see HfBrowseViewModel.ensureSizesLoaded.
+    val sizeFilter: HfSizeParamFilter = HfSizeParamFilter(),
+    // Pagination (issue: Browse "Load more") — the Hub's /api/models list is paged with limit+skip
+    // (HfEndpoints.searchModelsUrl); [results] above only ever holds the pages fetched SO far,
+    // appended in order. [canLoadMore] is false once a page came back shorter than the page size
+    // (or before any search has run), so the button/control disappears rather than firing a request
+    // that's known to return nothing new.
+    val loadingMore: Boolean = false,
+    val canLoadMore: Boolean = false,
+    // "Piper voices" section (issue #71): collapsed by default — 166+ voices is too many to show
+    // unfiltered — with its own search text, kept here (not local Composable state) so both
+    // survive the same recomposition/navigation lifecycle as every other Browse control.
+    val piperVoicesExpanded: Boolean = false,
+    val piperVoiceQuery: String = "",
+    // The Piper voice list itself is fetched at runtime from upstream rhasspy/piper-voices'
+    // `voices.json` the first time the section is expanded (never a checked-in snapshot — see
+    // PiperVoicesIndex) and cached here for the rest of the session: empty + not loading + no
+    // error means "not fetched yet", so the section starts collapsed with nothing to lay out.
+    val piperVoices: List<BuiltInModel> = emptyList(),
+    val piperVoicesLoading: Boolean = false,
+    // Fail-closed (CLAUDE.md rule 4's spirit applied to data, not just model detection): a fetch
+    // failure surfaces this message rather than falling back to a stale/guessed list.
+    val piperVoicesError: String? = null,
 ) {
     /** True while [modelId] has an in-flight download (issue #2 — any number of these can be true
      * at once, one per repo). */

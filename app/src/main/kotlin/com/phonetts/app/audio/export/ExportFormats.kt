@@ -26,7 +26,15 @@ object ExportFormats {
      * their temp-file detour (see [AacAudioEncoder] / [OpusAudioEncoder] kdoc for why they need one).
      */
     fun available(context: Context): List<AudioEncoder> {
-        val encoders = mutableListOf<AudioEncoder>(WavEncoder(), AacAudioEncoder(context.cacheDir))
+        // WavEncoder's scratch PCM spill needs an app-writable directory too (issue: WAV export was
+        // constructed with no scratchDir, so its default fell back to `File.createTempFile`'s
+        // platform temp dir — on Android that is NOT app-writable, unlike the JVM environment the
+        // :core tests run in. `openWriter()` then threw before a single byte was written, and the
+        // SAF document the caller had already created (0 bytes) was closed as-is by
+        // `TtsViewModel.export`'s `output.use{}` on the failure path: a 0-byte / never-finalized file
+        // that the OS previewer reports as "fd://... can not be played". AAC/Opus below were already
+        // correctly passed `context.cacheDir` — WAV was the one format missing it.
+        val encoders = mutableListOf<AudioEncoder>(WavEncoder(context.cacheDir), AacAudioEncoder(context.cacheDir))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             encoders += OpusAudioEncoder(context.cacheDir)
         }

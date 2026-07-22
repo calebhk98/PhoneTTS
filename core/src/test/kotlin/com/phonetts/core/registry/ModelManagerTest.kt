@@ -61,6 +61,22 @@ class ModelManagerTest {
         assertEquals(350L, manager.totalBytes())
     }
 
+    // Bug #7: a downloaded-but-unresolved bundle (issue #8) still occupies real disk space, so the
+    // "storage used" total must count it too, not just identified models — otherwise a screen full
+    // of unresolved downloads (bug #6) reads as "0 B used" even though every byte is really there.
+    @Test
+    fun totalBytesIncludesUnresolvedBundlesAlongsideIdentifiedModels() {
+        val catalog =
+            ModelCatalog().apply {
+                add(testDescriptor("m1", "eng"))
+                markUnresolved("mystery", "no engine claimed it")
+            }
+        val sizes = mapOf("m1" to 100L, "mystery" to 42L)
+        val manager = ModelManager(catalog, dirSizeBytes = { sizes.getValue(it) }, deleteModelDir = { true })
+
+        assertEquals(142L, manager.totalBytes())
+    }
+
     @Test
     fun removeDropsTheModelFromTheCatalogAndDeletesItsFiles() {
         val catalog = ModelCatalog().apply { add(testDescriptor("m1", "eng")) }
@@ -242,7 +258,10 @@ class ModelManagerTest {
                 dirSizeBytes = { 0L },
                 deleteModelDir = { true },
                 storageLocation = storageLocation,
-                onStorageLocationChanged = { callbackRuns++ },
+                onStorageLocationChanged = { _, _ ->
+                    callbackRuns++
+                    null
+                },
             )
 
         manager.changeStorageLocation("/storage/1234-5678/PhoneTTS/models")
@@ -266,5 +285,58 @@ class ModelManagerTest {
         manager.changeStorageLocation(null)
 
         assertNull(storageLocation.customBasePath())
+    }
+
+    // Rule 4: the callback must see the OLD path exactly as it was before this call overwrote it,
+    // paired with the new one — the app layer needs both to know what to migrate from/to.
+    @Test
+    fun changeStorageLocationPassesThePreviousAndNextPathToTheCallback() {
+        val storageLocation =
+            StorageLocationPreference(InMemoryPreferenceStore()).apply { setCustomBasePath("/old/path") }
+        var seenPrevious: String? = "not called"
+        var seenNext: String? = "not called"
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                storageLocation = storageLocation,
+                onStorageLocationChanged = { previous, next ->
+                    seenPrevious = previous
+                    seenNext = next
+                    null
+                },
+            )
+
+        manager.changeStorageLocation("/new/path")
+
+        assertEquals("/old/path", seenPrevious)
+        assertEquals("/new/path", seenNext)
+    }
+
+    // The callback's return value (e.g. a migration warning) must reach the caller so the UI can
+    // show it, instead of only ever seeing the generic "folder picked" message.
+    @Test
+    fun changeStorageLocationReturnsWhateverMessageTheCallbackReports() {
+        val storageLocation = StorageLocationPreference(InMemoryPreferenceStore())
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                storageLocation = storageLocation,
+                onStorageLocationChanged = { _, _ -> "some models could not be moved" },
+            )
+
+        val message = manager.changeStorageLocation("/new/path")
+
+        assertEquals("some models could not be moved", message)
+    }
+
+    @Test
+    fun changeStorageLocationReturnsNullWhenNoCallbackIsWired() {
+        val manager = ModelManager(ModelCatalog(), dirSizeBytes = { 0L }, deleteModelDir = { true })
+
+        assertNull(manager.changeStorageLocation("/new/path"))
     }
 }

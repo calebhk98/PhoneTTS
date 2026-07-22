@@ -28,13 +28,18 @@ import java.io.File
 class SideloadCoordinator(
     private val context: Context,
     private val importer: ModelImporter,
+    // Read fresh each import (not cached) so a folder is copied under the CURRENT model-storage base
+    // even after the user relocates storage to an SD card (issues #4/#5) — the same base the
+    // downloader writes to and Manage sizes/deletes/scans, so a sideloaded model never lands in a
+    // stale internal dir where it would size as 0 B and be invisible to the catalog scan.
+    private val modelsBaseDir: () -> File,
 ) {
     /** Copy the user-picked folder into app-private storage and import it into the catalog. */
     fun importFromTree(treeUri: Uri): ModelDescriptor {
         val picked =
             DocumentFile.fromTreeUri(context, treeUri)
                 ?: error("could not open the selected folder")
-        val destination = ModelStorage.modelDir(context.filesDir, picked.name ?: "model")
+        val destination = ModelStorage.modelDir(modelsBaseDir(), picked.name ?: "model")
         copyTree(picked, destination)
         return importer.import(destination.absolutePath)
     }
