@@ -34,6 +34,7 @@ import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.resolver.Resolver
 import com.phonetts.core.sideload.DirectoryBundleReader
 import com.phonetts.core.sideload.ModelImporter
+import com.phonetts.core.storage.ModelStorageMigrator
 import com.phonetts.core.update.UpdateChecker
 
 /**
@@ -119,8 +120,9 @@ class AppGraph(context: Context) {
     // Manage (list sizes / delete) downloaded models. File I/O is injected so :core stays pure;
     // deleting the loaded model unloads it first and forgets its saved override (PrefsOverrideStore
     // is clearable), keeping the catalog, memory, and override store consistent. Also owns the
-    // storage-location switch (issue #4/#5): [relocateStorage] rebuilds [hfDownloader] and re-scans
-    // the newly chosen folder so models already there load without a redownload.
+    // storage-location switch (issue #4/#5): [relocateStorage] MIGRATES already-downloaded models
+    // from the old base dir to the new one (the data-loss bug this fixes — see its own kdoc),
+    // rebuilds [hfDownloader], and re-scans the newly chosen folder.
     val modelManager =
         ModelManager(
             catalog = catalog,
@@ -132,17 +134,52 @@ class AppGraph(context: Context) {
             onStorageLocationChanged = ::relocateStorage,
         )
 
-    // Runs when the user picks a new storage location or resets to the default (issue #4/#5): the
-    // old catalog may name models that no longer exist at the new location, so it is cleared and
-    // immediately re-scanned (rather than trusting stale entries) — exactly [hydrate]'s own job, just
-    // triggered mid-session instead of at launch. Also unloads the current engine first (rule #6):
-    // its weights may live under the OLD base dir.
-    private fun relocateStorage() {
+    // Runs when the user picks a new storage location or resets to the default (issue #4/#5,
+    // data-loss bug fix). [oldPath]/[newPath] are the raw custom-base-path values from BEFORE and
+    // AFTER [ModelManager.changeStorageLocation] just persisted the change (null means "app-private
+    // default" on either side) — passed explicitly rather than re-read, because by the time this
+    // runs the preference already holds the NEW value only.
+    //
+    // Order matters: migrate the physical model folders from old → new FIRST (never lose a
+    // downloaded model), THEN unload/clear/rescan — otherwise the old catalog is dropped and the
+    // new one built from a location the files were never moved to, which is exactly how models
+    // used to go missing (and worse, stayed reported as "installed" while being neither usable nor
+    // deletable). Re-picking the SAME folder (rule 2) resolves as [ModelStorageMigrator.sameLocation]
+    // and returns immediately, touching nothing — no unload, no clear, no rescan.
+    private fun relocateStorage(
+        oldPath: String?,
+        newPath: String?,
+    ): String? {
+        val oldBaseDir = oldPath?.let { java.io.File(it) } ?: appContext.filesDir
+        val newBaseDir = newPath?.let { java.io.File(it) } ?: appContext.filesDir
+        if (ModelStorageMigrator.sameLocation(oldBaseDir, newBaseDir)) return null
+
+        val outcome =
+            ModelStorageMigrator.migrate(
+                oldBaseDir.resolve(ModelStorage.MODELS_DIR),
+                newBaseDir.resolve(ModelStorage.MODELS_DIR),
+            )
+
+        // rule #6: one engine loaded at a time, and its weights may live under the OLD base dir.
         engineManager.unloadCurrent()
         hfDownloader = HfDownloader(modelsBaseDir(), importer)
+        // The old catalog may name models that no longer resolve at the new location (or, thanks to
+        // the migration above, now genuinely do) — cleared and immediately re-scanned rather than
+        // trusting stale entries, exactly [hydrate]'s own job, just triggered mid-session.
         catalog.clear()
         hydrate()
+
+        return relocationMessage(outcome)
     }
+
+    // A partial failure is the only outcome worth surfacing: [ModelStorageMigrator] never deletes a
+    // source it couldn't confirm was copied (fail safe), so nothing is lost, but the user needs to
+    // know some models are still sitting at the OLD location instead of the one they just picked.
+    private fun relocationMessage(outcome: ModelStorageMigrator.Outcome): String? =
+        (outcome as? ModelStorageMigrator.Outcome.PartialFailure)?.let {
+            "Couldn't move ${it.failedNames.joinToString(", ")} to the new folder — " +
+                "left in place at the old location so nothing was lost."
+        }
 
     // Preferences-backed features: favorite voices + per-language default, per-document resume,
     // and the GLOBAL last-used model/voice/speed (issue #19-1 — one shared "where I left off",

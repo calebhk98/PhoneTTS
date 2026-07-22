@@ -65,8 +65,13 @@ data class ModelRemoval(
  *
  * [storageLocation] (issue #4/#5) is the same plain-`:core` preference the app's storage-location
  * picker writes to; [onStorageLocationChanged] is the app-supplied callback that reacts to a
- * change (rebuilding anything that captured a fixed base dir, and re-scanning the new location).
- * Both are optional so existing callers that don't care about relocatable storage are unaffected.
+ * change (migrating already-downloaded models from the OLD base dir to the NEW one, rebuilding
+ * anything that captured a fixed base dir, and re-scanning the new location). It receives the
+ * previous and new custom-base-path values (both possibly null for "app-private default") so the
+ * app layer knows exactly which directory to migrate FROM without re-reading state that
+ * [changeStorageLocation] has, by then, already overwritten — and may return a message (e.g. a
+ * migration warning) to surface to the user; both are optional so existing callers that don't care
+ * about relocatable storage are unaffected.
  */
 class ModelManager(
     private val catalog: ModelCatalog,
@@ -75,7 +80,7 @@ class ModelManager(
     private val overrideStore: OverrideStore? = null,
     private val engineManager: EngineManager? = null,
     private val storageLocation: StorageLocationPreference? = null,
-    private val onStorageLocationChanged: (() -> Unit)? = null,
+    private val onStorageLocationChanged: ((previous: String?, next: String?) -> String?)? = null,
 ) {
     /** Every model in the catalog, paired with its on-disk size. */
     fun usage(): List<ModelUsage> = catalog.list().map { ModelUsage(it, dirSizeBytes(it.modelId)) }
@@ -111,14 +116,18 @@ class ModelManager(
 
     /**
      * Switch the models base directory (issue #4/#5). [absolutePath] null reverts to the
-     * app-private default. Persists the choice, then runs [onStorageLocationChanged] so the app
-     * layer can rebuild anything holding a fixed reference to the old base dir and re-scan the new
-     * location — so a folder that already holds previously-downloaded models loads them without a
-     * redownload. A no-op beyond persisting the preference if the app didn't wire that callback.
+     * app-private default. Reads the PREVIOUS path first (rule 4: old vs new must be captured
+     * before either is lost), persists the new choice, then runs [onStorageLocationChanged] with
+     * both — so the app layer can migrate already-downloaded models from the old base dir to the
+     * new one (never silently losing them, the data-loss bug this fixes), rebuild anything holding
+     * a fixed reference to the old base dir, and re-scan the new location. Returns whatever message
+     * the callback reports (e.g. a migration warning), or null if nothing needs surfacing / no
+     * callback is wired.
      */
-    fun changeStorageLocation(absolutePath: String?) {
+    fun changeStorageLocation(absolutePath: String?): String? {
+        val previous = storageLocation?.customBasePath()
         storageLocation?.setCustomBasePath(absolutePath)
-        onStorageLocationChanged?.invoke()
+        return onStorageLocationChanged?.invoke(previous, absolutePath)
     }
 
     /** Remove [modelId] from the catalog, delete its weights, and clean up all references to it. */

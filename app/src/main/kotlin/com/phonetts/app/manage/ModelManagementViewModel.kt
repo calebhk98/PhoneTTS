@@ -111,12 +111,18 @@ class ModelManagementViewModel(
      * writable, switches the models base dir to it. A folder that can't be resolved to a plain
      * `java.io.File` (or isn't actually writable — e.g. `MANAGE_EXTERNAL_STORAGE` wasn't granted)
      * is refused with a message rather than silently left half-applied.
+     *
+     * [ModelManager.changeStorageLocation] MIGRATES any already-downloaded models from the previous
+     * location to this one and returns a warning message if any of them couldn't be moved (left
+     * safely in place at the old location, never lost) — that warning, when present, replaces the
+     * generic "now storing models in…" confirmation so the user actually sees it.
      */
     fun chooseFolder(treeUri: Uri) {
         when (val resolution = StorageLocation.resolve(treeUri)) {
             is StorageLocation.Resolution.Usable -> {
-                modelManager.changeStorageLocation(resolution.path)
-                mutableState.update { it.copy(storageMessage = "Now storing models in ${resolution.path}") }
+                val warning = modelManager.changeStorageLocation(resolution.path)
+                val message = warning ?: "Now storing models in ${resolution.path}"
+                mutableState.update { it.copy(storageMessage = message) }
             }
             is StorageLocation.Resolution.Unusable -> {
                 mutableState.update { it.copy(storageMessage = "Can't use that folder: ${resolution.reason}") }
@@ -125,10 +131,14 @@ class ModelManagementViewModel(
         refresh()
     }
 
-    /** Revert to app-private storage (issue #4/#5) — note this does NOT move already-relocated files. */
+    /**
+     * Revert to app-private storage (issue #4/#5). Like [chooseFolder], this now MIGRATES any
+     * models that were sitting under the custom folder back into app-private storage rather than
+     * abandoning them there.
+     */
     fun resetStorageLocation() {
-        modelManager.changeStorageLocation(null)
-        mutableState.update { it.copy(storageMessage = "Back to app-private storage") }
+        val warning = modelManager.changeStorageLocation(null)
+        mutableState.update { it.copy(storageMessage = warning ?: "Back to app-private storage") }
         refresh()
     }
 
