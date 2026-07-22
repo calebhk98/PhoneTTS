@@ -241,6 +241,10 @@ private fun AppNav(
                                     // Turns on the per-download progress notification (#70); null would
                                     // silently disable it. Uses the app context — no Activity leak.
                                     notifier = DownloadNotifier(graph.appContext),
+                                    // Feeds the RTF sort/filter (issue: real-time-factor sort) from the
+                                    // SAME persisted history the Benchmarks screen writes to — never a
+                                    // second measurement path.
+                                    benchmarkHistory = graph.benchmarkHistory,
                                 )
                             }
                         },

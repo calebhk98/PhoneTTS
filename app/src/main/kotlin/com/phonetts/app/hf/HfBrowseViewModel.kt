@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.ModelStorage
 import com.phonetts.app.UserPickRequiredException
+import com.phonetts.app.device.DeviceInfo
 import com.phonetts.core.download.builtin.BuiltInCatalog
 import com.phonetts.core.download.builtin.BuiltInModel
 import com.phonetts.core.download.builtin.PiperVoicesIndex
@@ -15,9 +16,12 @@ import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.download.hf.HfDownloadPlan
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.download.hf.HfInstalledFilter
 import com.phonetts.core.download.hf.HfLanguages
+import com.phonetts.core.download.hf.HfLoadMorePolicy
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfQuantizedDownloadPlan
+import com.phonetts.core.download.hf.HfResultFilters
 import com.phonetts.core.download.hf.HfResultsView
 import com.phonetts.core.download.hf.OfflineErrorHint
 import com.phonetts.core.download.hf.HfSizeEstimator
@@ -27,7 +31,8 @@ import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.HttpClient
 import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.QuantizationVariant
-import com.phonetts.core.download.hf.needsSize
+import com.phonetts.core.download.hf.needsEagerSizeFetch
+import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.registry.ModelCatalog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +73,15 @@ class HfBrowseViewModel(
     // HTTP client [catalog] itself is built on elsewhere in the graph, so the caller wiring this up
     // (AppGraph/MainActivity) needs no change; a test can still inject a fake.
     private val piperHttp: HttpClient = HttpUrlConnectionClient(),
+    // Read-only source for the RTF sort/filter's per-model speed numbers (issue: real-time-factor
+    // sort/filter) — the SAME persisted history the Benchmarks screen writes to
+    // (BenchmarkViewModel.recordAndDetect), never a second measurement path. Null by default (a test
+    // constructing this class directly, or a build wiring nothing up) simply means the RTF sort has
+    // nothing to show yet — fail-closed, exactly like [notifier] above.
+    private val benchmarkHistory: BenchmarkHistory? = null,
+    // Injectable device name so RTF lookups are deterministic to test; defaults to the real device's
+    // name, matching how the Benchmarks screen keys history (BenchmarkViewModel/DeviceInfo.name).
+    private val deviceName: String = DeviceInfo.name,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(HfBrowseUiState())
     val state: StateFlow<HfBrowseUiState> = mutableState.asStateFlow()
@@ -114,15 +128,58 @@ class HfBrowseViewModel(
      * #3): recomputing this on every unrelated state change, e.g. a download-progress tick, is
      * what made the sort/filter dropdown janky.
      */
-    fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> =
-        HfResultsView.apply(
-            state.results,
-            state.sort,
-            state.tagFilter,
-            state.sizeEstimates,
-            state.sizeFilter,
-            state.languageFilter,
-        )
+    fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> = applyFilters(state, state.results)
+
+    // Shared by displayedResults (the full current result set) and loadMore's "how many pages do I
+    // still need?" check (a growing prefix of it) — one filter pipeline, so the count loadMore reads
+    // is always exactly what the screen would show for the same [results]. Installed-ness is applied
+    // AFTER HfResultsView.apply's own sort+filter chain — filtering only removes entries, so it never
+    // disturbs the order apply() already computed (see HfResultsView.apply's kdoc).
+    private fun applyFilters(
+        state: HfBrowseUiState,
+        results: List<HfModelSummary>,
+    ): List<HfModelSummary> {
+        val filtered =
+            HfResultsView.apply(
+                results,
+                state.sort,
+                state.tagFilter,
+                HfResultFilters(
+                    sizeEstimates = state.sizeEstimates,
+                    sizeFilter = state.sizeFilter,
+                    language = state.languageFilter,
+                    rtfEstimates = rtfEstimates(results),
+                ),
+            )
+        return HfResultsView.filterByInstalled(filtered, installedIdsOf(results), state.installedFilter)
+    }
+
+    /** [results]' ids that already have a downloaded/resolved bundle on this device — the input
+     * [HfResultsView.filterByInstalled] needs (issue: installed filter). Read live off
+     * [modelCatalog] (via [isInstalled]) on every call, same freshness guarantee as [isInstalled]
+     * itself. */
+    private fun installedIdsOf(results: List<HfModelSummary>): Set<String> =
+        results.asSequence().map { it.id }.filter(::isInstalled).toSet()
+
+    /**
+     * The most recent measured real-time factor for each of [results] that is BOTH installed and has
+     * at least one benchmark run recorded (issue: RTF sort/filter) — keyed by the HF repo id so it
+     * slots into [HfResultsView] exactly like [HfBrowseUiState.sizeEstimates] does for size. A model
+     * that was never downloaded, or was downloaded but never benchmarked, is simply absent — never a
+     * guessed number — so [HfSortOption.FASTEST_RTF]/[SLOWEST_RTF] sort it last (the same
+     * unknown-last rule size sorting already uses). Purely local reads (the installed catalog + the
+     * on-device [BenchmarkHistory] the Benchmarks screen already writes to) — no network call, unlike
+     * size estimates.
+     */
+    private fun rtfEstimates(results: List<HfModelSummary>): Map<String, Double> {
+        val history = benchmarkHistory ?: return emptyMap()
+        val descriptorsByBundleId = modelCatalog.list().associateBy { it.modelId }
+        return results.mapNotNull { model ->
+            val descriptor = descriptorsByBundleId[ModelStorage.sanitize(model.id)] ?: return@mapNotNull null
+            val latest = history.history(descriptor.engineId, deviceName).lastOrNull() ?: return@mapNotNull null
+            model.id to latest.realTimeFactor
+        }.toMap()
+    }
 
     /** The tag filter menu's choices — the most common, *useful* tags across the current results
      * (issue: the tag filter is slow with hundreds of raw tags). Boilerplate and language codes are
@@ -137,13 +194,14 @@ class HfBrowseViewModel(
 
     fun onLanguageFilterChange(code: String?) = mutableState.update { it.copy(languageFilter = code) }
 
-    /** Changing sort order to a size/param-derived one (see [HfSortOption.needsSize]) eagerly fetches
-     * every currently-listed result's size — see [ensureSizesLoaded] — so the new order isn't just
-     * the whole page dumped into "unknown, sorts last" until the user happens to scroll each row into
-     * view (bug: sort/filter by size+params needs sizes available up front, not one row at a time). */
+    /** Changing sort order to a size/param-derived one (a "needs size" [HfSortOption] — see
+     * [needsEagerSizeFetch]) eagerly fetches every currently-listed result's size — see
+     * [ensureSizesLoadedIfNeeded] — so the new order isn't just the whole page dumped into "unknown,
+     * sorts last" until the user happens to scroll each row into view (bug: sort/filter by
+     * size+params needs sizes available up front, not one row at a time). */
     fun onSortChange(sort: HfSortOption) {
         mutableState.update { it.copy(sort = sort) }
-        if (sort.needsSize()) ensureSizesLoaded(mutableState.value.results)
+        ensureSizesLoadedIfNeeded(mutableState.value.results)
     }
 
     fun onTagFilterChange(tag: String?) = mutableState.update { it.copy(tagFilter = tag) }
@@ -152,14 +210,34 @@ class HfBrowseViewModel(
      * result's size to know whether it passes the filter, not just the ones already scrolled past. */
     fun onSizeFilterChange(filter: HfSizeParamFilter) {
         mutableState.update { it.copy(sizeFilter = filter) }
-        if (filter.isActive) ensureSizesLoaded(mutableState.value.results)
+        ensureSizesLoadedIfNeeded(mutableState.value.results)
     }
+
+    /** Show all results, only installed ones, or only not-yet-installed ones (issue: installed
+     * filter). No fetch to trigger here — install state is already local (see [installedIdsOf]). */
+    fun onInstalledFilterChange(filter: HfInstalledFilter) = mutableState.update { it.copy(installedFilter = filter) }
 
     // loadSize() is already idempotent (a no-op once known or already loading — see its own kdoc),
     // so firing it for the whole current result set here is safe to call as often as sort/filter
     // changes fire; each row also still calls it individually as it scrolls into view (ModelRow's
     // LaunchedEffect), so nothing here is a new network *pattern* — just triggering it earlier.
     private fun ensureSizesLoaded(models: List<HfModelSummary>) = models.forEach { loadSize(it.id) }
+
+    /**
+     * Fires [ensureSizesLoaded] for [models] whenever [needsEagerSizeFetch] says the CURRENT
+     * sort/filter needs sizes (issue: max-size filter regression). Previously the eager fetch only
+     * ran from [onSortChange]/[onSizeFilterChange] — the two places the sort/filter itself changes —
+     * but a size filter set BEFORE a fresh [search] or a later [loadMore] page never got the same
+     * treatment: [HfResultsView.filterBySize] excludes an unknown-size result outright, and an
+     * excluded row is never composed, so its own per-row [loadSize] (ModelRow's `LaunchedEffect`)
+     * never even runs — those results would simply vanish forever instead of eventually resolving.
+     * Calling this from every place new results land ([search], [loadMore]) as well as from a
+     * sort/filter change closes that gap.
+     */
+    private fun ensureSizesLoadedIfNeeded(models: List<HfModelSummary>) {
+        val current = mutableState.value
+        if (needsEagerSizeFetch(current.sort, current.sizeFilter)) ensureSizesLoaded(models)
+    }
 
     /** Clears the current inline error banner (issue #2). The full session log in [HfBrowseError]
      * is untouched — dismissing only hides the one-line banner, it doesn't forget the error. */
@@ -289,6 +367,7 @@ class HfBrowseViewModel(
                     mutableState.update {
                         it.copy(loading = false, results = results, canLoadMore = results.size >= PAGE_SIZE)
                     }
+                    ensureSizesLoadedIfNeeded(results)
                 }.onFailure { e ->
                     // logError does its own atomic state update, so it must NOT be called from
                     // inside this update {} block below — MutableStateFlow.update retries its
@@ -301,35 +380,68 @@ class HfBrowseViewModel(
     }
 
     /**
-     * Fetches the next page of the current query (issue: Browse pagination) and appends it to
+     * Fetches the next page(s) of the current query (issue: Browse pagination) and appends them to
      * [HfBrowseUiState.results] — the Hub's `/api/models` list endpoint pages with `limit`+`skip`
      * (verified against the live API; see [com.phonetts.core.download.hf.HfEndpoints.searchModelsUrl]'s
-     * kdoc), so the next page's `skip` is simply how many results are already loaded. A no-op while
-     * a page is already loading, a fresh search is loading, or the previous page came back short
+     * kdoc), so each page's `skip` is simply how many results are already loaded. A no-op while a
+     * page is already loading, a fresh search is loading, or the previous page came back short
      * (nothing more to fetch) — [HfBrowseUiState.canLoadMore] gates all three.
+     *
+     * Bug: with a restrictive filter active, fetching just ONE page here used to leave "Load more"
+     * looking broken — most (or all) of a 20-result page could get filtered away, so tapping the
+     * button visibly added ~nothing. [fetchUntilEnoughVisible] instead keeps fetching subsequent
+     * pages, off the main thread, until either enough NEW post-filter-visible results have appeared,
+     * the Hub runs out of results, or a hard page cap is hit — see [HfLoadMorePolicy].
      */
     fun loadMore() {
         val current = mutableState.value
         if (current.loadingMore || current.loading || !current.canLoadMore) return
-        val query = current.query
-        val skip = current.results.size
         mutableState.update { it.copy(loadingMore = true) }
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { catalog.search(query, limit = PAGE_SIZE, skip = skip) } }
-                .onSuccess { page ->
-                    mutableState.update { state ->
-                        // distinctBy guards against a result the Hub's own ranking shuffled across
-                        // the page boundary mid-session (a download-count change reordering the
-                        // list) from showing up twice, rather than trusting pages never overlap.
-                        val merged = (state.results + page).distinctBy { it.id }
-                        state.copy(loadingMore = false, results = merged, canLoadMore = page.size >= PAGE_SIZE)
-                    }
+            runCatching { withContext(Dispatchers.IO) { fetchUntilEnoughVisible(current) } }
+                .onSuccess { (merged, canLoadMore) ->
+                    mutableState.update { it.copy(loadingMore = false, results = merged, canLoadMore = canLoadMore) }
+                    ensureSizesLoadedIfNeeded(merged)
                 }.onFailure { e ->
                     if (e is CancellationException) throw e
                     val message = logError(null, e)
                     mutableState.update { it.copy(loadingMore = false, error = message) }
                 }
         }
+    }
+
+    /**
+     * The network/looping half of [loadMore]: repeatedly fetches the next page of [snapshot]'s query
+     * and merges it in, deciding whether to keep going via the pure [HfLoadMorePolicy] (unit-tested
+     * in `:core` without a fake HTTP client). Visibility is recomputed against [snapshot] — the state
+     * captured at the moment the user tapped "Load more" — so a sort/filter change arriving mid-fetch
+     * can't produce an inconsistent count; the next [displayedResults] call picks up any such change
+     * against the final merged list regardless.
+     */
+    private suspend fun fetchUntilEnoughVisible(snapshot: HfBrowseUiState): Pair<List<HfModelSummary>, Boolean> {
+        var results = snapshot.results
+        val visibleBefore = applyFilters(snapshot, results).size
+        var lastPageSize = Int.MAX_VALUE
+        var pagesFetched = 0
+        while (
+            HfLoadMorePolicy.shouldFetchAnotherPage(
+                pagesFetchedSoFar = pagesFetched,
+                lastPageSize = lastPageSize,
+                pageSize = PAGE_SIZE,
+                newlyVisibleCount = applyFilters(snapshot, results).size - visibleBefore,
+                targetNewVisible = LOAD_MORE_TARGET_NEW_VISIBLE,
+                maxPages = MAX_LOAD_MORE_PAGES,
+            )
+        ) {
+            val page = catalog.search(snapshot.query, limit = PAGE_SIZE, skip = results.size)
+            // distinctBy guards against a result the Hub's own ranking shuffled across the page
+            // boundary mid-session (a download-count change reordering the list) from showing up
+            // twice, rather than trusting pages never overlap.
+            results = (results + page).distinctBy { it.id }
+            lastPageSize = page.size
+            pagesFetched++
+        }
+        return results to (lastPageSize >= PAGE_SIZE)
     }
 
     fun download(model: HfModelSummary) {
@@ -613,5 +725,15 @@ class HfBrowseViewModel(
         // HfCatalog.DEFAULT_LIMIT already used for the single page fetched before pagination existed,
         // so a first search's behavior/URL is unchanged; only loadMore()'s later pages are new.
         private const val PAGE_SIZE = HfCatalog.DEFAULT_LIMIT
+
+        // loadMore() keeps fetching pages (see fetchUntilEnoughVisible/HfLoadMorePolicy) until AT
+        // LEAST this many new post-filter results are visible — one page's worth, so a tap on "Load
+        // more" reliably adds a meaningful amount whether or not a filter is active, rather than
+        // sometimes 20 and sometimes ~0 (issue: load-more with filters shows almost nothing).
+        private const val LOAD_MORE_TARGET_NEW_VISIBLE = PAGE_SIZE
+
+        // Hard cap on pages fetched by one loadMore() call — bounds network use so a filter matching
+        // almost nothing (or a query with few genuine results left) can't spin fetching pages forever.
+        private const val MAX_LOAD_MORE_PAGES = 5
     }
 }
