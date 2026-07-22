@@ -7,13 +7,12 @@ import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
 import com.phonetts.app.runtime.NativeCosyVoiceRuntime
 import com.phonetts.app.runtime.OnnxRuntime
-import com.phonetts.app.runtime.SystemTtsDiscovery
-import com.phonetts.app.runtime.SystemTtsEngine
 import com.phonetts.app.sideload.SideloadCoordinator
 import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.engine.PlatformServices
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
@@ -53,6 +52,16 @@ class UserPickRequiredException(bundleId: String, val explanation: String) :
     Exception("could not identify model '$bundleId' — a manual engine pick is required")
 
 /**
+ * :app's [PlatformServices] implementation: the one Android-shaped fact ([appContext]) that a
+ * discovered [com.phonetts.core.engine.EngineProvider] may need but that :core is forbidden from
+ * knowing about (e.g. `SystemTtsEngineProvider`, which wraps an installed OS `TextToSpeech`
+ * service rather than loading weights of its own). :core only ever sees the neutral marker
+ * interface via [EngineContext.platform]; a provider that needs Android casts to this concrete
+ * type itself.
+ */
+class AppPlatformServices(val appContext: Context) : PlatformServices
+
+/**
  * The app's object graph, built once in [PhoneTtsApplication]. This is the single startup wiring
  * point the reviews flagged as missing: it registers the real ONNX [OnnxRuntime], seeds the
  * [EngineRegistry] from the ServiceLoader-discovered engine modules (naming no model), and
@@ -78,19 +87,22 @@ class AppGraph(context: Context) {
     // internally and logs a warning if the native lib/data files aren't present on this device
     // or this build (docs/espeak-ng-integration.md), so no try/catch is needed here.
     private val phonemizer = EspeakPhonemizer(appContext)
-    private val engineContext = EngineContext(runtimeRegistry, phonemizer)
 
-    // The on-device Android TextToSpeech engine(s) — Google, Samsung, whatever the OS/vendor
-    // shipped (issue #77). Unlike every ServiceLoader-discovered engine below, it has no weights to
-    // download, so it is registered directly here rather than via [EngineLoader] — see
-    // [SystemTtsEngine]'s kdoc for why it lives in :app instead of an `engines/*` module.
-    private val systemTtsEngine = SystemTtsEngine(appContext)
+    // The [EngineContext] every discovered [com.phonetts.core.engine.EngineProvider] is built
+    // from. [platform] is :app's own [PlatformServices] impl, exposing the application Context
+    // to whichever provider's engine needs one — e.g. an engine wrapping an installed OS service
+    // rather than loading weights of its own (`SystemTtsEngineProvider`). :core never sees the
+    // concrete type, only the neutral marker (rule: :core stays Android-free).
+    private val engineContext = EngineContext(runtimeRegistry, phonemizer, platform = AppPlatformServices(appContext))
+
+    // Discovered once and reused both to seed the registry (below) and to pull each provider's
+    // always-available descriptors in [registerBuiltInDescriptors] — the SAME ServiceLoader path
+    // every engine (built-in or sideloadable) goes through. No engine is named here (rule 5):
+    // adding/removing one is adding/removing a module + its META-INF/services entry, nothing else.
+    private val discoveredProviders = EngineLoader.discoverProviders()
 
     val engineRegistry =
-        EngineRegistry().also { registry ->
-            EngineLoader.seed(registry, engineContext)
-            registry.register(systemTtsEngine)
-        }
+        EngineRegistry().also { registry -> EngineLoader.seed(registry, engineContext, discoveredProviders) }
     val engineManager = EngineManager(engineRegistry)
     val catalog = ModelCatalog()
 
@@ -275,19 +287,24 @@ class AppGraph(context: Context) {
         val modelsDir = modelsBaseDir().resolve(ModelStorage.MODELS_DIR)
         val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
         folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
-        registerSystemTtsModels()
+        registerBuiltInDescriptors()
     }
 
-    // Issue #77: discovers every installed Android TTS engine and registers one ModelDescriptor per
-    // engine directly with [catalog] — the least invasive registration path available, since
-    // ModelCatalog.add() already accepts any descriptor unconditionally; no core/registry change was
-    // needed. Best-effort and non-fatal: a device query failure here must never break hydrate()'s
-    // (synchronous, load-bearing) bundle re-import above, so it's wrapped and simply yields nothing.
-    private fun registerSystemTtsModels() {
+    // Generic across EVERY discovered provider (rule 5 — no engine named in shared wiring): most
+    // providers' [EngineProvider.builtInDescriptors] default to emptyList() and are effectively a
+    // no-op here; a provider like `SystemTtsEngineProvider` that wraps an already-installed OS
+    // service (issue #77) uses this hook to surface its "models" straight into [catalog], since
+    // they aren't downloaded bundles the normal resolver pipeline ever sees. Best-effort and
+    // non-fatal per provider: one provider's discovery failing (e.g. a device TTS query error)
+    // must never break hydrate()'s (synchronous, load-bearing) bundle re-import above, and must
+    // never hide another provider's descriptors.
+    private fun registerBuiltInDescriptors() {
         appScope.launch {
-            runCatching { SystemTtsDiscovery.discover(appContext, systemTtsEngine.id) }
-                .getOrDefault(emptyList())
-                .forEach(catalog::add)
+            discoveredProviders.forEach { provider ->
+                runCatching { provider.builtInDescriptors(engineContext) }
+                    .getOrDefault(emptyList())
+                    .forEach(catalog::add)
+            }
         }
     }
 
