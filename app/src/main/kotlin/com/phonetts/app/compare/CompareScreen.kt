@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +50,11 @@ private enum class CompareMode { AB, TOURNAMENT }
 fun CompareScreen(viewModel: CompareViewModel) {
     val state by viewModel.state.collectAsState()
     var mode by remember { mutableStateOf(CompareMode.AB) }
+
+    // Re-read the catalog every time this screen is (re)entered — the ViewModel is Activity-scoped
+    // and otherwise keeps the model list it snapshotted the FIRST time Compare was ever opened, so
+    // anything downloaded/discovered since was missing from the pickers and the tournament roster.
+    LaunchedEffect(Unit) { viewModel.refreshModels() }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -204,6 +210,7 @@ private fun TournamentSection(
                     models = state.models,
                     roster = t.roster,
                     onAdd = controller::addEntry,
+                    onAddAll = { controller.addAllModels(state.models) },
                     onRemove = controller::removeEntry,
                 )
                 Button(
@@ -223,6 +230,7 @@ private fun RosterBuilder(
     models: List<ModelDescriptor>,
     roster: List<CompareViewModel.TournamentEntry>,
     onAdd: (ModelDescriptor, String) -> Unit,
+    onAddAll: () -> Unit,
     onRemove: (String) -> Unit,
 ) {
     if (models.isEmpty()) {
@@ -241,7 +249,12 @@ private fun RosterBuilder(
                 pendingVoice = it.defaultVoiceId
             }
             CompareVoicePicker(pendingModel.voices, pendingVoice) { pendingVoice = it }
-            Button(onClick = { onAdd(pendingModel, pendingVoice) }) { Text("Add to bracket") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { onAdd(pendingModel, pendingVoice) }) { Text("Add to bracket") }
+                // Convenience so you don't have to add every model by hand for a full-field bracket
+                // (each is added with its default voice; already-added picks are skipped).
+                OutlinedButton(onClick = onAddAll) { Text("Add all models") }
+            }
         }
     }
 

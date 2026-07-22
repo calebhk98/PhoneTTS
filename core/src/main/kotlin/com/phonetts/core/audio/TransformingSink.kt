@@ -30,6 +30,13 @@ class TransformingSink(
         processed.forEach { downstream.onChunk(it) }
     }
 
+    // Pause/resume are hardware-level and stateless here, so just forward them to the real sink
+    // (without this, the default no-op would swallow them and the beyond-native-tempo playback path
+    // would lose instant pause).
+    override fun pause() = downstream.pause()
+
+    override fun resume() = downstream.resume()
+
     override fun onEnd() {
         downstream.onEnd()
     }

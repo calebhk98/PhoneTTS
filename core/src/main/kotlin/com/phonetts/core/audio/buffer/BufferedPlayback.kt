@@ -21,6 +21,13 @@ class BufferedPlayback {
     private val paused = MutableStateFlow(false)
     private val stopped = MutableStateFlow(false)
 
+    // The sink of the in-flight [play] run, so [pause]/[resume] can halt/re-arm the hardware
+    // IMMEDIATELY (mid-chunk) instead of only stopping the read-index advance between chunks — a
+    // chunk is a whole sentence, so index-only pausing meant Pause didn't take effect until the
+    // current sentence finished. Null outside a run.
+    @Volatile
+    private var activeSink: AudioSink? = null
+
     // Playback position, exposed so a caller can drive a progress indicator (issue #26). Both advance
     // as chunks are actually delivered to the sink (not as they are generated), so they reflect what
     // has been heard. A BufferedPlayback is single-use, so these start at 0 for each play session.
@@ -35,9 +42,14 @@ class BufferedPlayback {
 
     fun pause() {
         paused.value = true
+        // Halt the hardware now so playback stops mid-sentence, not at the next chunk boundary.
+        activeSink?.pause()
     }
 
     fun resume() {
+        // Re-arm the hardware first so a write parked inside the current chunk unblocks, then let the
+        // read loop advance again.
+        activeSink?.resume()
         paused.value = false
     }
 
@@ -57,11 +69,15 @@ class BufferedPlayback {
         sink: AudioSink,
         fromIndex: Int = 0,
     ) {
+        activeSink = sink
         sink.onFormat(sampleRate)
+        // Honor a pause requested before this run actually started the hardware.
+        if (paused.value) sink.pause()
         var index = fromIndex
         while (!stopped.value && !fullyDrained(audio, index)) {
             index = advanceOnce(audio, sink, index)
         }
+        activeSink = null
         sink.onEnd()
     }
 

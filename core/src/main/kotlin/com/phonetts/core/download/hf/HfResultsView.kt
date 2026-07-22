@@ -111,6 +111,36 @@ object HfResultsView {
      * for a "filter by tag" control, derived from data rather than a hardcoded family/format list. */
     fun availableTags(results: List<HfModelSummary>): List<String> = results.flatMap { it.tags }.distinct().sorted()
 
+    /**
+     * The tag menu's *useful* choices (issue: the tag filter is slow — too many tags). A page of Hub
+     * results carries hundreds of raw tags, and rendering one non-lazy menu item per tag is what
+     * makes the dropdown sluggish. This trims that two ways before capping to [limit]:
+     *  - drops namespaced boilerplate (`region:us`, `license:…`, `arxiv:…`, `base_model:…`, `doi:…`)
+     *    — anything containing `:` — which is metadata, not something a user filters models by;
+     *  - drops language codes and the `multilingual` marker, since language now has its own dedicated
+     *    filter (see [HfLanguages]) and would otherwise scatter `en`/`fr`/… through the tag list.
+     * What remains is ranked by how many results carry each tag (most common first, ties broken
+     * alphabetically for a stable menu) and capped, so the most broadly-useful filters are the ones
+     * shown. The long tail is intentionally omitted — [availableTags] still returns everything for
+     * any caller that wants the full set.
+     */
+    fun frequentTags(
+        results: List<HfModelSummary>,
+        limit: Int = DEFAULT_TAG_MENU_LIMIT,
+    ): List<String> {
+        val languageCodes = results.flatMap { HfLanguages.codesOf(it) }.toSet()
+        val counts =
+            results
+                .flatMap { it.tags }
+                .filter { it.isNotBlank() && ':' !in it && it !in languageCodes }
+                .groupingBy { it }
+                .eachCount()
+        return counts.entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .take(limit)
+            .map { it.key }
+    }
+
     /** Keeps only results carrying [tag]; a blank/null [tag] means "no filter". */
     fun filterByTag(
         results: List<HfModelSummary>,
@@ -148,19 +178,25 @@ object HfResultsView {
         }
     }
 
-    /** Applies tag, size and param filtering, then [option] ordering, in that order. [sizeEstimates]
-     * defaults to empty so the pre-existing tag-only call sites (no size/param filter, no size/param
-     * sort) keep compiling and behaving exactly as before. */
+    /** Applies language, tag, size and param filtering, then [option] ordering, in that order.
+     * [language]/[sizeEstimates]/[sizeFilter] all default to "no filter" so the pre-existing call
+     * sites keep compiling and behaving exactly as before. */
     fun apply(
         results: List<HfModelSummary>,
         option: HfSortOption,
         tag: String?,
         sizeEstimates: Map<String, HfSizeEstimate> = emptyMap(),
         sizeFilter: HfSizeParamFilter = HfSizeParamFilter(),
+        language: String? = null,
     ): List<HfModelSummary> {
-        val tagged = filterByTag(results, tag)
+        val byLanguage = HfLanguages.filterByLanguage(results, language)
+        val tagged = filterByTag(byLanguage, tag)
         val sized = filterBySize(tagged, sizeEstimates, sizeFilter.minBytes, sizeFilter.maxBytes)
         val paramed = filterByParamCount(sized, sizeEstimates, sizeFilter.minParams, sizeFilter.maxParams)
         return sort(paramed, option, sizeEstimates)
     }
+
+    // A tag menu longer than this is more scroll than signal on a phone; the most common tags are
+    // the useful filters, so the rest are dropped (see frequentTags). Not a model fact — a UI bound.
+    private const val DEFAULT_TAG_MENU_LIMIT = 40
 }

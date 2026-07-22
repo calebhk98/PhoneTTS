@@ -46,11 +46,13 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.DiagnosticsKind
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.download.hf.HfLanguages
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
 import com.phonetts.core.download.hf.HfSizeEstimator
@@ -121,24 +123,44 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         // which is exactly the unstable-lambda half of the bug #3 root cause described above).
         val onSortChange = remember(viewModel) { viewModel::onSortChange }
         val onTagFilterChange = remember(viewModel) { viewModel::onTagFilterChange }
+        val onLanguageFilterChange = remember(viewModel) { viewModel::onLanguageFilterChange }
         val onSizeFilterChange = remember(viewModel) { viewModel::onSizeFilterChange }
-        // Both keyed on only the fields they actually depend on — NOT recomputed on every
-        // recomposition (e.g. a download-progress tick), which was the other half of bug #3.
+        // All keyed on only the fields they actually depend on — NOT recomputed on every
+        // recomposition (e.g. a download-progress tick), which was the other half of bug #3. The tag
+        // list is now the trimmed/frequency-ranked set (viewModel.availableTags → frequentTags), so
+        // the dropdown no longer renders hundreds of boilerplate items (issue: tag filter slow).
         val availableTags = remember(state.results) { viewModel.availableTags(state) }
+        val availableLanguages = remember(state.results) { viewModel.availableLanguages(state) }
         SortAndFilterRow(
             sort = state.sort,
             onSortChange = onSortChange,
             tagFilter = state.tagFilter,
             availableTags = availableTags,
             onTagFilterChange = onTagFilterChange,
+            languageFilter = state.languageFilter,
+            availableLanguages = availableLanguages,
+            onLanguageFilterChange = onLanguageFilterChange,
         )
         // Size/param-count filter (issue: sort+filter by size/params) — a separate row from the
         // sort/tag dropdowns above since it takes numeric bounds, not a single choice from a menu.
         SizeParamFilterRow(filter = state.sizeFilter, onFilterChange = onSizeFilterChange)
 
+        // One combined view of every in-flight download (issue: an in-app download bar), so the user
+        // can see progress at a glance instead of hunting for each downloading row in the list.
+        ActiveDownloadsBar(state.downloads)
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             state.error?.let { message ->
-                Text("Error: $message", modifier = Modifier.weight(1f))
+                // Issue: a long error message used to grow unbounded and cover the whole screen.
+                // Cap it to a few ellipsized lines here; the full text stays readable/copyable in the
+                // "Errors"/"Download log" dialogs (which are already height-capped + scrollable).
+                Text(
+                    "Error: $message",
+                    modifier = Modifier.weight(1f),
+                    maxLines = ERROR_BANNER_MAX_LINES,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 // Bug #2: the inline banner is now dismissible — this only hides the banner, the
                 // full session log below is untouched (HfBrowseViewModel.dismissError).
                 IconButton(onClick = viewModel::dismissError) { Text("✕") }
@@ -150,6 +172,13 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             // see DownloadDiagnosticsLog. Only shown once something has actually been recorded.
             if (state.diagnostics.isNotEmpty()) {
                 TextButton(onClick = { showDiagnosticsLog = true }) { Text("Download log (${state.diagnostics.size})") }
+            }
+        }
+        // Retry every download that failed (issue: a network drop failed a batch with no way to
+        // retry them). Each resumes from its partial file on disk — see HfBrowseViewModel.
+        if (state.failedDownloadIds.isNotEmpty()) {
+            Button(onClick = viewModel::retryFailedDownloads) {
+                Text("Retry failed download${if (state.failedDownloadIds.size > 1) "s" else ""} (${state.failedDownloadIds.size})")
             }
         }
         if (state.loading) CircularProgressIndicator()
@@ -315,9 +344,13 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
     }
 }
 
-/** Sort order + tag filter, both derived from the current result set (issue #6) — no hardcoded
- * model list or fixed tag vocabulary; a tag menu with nothing to filter by just stays empty. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Sort + language + tag filters, every choice derived from the current result set (issue #6) — no
+ * hardcoded model list, language list, or tag vocabulary. Laid out as two rows so three dropdowns
+ * don't cram onto one phone-width line: sort and language together (language is the most-wanted
+ * filter — many models are multilingual, see [HfLanguages]), then the tag filter full-width beneath,
+ * shown only when there's actually something to filter by.
+ */
 @Composable
 private fun SortAndFilterRow(
     sort: HfSortOption,
@@ -325,59 +358,92 @@ private fun SortAndFilterRow(
     tagFilter: String?,
     availableTags: List<String>,
     onTagFilterChange: (String?) -> Unit,
+    languageFilter: String?,
+    availableLanguages: List<String>,
+    onLanguageFilterChange: (String?) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        var sortExpanded by remember { mutableStateOf(false) }
-        ExposedDropdownMenuBox(
-            expanded = sortExpanded,
-            onExpandedChange = { sortExpanded = it },
-            modifier = Modifier.weight(1f),
-        ) {
-            TextField(
-                value = sortLabel(sort),
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Sort by") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
-                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-            )
-            ExposedDropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DropdownBox(label = "Sort by", value = sortLabel(sort), modifier = Modifier.weight(1f)) { dismiss ->
                 HfSortOption.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(sortLabel(option)) },
-                        onClick = { onSortChange(option); sortExpanded = false },
-                    )
+                    DropdownMenuItem(text = { Text(sortLabel(option)) }, onClick = { onSortChange(option); dismiss() })
                 }
+            }
+            if (availableLanguages.isNotEmpty()) {
+                LanguageFilterDropdown(
+                    languageFilter = languageFilter,
+                    availableLanguages = availableLanguages,
+                    onLanguageFilterChange = onLanguageFilterChange,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
+        if (availableTags.isNotEmpty()) {
+            TagFilterDropdown(tagFilter = tagFilter, availableTags = availableTags, onTagFilterChange = onTagFilterChange)
+        }
+    }
+}
 
-        if (availableTags.isEmpty()) return@Row
-        var tagExpanded by remember { mutableStateOf(false) }
-        ExposedDropdownMenuBox(
-            expanded = tagExpanded,
-            onExpandedChange = { tagExpanded = it },
-            modifier = Modifier.weight(1f),
-        ) {
-            TextField(
-                value = tagFilter ?: "All tags",
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Filter by tag") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = tagExpanded) },
-                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+/** Language filter (issue: many models are multilingual, user mostly wants English) — choices from
+ * [HfLanguages.availableLanguages] over the current results, shown by their friendly name. */
+@Composable
+private fun LanguageFilterDropdown(
+    languageFilter: String?,
+    availableLanguages: List<String>,
+    onLanguageFilterChange: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val value = languageFilter?.let { HfLanguages.displayName(it) } ?: "All languages"
+    DropdownBox(label = "Language", value = value, modifier = modifier) { dismiss ->
+        DropdownMenuItem(text = { Text("All languages") }, onClick = { onLanguageFilterChange(null); dismiss() })
+        availableLanguages.forEach { code ->
+            DropdownMenuItem(
+                text = { Text(HfLanguages.displayName(code)) },
+                onClick = { onLanguageFilterChange(code); dismiss() },
             )
-            ExposedDropdownMenu(expanded = tagExpanded, onDismissRequest = { tagExpanded = false }) {
-                DropdownMenuItem(
-                    text = { Text("All tags") },
-                    onClick = { onTagFilterChange(null); tagExpanded = false },
-                )
-                availableTags.forEach { tag ->
-                    DropdownMenuItem(
-                        text = { Text(tag) },
-                        onClick = { onTagFilterChange(tag); tagExpanded = false },
-                    )
-                }
-            }
+        }
+    }
+}
+
+/** Tag filter — the trimmed, frequency-ranked tag set (issue: tag filter slow); see
+ * [HfResultsView.frequentTags]. Full width since it sits on its own row. */
+@Composable
+private fun TagFilterDropdown(
+    tagFilter: String?,
+    availableTags: List<String>,
+    onTagFilterChange: (String?) -> Unit,
+) {
+    DropdownBox(label = "Filter by tag", value = tagFilter ?: "All tags", modifier = Modifier.fillMaxWidth()) { dismiss ->
+        DropdownMenuItem(text = { Text("All tags") }, onClick = { onTagFilterChange(null); dismiss() })
+        availableTags.forEach { tag ->
+            DropdownMenuItem(text = { Text(tag) }, onClick = { onTagFilterChange(tag); dismiss() })
+        }
+    }
+}
+
+/** Shared ExposedDropdownMenuBox scaffold: a read-only anchor field plus a menu whose items are
+ * supplied by [menuContent], which is handed a `dismiss` callback to close the menu after a pick.
+ * Factored out so the sort/language/tag dropdowns don't each repeat the same boilerplate. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DropdownBox(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    menuContent: @Composable (dismiss: () -> Unit) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = modifier) {
+        TextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            menuContent { expanded = false }
         }
     }
 }
@@ -838,6 +904,32 @@ private fun DownloadProgress(progress: HfDownloadProgress?) {
     }
 }
 
+/**
+ * A single aggregate progress bar for every in-flight download (issue: add an in-app download bar,
+ * so progress isn't only per-row or in the system shade). Determinate — summing bytes across all
+ * downloads — when every download's byte total is known; indeterminate the moment any one's total
+ * isn't (a repo whose file tree omitted a size), rather than showing a fabricated percentage.
+ * Renders nothing when nothing is downloading.
+ */
+@Composable
+private fun ActiveDownloadsBar(downloads: Map<String, HfDownloadProgress>) {
+    if (downloads.isEmpty()) return
+    val progresses = downloads.values.toList()
+    val count = progresses.size
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Downloading $count model${if (count > 1) "s" else ""}…", style = MaterialTheme.typography.bodyMedium)
+        if (progresses.any { it.bytesTotal == null }) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            return@Column
+        }
+        val done = progresses.sumOf { it.bytesDone }
+        val total = progresses.sumOf { it.bytesTotal ?: 0L }
+        val fraction = if (total > 0L) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+        Text("${formatBytes(done)} / ${formatBytes(total)}", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
 /** Groups a model's info + controls into a visually distinct card instead of a bare list row. */
 @Composable
 private fun ModelCard(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
@@ -900,6 +992,7 @@ private fun formatParamCount(count: Long): String {
 private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
 
 private const val MAX_TAGS_SHOWN = 4
+private const val ERROR_BANNER_MAX_LINES = 3
 private const val BYTES_PER_MB = 1024L * 1024L
 private const val PARAMS_PER_M = 1_000_000.0
 private const val THOUSAND = 1000.0

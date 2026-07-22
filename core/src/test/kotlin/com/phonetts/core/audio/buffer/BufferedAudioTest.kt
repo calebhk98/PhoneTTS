@@ -210,9 +210,62 @@ class BufferedAudioTest {
             }
         }
 
+    // The fix for "Pause doesn't stop until the current sentence finishes": pausing must halt the
+    // sink (the hardware) IMMEDIATELY, not only stop the read loop advancing to the next chunk. This
+    // asserts BufferedPlayback forwards pause()/resume() straight to the active sink the moment
+    // they're called — mid-chunk, before any boundary — which is what makes an in-flight sentence
+    // stop at the AudioTrack level in the app.
+    @Test
+    fun pauseAndResumeSignalTheSinkImmediatelyNotOnlyTheReadIndex() =
+        runTest(UnconfinedTestDispatcher()) {
+            val audio = GeneratedAudio()
+            val sink = PauseSpySink()
+            val playback = BufferedPlayback()
+            audio.append(floatArrayOf(1f))
+
+            backgroundScope.launch { playback.play(audio, RATE, sink) }
+            runCurrent()
+            assertEquals(0, sink.pauses) // playing, nothing paused yet
+
+            playback.pause()
+            runCurrent()
+            assertEquals(1, sink.pauses) // hardware halt signaled at once, not at the next chunk
+
+            playback.resume()
+            runCurrent()
+            assertEquals(1, sink.resumes)
+
+            playback.stop()
+            audio.markComplete()
+            runCurrent()
+        }
+
     private companion object {
         const val REAL_THREAD_STRESS_ITERATIONS = 200
         const val CHUNKS_PER_ITERATION = 8
         const val PER_ITERATION_TIMEOUT_MS = 5_000L
+    }
+}
+
+// Records how many times pause()/resume() reached the sink, so a test can prove BufferedPlayback
+// signals the hardware immediately rather than only halting its read index between chunks.
+private class PauseSpySink : com.phonetts.core.audio.AudioSink {
+    var pauses = 0
+        private set
+    var resumes = 0
+        private set
+
+    override fun onFormat(sampleRate: Int) = Unit
+
+    override fun onChunk(samples: FloatArray) = Unit
+
+    override fun onEnd() = Unit
+
+    override fun pause() {
+        pauses++
+    }
+
+    override fun resume() {
+        resumes++
     }
 }

@@ -481,19 +481,23 @@ private fun PlaybackCard(
             ) { Text("Resume from where it stopped") }
         }
 
-        // Transport controls only matter mid-playback, so they only appear then. Per-sentence skip
-        // (issue #19-3) sits alongside pause/resume/stop — the same restart-from-index mechanism the
-        // lock screen's paragraph skip uses, just one sentence at a time.
+        // Standard media transport (prev · play/pause · next · stop), only mid-playback. Play/Pause
+        // is the prominent central control and toggles in place — pause now halts immediately at the
+        // hardware level (BufferedPlayback→AudioTrackSink), not only at the next sentence boundary.
+        // Prev/next are the same per-sentence restart-from-index mechanism the lock-screen skip uses.
         if (state.playing) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = viewModel::skipBackSentence) { Text("⏮ Sentence") }
-                if (!state.paused) {
-                    OutlinedButton(onClick = viewModel::pausePlayback) { Text("Pause") }
-                } else {
-                    OutlinedButton(onClick = viewModel::resumePlayback) { Text("Resume") }
-                }
-                OutlinedButton(onClick = viewModel::skipForwardSentence) { Text("Sentence ⏭") }
-                OutlinedButton(onClick = viewModel::stop) { Text("Stop") }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(onClick = viewModel::skipBackSentence, modifier = Modifier.weight(1f)) { Text("⏮") }
+                Button(
+                    onClick = if (state.paused) viewModel::resumePlayback else viewModel::pausePlayback,
+                    modifier = Modifier.weight(1.6f),
+                ) { Text(if (state.paused) "▶  Resume" else "⏸  Pause") }
+                OutlinedButton(onClick = viewModel::skipForwardSentence, modifier = Modifier.weight(1f)) { Text("⏭") }
+                OutlinedButton(onClick = viewModel::stop, modifier = Modifier.weight(1f)) { Text("⏹") }
             }
         }
 

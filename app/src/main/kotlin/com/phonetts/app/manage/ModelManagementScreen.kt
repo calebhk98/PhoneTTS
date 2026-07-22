@@ -28,9 +28,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.HfEndpoints
 import com.phonetts.core.model.ManageModelFacts
@@ -63,14 +66,32 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
     // ViewModel itself is a single long-lived instance whose init{} only ran once.
     LaunchedEffect(Unit) { viewModel.refresh() }
 
+    val clipboard = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Storage used: ${formatBytes(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Storage used: ${formatBytes(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
+            // Issue: no way to copy the list of downloaded models. Copies a plain-text listing
+            // (name, origin, size, plus the downloaded-but-unclaimed bundles) for pasting into a
+            // note or bug report. Disabled until there's actually something to copy.
+            OutlinedButton(
+                onClick = { clipboard.setText(AnnotatedString(buildModelListText(state))) },
+                enabled = state.usage.isNotEmpty() || state.unresolved.isNotEmpty(),
+            ) { Text("Copy list") }
+        }
         Text(
             "Device free RAM: ${formatBytes(state.availableRamBytes)}",
             style = MaterialTheme.typography.bodyMedium,
         )
 
-        state.error?.let { Text("Error: $it") }
+        // Bounded so a long error can't grow to cover the screen; full text is still selectable
+        // where it's shown untruncated elsewhere.
+        state.error?.let {
+            Text("Error: $it", maxLines = ERROR_MAX_LINES, overflow = TextOverflow.Ellipsis)
+        }
 
         StorageLocationSection(
             description = state.storageDescription,
@@ -279,6 +300,25 @@ private fun hasAllFilesAccess(): Boolean =
 private fun allFilesAccessIntent(packageName: String): Intent =
     Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
 
+/**
+ * A plain-text listing of the downloaded models for the "Copy list" button (issue: no way to copy
+ * the list of downloaded models). Includes resolved models (name · origin · size) and the
+ * downloaded-but-unclaimed bundles, headed by the count and total size — no model is named as a
+ * literal, it's all read from the same catalog-derived state the screen already shows.
+ */
+private fun buildModelListText(state: ModelManagementViewModel.UiState): String {
+    val total = state.usage.size + state.unresolved.size
+    val lines = mutableListOf("Downloaded models ($total) — ${formatBytes(state.totalBytes)} total")
+    state.usage.forEach { usage ->
+        val label = originLabel(usage.descriptor.origin)
+        lines += "• ${usage.descriptor.displayName} — $label · ${formatBytes(usage.sizeBytes)}"
+    }
+    state.unresolved.forEach { unresolved ->
+        lines += "• ${unresolved.bundleId} — ${formatBytes(unresolved.sizeBytes)} · no engine yet"
+    }
+    return lines.joinToString("\n")
+}
+
 /** "1.5 GB" / "320 KB" / "512 B" style formatting for a storage-usage display. */
 private fun formatBytes(bytes: Long): String {
     if (bytes < UNIT) return "$bytes B"
@@ -288,6 +328,7 @@ private fun formatBytes(bytes: Long): String {
     return "$rounded ${UNIT_PREFIXES[exponent - 1]}B"
 }
 
+private const val ERROR_MAX_LINES = 3
 private const val UNIT = 1024L
 private const val ROUNDING_FACTOR = 10.0
 private val UNIT_PREFIXES = charArrayOf('K', 'M', 'G', 'T')

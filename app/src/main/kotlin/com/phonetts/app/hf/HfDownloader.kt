@@ -6,6 +6,7 @@ import com.phonetts.core.download.hf.DownloadDiagnosticsLog
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.download.hf.HfResume
+import com.phonetts.core.download.hf.OfflineErrorHint
 import com.phonetts.core.download.hf.ResumeAction
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.sideload.ModelImporter
@@ -194,7 +195,11 @@ class HfDownloader(
         cause: IOException,
         attempts: Int,
     ): IOException {
-        val reason = cause.message?.takeIf { it.isNotBlank() } ?: cause::class.simpleName ?: "unknown error"
+        val raw = cause.message?.takeIf { it.isNotBlank() } ?: cause::class.simpleName ?: "unknown error"
+        // A DNS/no-route failure (e.g. "Unable to resolve host …") reads as a plain "No internet
+        // connection" line rather than the raw resolver text — a user drops off Wi-Fi far more often
+        // than a repo file genuinely vanishes. A specific server/file error is left untouched.
+        val reason = OfflineErrorHint.humanize(raw)
         val attemptsNote = if (attempts > 1) " (gave up after $attempts attempts)" else ""
         return IOException("Couldn't download ${item.relativePath}: $reason$attemptsNote", cause)
     }

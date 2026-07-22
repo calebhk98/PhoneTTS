@@ -1,14 +1,19 @@
 package com.phonetts.app
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -64,6 +69,13 @@ class MainActivity : ComponentActivity() {
     // it hands TtsScreen — the moment the service connects/disconnects.
     private val binderState = mutableStateOf<PlaybackService.LocalBinder?>(null)
 
+    // POST_NOTIFICATIONS is declared in the manifest, but Android 13+ (API 33) also requires a
+    // RUNTIME grant — without it the system silently drops EVERY notification, so the download,
+    // generation, and playback notifications this app already posts never appeared. Registered here
+    // (before the activity is started, as the result API requires) and launched once from onCreate.
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* best-effort: notifications are optional */ }
+
     // Bind to the foreground playback service so its notification/lock-screen Play/Pause/Stop
     // reach the same TtsViewModel controls, and forward every playback-state change back to it so
     // the notification stays in sync. Bound only while the activity is started.
@@ -88,6 +100,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        ensureNotificationPermission()
         val sharedText = intent?.readSharedText()
         setContent {
             // Theme choice is hoisted above PhoneTtsTheme so a pick in the picker recomposes the
@@ -109,6 +122,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // Ask for POST_NOTIFICATIONS once on Android 13+ if it isn't already granted, so the download/
+    // generation/playback notifications become visible. Best-effort: a denial just means no
+    // notifications, never a broken app.
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        if (!granted) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     override fun onStart() {

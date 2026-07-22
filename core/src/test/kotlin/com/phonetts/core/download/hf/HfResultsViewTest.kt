@@ -59,6 +59,37 @@ class HfResultsViewTest {
         assertEquals(listOf("hexgrad/Kokoro-82M", "coqui/XTTS-v2"), filtered.map { it.id })
     }
 
+    @Test
+    fun frequentTagsDropBoilerplateAndLanguagesAndRankByFrequency() {
+        val tagged =
+            listOf(
+                HfModelSummary(id = "a", tags = listOf("tts", "onnx", "en", "region:us", "license:mit")),
+                HfModelSummary(id = "b", tags = listOf("tts", "safetensors", "es", "arxiv:1234.5678")),
+                HfModelSummary(id = "c", tags = listOf("tts", "onnx", "multilingual")),
+            )
+        // "tts" (3) then "onnx" (2), then the singletons alphabetically. No language codes
+        // (en/es/multilingual) and no namespaced boilerplate (region:/license:/arxiv:).
+        assertEquals(listOf("tts", "onnx", "safetensors"), HfResultsView.frequentTags(tagged, limit = 3))
+    }
+
+    @Test
+    fun frequentTagsHonorTheLimit() {
+        val tagged = listOf(HfModelSummary(id = "a", tags = listOf("one", "two", "three", "four")))
+        assertEquals(2, HfResultsView.frequentTags(tagged, limit = 2).size)
+    }
+
+    @Test
+    fun applyWithLanguageFilterKeepsThatLanguagePlusMultilingual() {
+        val langResults =
+            listOf(
+                HfModelSummary(id = "en-only", downloads = 30, tags = listOf("tts", "en")),
+                HfModelSummary(id = "es-only", downloads = 20, tags = listOf("tts", "es")),
+                HfModelSummary(id = "multi", downloads = 10, tags = listOf("tts", "multilingual")),
+            )
+        val filtered = HfResultsView.apply(langResults, HfSortOption.MOST_DOWNLOADS, tag = null, language = "en")
+        assertEquals(listOf("en-only", "multi"), filtered.map { it.id })
+    }
+
     private val sizeEstimates =
         mapOf(
             // Kokoro known, largest of the two known.

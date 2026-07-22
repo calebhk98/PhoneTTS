@@ -18,6 +18,18 @@ interface AudioSink {
     /** Called once per emitted chunk, in the order the flow produced them. */
     fun onChunk(samples: FloatArray)
 
+    /**
+     * Immediately halt output at the hardware level WITHOUT discarding audio already queued, so a
+     * Pause takes effect mid-sentence instead of only at the next chunk boundary (a full sentence
+     * can be several seconds). Paired with [resume]. Default no-op: a non-real-time sink (file /
+     * recording double) has nothing to halt, so [BufferedPlayback] pausing still simply stops
+     * advancing its read index there.
+     */
+    fun pause() {}
+
+    /** Resume output after a [pause]. Default no-op — see [pause]. */
+    fun resume() {}
+
     /** Called exactly once, after the flow has fully drained. */
     fun onEnd()
 }
