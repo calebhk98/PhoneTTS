@@ -36,6 +36,7 @@ fun HelpScreen(
     update: UpdateStatus?,
     checkStatus: String?,
     onCheckForUpdates: () -> Unit,
+    repoUrl: String,
     currentTheme: AppTheme,
     onThemeSelected: (AppTheme) -> Unit,
 ) {
@@ -43,7 +44,7 @@ fun HelpScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates)
+        UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates, repoUrl)
 
         ThemeSection(currentTheme, onThemeSelected)
 
@@ -97,6 +98,7 @@ private fun UpdatesSection(
     update: UpdateStatus?,
     checkStatus: String?,
     onCheckForUpdates: () -> Unit,
+    repoUrl: String,
 ) {
     val uriHandler = LocalUriHandler.current
     Section("About & updates") {
@@ -110,6 +112,7 @@ private fun UpdatesSection(
                 }
             }
         }
+        OutlinedButton(onClick = { uriHandler.openUri(repoUrl) }) { Text("View on GitHub") }
         checkStatus?.let { Body(it) }
     }
 }

@@ -299,6 +299,7 @@ private fun AppNav(
                     update = ttsState.update,
                     checkStatus = ttsState.updateCheckStatus,
                     onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
+                    repoUrl = "https://github.com/${AppGraph.REPO_OWNER}/${AppGraph.REPO_NAME}",
                     currentTheme = theme,
                     onThemeSelected = onThemeSelected,
                 )
