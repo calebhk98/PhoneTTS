@@ -1,5 +1,8 @@
 package com.phonetts.core.audio.export
 
+import com.phonetts.core.audio.transform.LoudnessNormalize
+import com.phonetts.core.audio.transform.SilenceTrim
+import com.phonetts.core.audio.transform.TransformChain
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -85,6 +88,59 @@ class WavStandardDecoderTest {
         val dataSize = le.getInt(DATA_SIZE_OFFSET).toLong() and 0xffffffffL
         assertEquals(wav.length() - RIFF_SIZE_TRAILING, riffSize, "RIFF ChunkSize must match the file")
         assertEquals(wav.length() - HEADER_BYTES, dataSize, "data chunk size must match the PCM written")
+
+        AudioSystem.getAudioInputStream(wav).use { stream ->
+            val frameSize = stream.format.frameSize
+            val buf = ByteArray(4096)
+            var fed = 0L
+            var read = stream.read(buf)
+            while (read != -1) {
+                fed += read
+                read = stream.read(buf)
+            }
+            assertEquals(0L, fed % frameSize, "stream ended on a partial frame")
+            assertEquals(stream.frameLength * frameSize, fed, "player fed fewer bytes than the clip")
+            assertEquals(-1, stream.read(buf), "end-of-stream is not clean (dribble after EOF)")
+        }
+    }
+
+    /**
+     * The two tests above exercise [WavEncoder] with no [com.phonetts.core.audio.transform.TransformChain]
+     * — but the real export path ([com.phonetts.app.ui.TtsViewModel.export]) always routes through
+     * [AudioEncoder.encode]'s transform pipeline, even when every transform happens to be disabled. A
+     * header/byte mismatch could in principle hide in that pipeline (e.g. a stage's `finish()` losing
+     * or duplicating trailing samples) without either test above ever exercising it. This runs the same
+     * clean-EOF/byte-exact assertions through a chain with BOTH kinds of stage enabled — an
+     * [com.phonetts.core.audio.transform.IncrementalTransform] streaming stage ([LoudnessNormalize])
+     * and the one full-buffer fallback
+     * stage ([SilenceTrim], which also intentionally shortens the clip by trimming the sine's near-zero
+     * leading/trailing samples) — so the header's data size is proven to still track whatever the
+     * pipeline actually emits, not just the untransformed case.
+     */
+    @Test
+    fun exportedWavWithTransformsAppliedStillPlaysToACleanEnd() {
+        val outDir = File("build/wavcheck").apply { mkdirs() }
+        val wav = File(outDir, "tail-with-transforms.wav")
+        val transforms =
+            TransformChain
+                .of(listOf(LoudnessNormalize(), SilenceTrim()))
+                .withEnabled(LoudnessNormalize.ID, true)
+                .withEnabled(SilenceTrim.ID, true)
+
+        runBlocking {
+            wav.outputStream().use { out ->
+                WavEncoder().encode(sineChunks().asFlow(), sampleRate, out, transforms)
+            }
+        }
+
+        assertTrue(wav.length() > HEADER_BYTES, "file is only a header / empty")
+
+        val header = wav.inputStream().use { it.readNBytes(HEADER_BYTES.toInt()) }
+        val le = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+        val riffSize = le.getInt(RIFF_SIZE_OFFSET).toLong() and 0xffffffffL
+        val dataSize = le.getInt(DATA_SIZE_OFFSET).toLong() and 0xffffffffL
+        assertEquals(wav.length() - RIFF_SIZE_TRAILING, riffSize, "RIFF ChunkSize must match the file")
+        assertEquals(wav.length() - HEADER_BYTES, dataSize, "data chunk size must match the PCM actually written")
 
         AudioSystem.getAudioInputStream(wav).use { stream ->
             val frameSize = stream.format.frameSize

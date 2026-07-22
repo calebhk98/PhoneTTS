@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
 import com.phonetts.app.audio.AudioTrackSink
+import com.phonetts.app.benchmark.BenchmarkViewModel
 import com.phonetts.core.audio.buffer.BufferedPlayback
 import com.phonetts.core.audio.buffer.GeneratedAudio
+import com.phonetts.core.audio.export.WavEncoder
 import com.phonetts.core.compare.Contender
 import com.phonetts.core.compare.Pairing
 import com.phonetts.core.compare.Tournament
+import com.phonetts.core.compare.mergeUnique
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
@@ -17,12 +20,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.OutputStream
 
 private const val NANOS_PER_SECOND = 1_000_000_000.0
+
+/** How many recent tournament generation failures are kept for the copyable error log (issue:
+ * "auto-fail a failing voice"), mirroring [com.phonetts.app.hf.MAX_HF_ERROR_LOG]'s bound. */
+private const val MAX_TOURNAMENT_ERROR_LOG = 25
 
 /**
  * Drives the opt-in A/B compare screen (issue #19-6) — a dedicated, off-the-main-flow screen the
@@ -77,6 +86,20 @@ class CompareViewModel(
         val winsRecorded: Int,
         /** Measured real-time factor for this entry (issue #11), or null if it never got to generate. */
         val realTimeFactor: Double?,
+        /** The contender id, so the revealed row can still replay/save its cached audio (below). */
+        val entryId: String,
+    )
+
+    /**
+     * One retained, copyable tournament generation failure: a voice that couldn't be synthesized
+     * mid-bracket, auto-failed (its opponent advances without a pick) rather than blocking the
+     * whole tournament. Mirrors [com.phonetts.app.hf.HfBrowseError]/`ErrorLogDialog`'s shape and
+     * UX so the "copy errors" affordance below is a familiar pattern, not a new one.
+     */
+    data class TournamentError(
+        val atMs: Long,
+        val label: String,
+        val message: String,
     )
 
     /**
@@ -92,10 +115,18 @@ class CompareViewModel(
         val roundNumber: Int? = null,
         val slot1Ready: Boolean = false,
         val slot2Ready: Boolean = false,
+        // Opaque contender ids for the pairing currently on screen — NOT labels, so exposing them
+        // to Compose doesn't leak identity while judging; they only let the UI ask for a replay/save
+        // of a slot that's already generated (below), the same way `entryId` does once revealed.
+        val slot1Id: String? = null,
+        val slot2Id: String? = null,
         val playingSlot: Int? = null,
         val status: String? = null,
         val complete: Boolean = false,
         val revealedRanking: List<RevealedRankRow> = emptyList(),
+        /** Generation failures auto-failed during this tournament run, newest first, bounded to
+         * [MAX_TOURNAMENT_ERROR_LOG] — copyable via the screen's "copy errors" affordance. */
+        val errors: List<TournamentError> = emptyList(),
     ) {
         val canPick: Boolean get() = running && !busy && slot1Ready && slot2Ready && !complete
     }
@@ -136,17 +167,22 @@ class CompareViewModel(
             scope = viewModelScope,
             generate = ::generateInto,
             play = ::playAudio,
+            save = ::saveAudio,
             currentText = { mutableState.value.text },
             currentState = { mutableState.value.tournament },
             update = { transform -> mutableState.update { it.copy(tournament = transform(it.tournament)) } },
             errorMessage = { mutableState.value.status },
         )
 
+    // Seed the text field with a sensible non-blank default (issue: the tournament start button was
+    // greyed out because the field started empty) — but only when the caller didn't already hand us
+    // real text (MainActivity seeds this from the main reader's current text field, which wins when
+    // non-blank). Reuses the benchmark's pangram rather than duplicating a phrase literal here (SSOT).
     private fun initialState(text: String): UiState {
         val models = graph.catalog.list()
         return UiState(
             models = models,
-            text = text,
+            text = text.ifBlank { BenchmarkViewModel.BENCH_PHRASE },
             a = defaultSelection(models.getOrNull(0)),
             // Default B to a second model when one is downloaded, so the two pickers don't start
             // identical; falls back to the same model (still comparable by voice) with only one.
@@ -312,6 +348,50 @@ class CompareViewModel(
 
     private fun bufferFor(slot: Slot): GeneratedAudio? = if (slot == Slot.A) bufferA else bufferB
 
+    /** Save A's already-generated buffer to [output] as WAV. No-op (closes [output]) before A has
+     * a result. Same one-generation-path buffer replayA() plays — never re-synthesized to save. */
+    fun saveA(output: OutputStream) = save(Slot.A, output)
+
+    /** Save B's already-generated buffer to [output] as WAV. No-op (closes [output]) before B has
+     * a result. Same one-generation-path buffer replayB() plays — never re-synthesized to save. */
+    fun saveB(output: OutputStream) = save(Slot.B, output)
+
+    private fun save(
+        slot: Slot,
+        output: OutputStream,
+    ) {
+        val audio = bufferFor(slot)
+        if (audio == null) {
+            runCatching { output.close() }
+            return
+        }
+        val rate = if (slot == Slot.A) sampleRateA else sampleRateB
+        val label = if (slot == Slot.A) "A" else "B"
+        viewModelScope.launch {
+            val ok = saveAudio(audio, rate, output)
+            if (ok) mutableState.update { it.copy(status = "Saved $label") }
+        }
+    }
+
+    // Shared by A/B save AND tournament-entry save (below): encodes the already-generated buffer
+    // with the app's reference WavEncoder — the SAME export path TtsViewModel.export/sampleAllModels
+    // use (spec: reuse the one save-to-file path, never invent a second one) — off Main.
+    private suspend fun saveAudio(
+        audio: GeneratedAudio,
+        rate: Int,
+        output: OutputStream,
+    ): Boolean =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                output.use { wavEncoder().encode(audio.snapshot().asFlow(), rate, it) }
+            }
+        }.onFailure { e -> mutableState.update { it.copy(status = "Save failed: ${e.message}") } }
+            .isSuccess
+
+    // The app's already-configured WAV encoder (app-writable scratch dir — see ExportFormats kdoc
+    // for why constructing a bare WavEncoder() here would break on Android) rather than a second one.
+    private fun wavEncoder() = graph.exportFormats.first { it.format.id == WavEncoder.FORMAT.id }
+
     /** Stop whatever is generating/playing right now. */
     fun stop() {
         runJob?.cancel()
@@ -365,10 +445,12 @@ class TournamentController(
     private val scope: CoroutineScope,
     private val generate: suspend (ModelDescriptor, String, String, GeneratedAudio) -> Boolean,
     private val play: suspend (GeneratedAudio, Int) -> Unit,
+    private val save: suspend (GeneratedAudio, Int, OutputStream) -> Boolean,
     private val currentText: () -> String,
     private val currentState: () -> CompareViewModel.TournamentUiState,
     private val update: ((CompareViewModel.TournamentUiState) -> CompareViewModel.TournamentUiState) -> Unit,
     private val errorMessage: () -> String?,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private var entrySeq = 0
     private var job: Job? = null
@@ -378,7 +460,20 @@ class TournamentController(
     private val entrySampleRate = mutableMapOf<String, Int>()
     private val entryRtf = mutableMapOf<String, Double>()
 
-    /** Add a model+voice pick to the bracket roster. No-op once a tournament is already running. */
+    // Entries known to fail generation this run (issue: "auto-fail a failing voice") — once an id
+    // lands here, every later pairing it would appear in short-circuits straight to auto-advancing
+    // its opponent instead of retrying (and re-logging) the same failure.
+    private val failedEntries = mutableSetOf<String>()
+
+    /** Roster de-dup key shared by [addEntry]/[addAllModels]: same model + same voice = same pick. */
+    private val rosterKey: (CompareViewModel.TournamentEntry) -> Pair<String, String> =
+        { it.descriptor.modelId to it.voiceId }
+
+    /**
+     * Add a model+voice pick to the bracket roster, skipping it if that exact model+voice is already
+     * present (issue #92: duplicate roster entries) — de-duping the existing roster too, in case it
+     * accumulated duplicates before this rule existed. No-op once a tournament is already running.
+     */
     fun addEntry(
         descriptor: ModelDescriptor,
         voiceId: String,
@@ -386,7 +481,7 @@ class TournamentController(
         if (currentState().running) return
         val entry =
             CompareViewModel.TournamentEntry(id = "entry-${entrySeq++}", descriptor = descriptor, voiceId = voiceId)
-        update { it.copy(roster = it.roster + entry) }
+        update { it.copy(roster = mergeIntoRoster(it.roster, listOf(entry))) }
     }
 
     /** Remove a roster entry (before the tournament has started). */
@@ -403,19 +498,22 @@ class TournamentController(
      */
     fun addAllModels(models: List<ModelDescriptor>) {
         if (currentState().running) return
-        val present = currentState().roster.map { it.descriptor.modelId to it.voiceId }.toSet()
         val additions =
-            models
-                .filter { (it.modelId to it.defaultVoiceId) !in present }
-                .map {
-                    CompareViewModel.TournamentEntry(
-                        id = "entry-${entrySeq++}",
-                        descriptor = it,
-                        voiceId = it.defaultVoiceId,
-                    )
-                }
-        if (additions.isEmpty()) return
-        update { it.copy(roster = it.roster + additions) }
+            models.map {
+                CompareViewModel.TournamentEntry(id = "entry-${entrySeq++}", descriptor = it, voiceId = it.defaultVoiceId)
+            }
+        update { it.copy(roster = mergeIntoRoster(it.roster, additions)) }
+    }
+
+    // Shared by addEntry/addAllModels (issue #92): re-dedupes the CURRENT roster against itself
+    // first (collapses any duplicate that slipped in before this rule existed), then appends only
+    // the genuinely-new [additions] — see core's mergeUnique kdoc for the two-pass rationale.
+    private fun mergeIntoRoster(
+        current: List<CompareViewModel.TournamentEntry>,
+        additions: List<CompareViewModel.TournamentEntry>,
+    ): List<CompareViewModel.TournamentEntry> {
+        val deduped = mergeUnique(emptyList(), current, rosterKey)
+        return mergeUnique(deduped, additions, rosterKey)
     }
 
     /**
@@ -433,7 +531,13 @@ class TournamentController(
         bracket = Tournament(state.roster.shuffled().map { Contender(it.id, it) })
         currentPairing = null
         update {
-            it.copy(running = true, complete = false, revealedRanking = emptyList(), status = "Starting tournament…")
+            it.copy(
+                running = true,
+                complete = false,
+                revealedRanking = emptyList(),
+                errors = emptyList(),
+                status = "Starting tournament…",
+            )
         }
         job = scope.launch { advance() }
     }
@@ -457,17 +561,54 @@ class TournamentController(
         update { it.copy(running = false, busy = false, status = null) }
     }
 
-    /** Release every cached entry's generated audio. Safe to call repeatedly / when nothing is cached. */
+    /** Release every cached entry's generated audio and forget any recorded generation failures.
+     * Safe to call repeatedly / when nothing is cached. */
     fun releaseAudio() {
         entryAudio.values.forEach { it.close() }
         entryAudio.clear()
         entrySampleRate.clear()
         entryRtf.clear()
+        failedEntries.clear()
     }
 
-    // Fetch the bracket's next pairing (blind — only slot numbers 1/2 ever reach [update]), generate
-    // + play each side through the shared [generate]/[play] functions, then wait for [pickWinner].
-    // When the bracket has no more pairings, reveal the final ranking instead.
+    /**
+     * Replay an already-generated entry's cached audio without re-synthesizing — usable for the
+     * current match's ready slot(s) (via [CompareViewModel.TournamentUiState.slot1Id]/`slot2Id`) or,
+     * once a tournament completes, any revealed [CompareViewModel.RevealedRankRow.entryId]. No-op if
+     * nothing is cached yet for [entryId] (e.g. it's the failing side of an auto-advanced pairing).
+     */
+    fun replayEntry(entryId: String) {
+        val audio = entryAudio[entryId] ?: return
+        val rate = entrySampleRate.getValue(entryId)
+        scope.launch { play(audio, rate) }
+    }
+
+    /**
+     * Save an already-generated entry's cached audio to [output] as WAV, through the SAME encoder
+     * [CompareViewModel.saveA]/`saveB` use — one save-to-file path, never a second one. No-op
+     * (closes [output]) if nothing is cached yet for [entryId].
+     */
+    fun saveEntry(
+        entryId: String,
+        output: OutputStream,
+    ) {
+        val audio = entryAudio[entryId]
+        if (audio == null) {
+            runCatching { output.close() }
+            return
+        }
+        val rate = entrySampleRate.getValue(entryId)
+        scope.launch {
+            val ok = save(audio, rate, output)
+            if (ok) update { it.copy(status = "Saved") }
+        }
+    }
+
+    // Fetch the bracket's next pairing (blind — only slot numbers/ids, never labels, ever reach
+    // [update]), generate + play each side through the shared [generate]/[play] functions, then wait
+    // for [pickWinner] — UNLESS one (or both) sides failed to generate, in which case the working
+    // side is auto-advanced without a pick (issue: "auto-fail a failing voice") so one bad voice
+    // never blocks the whole bracket. When the bracket has no more pairings, reveal the ranking.
     private suspend fun advance() {
         val bracket = this.bracket ?: return
         val pairing = bracket.nextPairing()
@@ -483,20 +624,47 @@ class TournamentController(
                 roundNumber = pairing.round,
                 slot1Ready = false,
                 slot2Ready = false,
+                slot1Id = pairing.a.id,
+                slot2Id = pairing.b.id,
                 status = "Generating 1…",
             )
         }
 
-        if (!ensureGenerated(pairing.a.payload, text)) return fail("Slot 1")
-        update { it.copy(slot1Ready = true, status = "Playing 1…") }
-        playSlot(1, pairing.a.id)
+        val aReady = ensureGenerated(pairing.a.payload, text)
+        if (aReady) {
+            update { it.copy(slot1Ready = true, status = "Playing 1…") }
+            playSlot(1, pairing.a.id)
+        }
 
         update { it.copy(status = "Generating 2…") }
-        if (!ensureGenerated(pairing.b.payload, text)) return fail("Slot 2")
-        update { it.copy(slot2Ready = true, status = "Playing 2…") }
-        playSlot(2, pairing.b.id)
+        val bReady = ensureGenerated(pairing.b.payload, text)
+        if (bReady) {
+            update { it.copy(slot2Ready = true, status = "Playing 2…") }
+            playSlot(2, pairing.b.id)
+        }
 
-        update { it.copy(busy = false, status = "Round ${pairing.round} — pick the better one") }
+        when {
+            aReady && bReady -> update { it.copy(busy = false, status = "Round ${pairing.round} — pick the better one") }
+            aReady -> autoAdvance(bracket, pairing.a.id, "Slot 2 failed to generate — auto-advancing Slot 1")
+            bReady -> autoAdvance(bracket, pairing.b.id, "Slot 1 failed to generate — auto-advancing Slot 2")
+            // Both sides failed: the bracket engine still needs a winner to keep draining (there is
+            // no "double loss" concept), so the first side advances — but stays in [failedEntries],
+            // so it auto-loses its NEXT pairing too rather than riding a fluke all the way to champion.
+            else -> autoAdvance(bracket, pairing.a.id, "Both sides failed to generate — advancing Slot 1 by default")
+        }
+    }
+
+    // Records [winnerId] the bracket chose automatically (its opponent failed to generate) and keeps
+    // draining the bracket without waiting for a user pick.
+    private suspend fun autoAdvance(
+        bracket: Tournament<CompareViewModel.TournamentEntry>,
+        winnerId: String,
+        statusMsg: String,
+    ) {
+        bracket.recordWinner(winnerId)
+        currentPairing = null
+        update { it.copy(status = statusMsg) }
+        advance()
     }
 
     private suspend fun playSlot(
@@ -508,23 +676,22 @@ class TournamentController(
         update { it.copy(playingSlot = null) }
     }
 
-    private fun fail(label: String) {
-        update { it.copy(busy = false, status = "$label failed: ${errorMessage() ?: "unknown error"}") }
-    }
-
     // Generate (once) + measure this entry's real-time factor, exactly the way RtfEstimator/
     // BenchmarkViewModel measure it elsewhere: wall-clock around a real synthesize() drain, over the
     // audio-seconds actually produced. Cached by entry id so an entry that wins several rounds is
-    // synthesized once and its measured RTF never gets diluted/overwritten by a repeat run.
+    // synthesized once and its measured RTF never gets diluted/overwritten by a repeat run. A prior
+    // failure is remembered too (see [failedEntries]) so a repeat meeting never retries/re-logs it.
     private suspend fun ensureGenerated(
         entry: CompareViewModel.TournamentEntry,
         text: String,
     ): Boolean {
         if (entryAudio.containsKey(entry.id)) return true
+        if (entry.id in failedEntries) return false
         val audio = GeneratedAudio()
         val startNanos = System.nanoTime()
         if (!generate(entry.descriptor, entry.voiceId, text, audio)) {
             audio.close()
+            recordFailure(entry)
             return false
         }
         val elapsedSeconds = (System.nanoTime() - startNanos) / NANOS_PER_SECOND
@@ -533,6 +700,19 @@ class TournamentController(
         entrySampleRate[entry.id] = entry.descriptor.sampleRate
         entryRtf[entry.id] = if (audioSeconds > 0.0) elapsedSeconds / audioSeconds else 0.0
         return true
+    }
+
+    // Marks [entry] as auto-failed and appends a copyable log row (issue: "auto-fail a failing voice
+    // + copyable error log"), mirroring HfBrowseError/ErrorLogDialog's shape/UX, bounded the same way.
+    private fun recordFailure(entry: CompareViewModel.TournamentEntry) {
+        failedEntries += entry.id
+        val logged =
+            CompareViewModel.TournamentError(
+                atMs = clock(),
+                label = entry.label,
+                message = errorMessage() ?: "generation failed",
+            )
+        update { it.copy(errors = (listOf(logged) + it.errors).take(MAX_TOURNAMENT_ERROR_LOG)) }
     }
 
     // Reveal identities: the bracket's ranking() (place + judged win count, :core, unit-tested) is
@@ -545,6 +725,7 @@ class TournamentController(
                     label = ranked.contender.payload.label,
                     winsRecorded = ranked.winsRecorded,
                     realTimeFactor = entryRtf[ranked.contender.id],
+                    entryId = ranked.contender.id,
                 )
             }
         val championLabel = rows.firstOrNull { it.place == 1 }?.label ?: "unknown"

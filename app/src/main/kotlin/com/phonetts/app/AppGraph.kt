@@ -5,7 +5,9 @@ import com.phonetts.app.audio.export.ExportFormats
 import com.phonetts.app.device.DeviceInfo
 import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
+import com.phonetts.app.runtime.ExecuTorchRuntime
 import com.phonetts.app.runtime.NativeCosyVoiceRuntime
+import com.phonetts.app.runtime.NativeGgmlTtsRuntime
 import com.phonetts.app.runtime.OnnxRuntime
 import com.phonetts.app.sideload.SideloadCoordinator
 import com.phonetts.app.text.EspeakPhonemizer
@@ -81,6 +83,12 @@ class AppGraph(context: Context) {
         RuntimeRegistry().apply {
             register(OnnxRuntime())
             register(NativeCosyVoiceRuntime())
+            // Registered UNCONDITIONALLY (never hidden behind a flag): ExecuTorch ships in the APK
+            // via its Maven AAR, and the ggml bridge is present too. Both report isAvailable()=false
+            // gracefully — no crash — when their native piece isn't built/loaded on this build, so a
+            // model that needs them surfaces a clear error rather than silently disappearing.
+            register(ExecuTorchRuntime())
+            register(NativeGgmlTtsRuntime())
         }
 
     // EspeakPhonemizer never throws (see its kdoc): it falls back to PassthroughPhonemizer
@@ -171,7 +179,20 @@ class AppGraph(context: Context) {
             engineManager = engineManager,
             storageLocation = storageLocationPreference,
             onStorageLocationChanged = ::relocateStorage,
+            selectableEnginesProvider = { resolver.selectableEngines() },
+            assignEngineAction = { bundleId, engineId -> assignEngineToBundle(bundleId, engineId) },
         )
+
+    // The manual "pick an engine" fallback's app-shaped half (issue: bug #1 — the picker described
+    // in ModelManager/Resolver had nothing on the Android side that could actually re-read a bundle
+    // off disk and hand it to a chosen engine). A downloaded/sideloaded bundle's folder name IS its
+    // [com.phonetts.core.model.ModelBundle.id] ([hydrate] imports it the same way, via
+    // `folder.absolutePath`), so the on-disk location a bundleId maps to is reconstructible from
+    // [modelsBaseDir] alone — no separate bundleId→path table is needed.
+    private fun assignEngineToBundle(
+        bundleId: String,
+        engineId: String,
+    ) = importer.importWithChosenEngine(ModelStorage.modelDir(modelsBaseDir(), bundleId).absolutePath, engineId)
 
     // Runs when the user picks a new storage location or resets to the default (issue #4/#5,
     // data-loss bug fix). [oldPath]/[newPath] are the raw custom-base-path values from BEFORE and

@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -26,6 +28,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -36,10 +41,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.model.DeviceRamFit
+import com.phonetts.core.model.ExportableModel
 import com.phonetts.core.model.ManageModelFacts
+import com.phonetts.core.model.ModelListExport
 import com.phonetts.core.model.Origin
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
+import com.phonetts.core.resolver.SelectableEngine
 import kotlin.math.ln
 import kotlin.math.pow
 
@@ -82,8 +91,10 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                 enabled = state.usage.isNotEmpty() || state.unresolved.isNotEmpty(),
             ) { Text("Copy list") }
         }
+        // Both numbers shown so neither reads as the one that decides whether a model "fits" — that
+        // decision is against total RAM only (see [ramHint]), free RAM is shown purely as context.
         Text(
-            "Device free RAM: ${formatBytes(state.availableRamBytes)}",
+            "Device RAM: ${formatBytes(state.availableRamBytes)} free of ${formatBytes(state.totalRamBytes)} total",
             style = MaterialTheme.typography.bodyMedium,
         )
 
@@ -109,7 +120,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                 ModelUsageRow(
                     usage = usage,
                     peakRamBytes = state.peakRamByModelId[usage.descriptor.modelId],
-                    freeRamBytes = state.availableRamBytes,
+                    totalRamBytes = state.totalRamBytes,
                     facts = state.factsByModelId[usage.descriptor.modelId],
                     isDeleting = state.deletingId == usage.descriptor.modelId,
                     onDelete = { viewModel.delete(usage.descriptor.modelId) },
@@ -119,8 +130,11 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
             items(state.unresolved, key = { it.bundleId }) { unresolved ->
                 UnresolvedUsageRow(
                     unresolved = unresolved,
+                    selectableEngines = state.selectableEngines,
                     isDeleting = state.deletingUnresolvedId == unresolved.bundleId,
+                    isAssigning = state.assigningUnresolvedId == unresolved.bundleId,
                     onDelete = { viewModel.deleteUnresolved(unresolved.bundleId) },
+                    onAssignEngine = { engineId -> viewModel.assignEngine(unresolved.bundleId, engineId) },
                 )
                 HorizontalDivider()
             }
@@ -132,7 +146,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
 private fun ModelUsageRow(
     usage: ModelUsage,
     peakRamBytes: Long?,
-    freeRamBytes: Long,
+    totalRamBytes: Long,
     facts: ManageModelFacts?,
     isDeleting: Boolean,
     onDelete: () -> Unit,
@@ -145,7 +159,7 @@ private fun ModelUsageRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold)
             Text(originLabel(usage.descriptor.origin) + " · " + formatBytes(usage.sizeBytes))
-            Text(ramHint(peakRamBytes, freeRamBytes), style = MaterialTheme.typography.bodySmall)
+            Text(ramHint(peakRamBytes, totalRamBytes), style = MaterialTheme.typography.bodySmall)
             ModelFactsBlock(facts)
         }
         DeleteControl(isDeleting, onDelete)
@@ -204,35 +218,85 @@ private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(mul
 // if it were never fetched, and worded to head off the natural (wrong) assumption that a bundle
 // with no engine must mean a failed/incomplete download that needs redoing. It's already fully on
 // disk (that's what [unresolved.sizeBytes] is showing); redownloading the same bytes changes
-// nothing without a matching engine. Deliberately offers no "use it anyway" affordance (that would
-// fake an engine, breaking rule 4's fail-closed guarantee) — Delete is the only action, so there is
-// no dead-end button pretending this row can be selected.
+// nothing without a matching engine.
+//
+// Bug #1: this used to offer no way to actually pick an engine — the resolver's documented
+// fail-closed fallback ("ask the user") had nothing on this screen that could drive it, so a user
+// who saw "pick an engine" had no button to press. [selectableEngines] (the SAME registered set
+// autodetection already checked — SSOT, nothing named here) now backs a real picker: choosing one
+// runs [onAssignEngine], which hands the bundle to that engine's forcedMatch. This is still not
+// "guessing" (rule 4 stands) — it is the user, not the app, making the call.
 @Composable
 private fun UnresolvedUsageRow(
     unresolved: UnresolvedModelUsage,
+    selectableEngines: List<SelectableEngine>,
     isDeleting: Boolean,
+    isAssigning: Boolean,
     onDelete: () -> Unit,
+    onAssignEngine: (engineId: String) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
-            Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
-            Text("Redownloading won't help — " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
+                Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
+                Text("Redownloading won't help — " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
+            }
+            DeleteControl(isDeleting, onDelete)
         }
-        DeleteControl(isDeleting, onDelete)
+        EngineAssignmentControl(selectableEngines, isAssigning, onAssignEngine)
     }
 }
 
-// Inline, non-blocking hint (issue #38): shows the estimated peak RAM and, when it exceeds free RAM,
-// a gentle "may not fit" note — the user can still attempt it. "unknown" when no estimate exists.
-private fun ramHint(peakRamBytes: Long?, freeRamBytes: Long): String {
+/**
+ * The manual "pick an engine" affordance for an unresolved row (bug #1). Renders nothing when there
+ * are no [selectableEngines] to offer (e.g. no engines registered at all) rather than a dead-end
+ * button. Shows a spinner in place of the picker button while [isAssigning] this row.
+ */
+@Composable
+private fun EngineAssignmentControl(
+    selectableEngines: List<SelectableEngine>,
+    isAssigning: Boolean,
+    onAssignEngine: (engineId: String) -> Unit,
+) {
+    if (selectableEngines.isEmpty()) return
+    if (isAssigning) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            Text("Assigning engine…", style = MaterialTheme.typography.bodySmall)
+        }
+        return
+    }
+
+    var menuExpanded by remember { mutableStateOf(false) }
+    Row {
+        TextButton(onClick = { menuExpanded = true }) { Text("Pick an engine for it…") }
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            selectableEngines.forEach { engine ->
+                DropdownMenuItem(
+                    text = { Text(engine.displayName) },
+                    onClick = {
+                        menuExpanded = false
+                        onAssignEngine(engine.id)
+                    },
+                )
+            }
+        }
+    }
+}
+
+// Inline, non-blocking hint (issue #38, fixed per maintainer): shows the estimated peak RAM and,
+// ONLY when the model genuinely can't physically fit this device — its peak exceeds TOTAL RAM, not
+// merely whatever happens to be free right now — a "won't fit" warning. A tight-but-possible fit
+// (e.g. a 3.5 GB model on a 4 GB phone) never warns; [DeviceRamFit] is the single source of truth
+// for that call, no "tight"/tier language here or anywhere else. "unknown" when no estimate exists.
+private fun ramHint(peakRamBytes: Long?, totalRamBytes: Long): String {
     if (peakRamBytes == null) return "Est. RAM: unknown"
     val base = "Est. RAM: ~${formatBytes(peakRamBytes)}"
-    if (freeRamBytes in 1 until peakRamBytes) return "$base · may not fit — you can still try"
+    if (DeviceRamFit.modelExceedsDeviceRam(peakRamBytes, totalRamBytes)) return "$base · won't fit this device"
     return base
 }
 
@@ -301,22 +365,18 @@ private fun allFilesAccessIntent(packageName: String): Intent =
     Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
 
 /**
- * A plain-text listing of the downloaded models for the "Copy list" button (issue: no way to copy
- * the list of downloaded models). Includes resolved models (name · origin · size) and the
- * downloaded-but-unclaimed bundles, headed by the count and total size — no model is named as a
- * literal, it's all read from the same catalog-derived state the screen already shows.
+ * A plain-text listing of the downloaded models for the "Copy list" button (issue #98, extending
+ * the original "no way to copy the list of downloaded models"). Each resolved model's line carries
+ * whatever [ManageModelFacts] knows for it (HF link, est. RAM, param count, measured/estimated
+ * RTF), and each downloaded-but-unclaimed bundle carries a best-effort HF link too — the whole
+ * point of listing it is letting the user click through to what didn't resolve. Headed by the
+ * count and grand total size. The actual formatting is pure logic in [ModelListExport] (`:core`,
+ * no Android deps) so it's unit-testable on a plain JVM; this function only maps the screen's own
+ * state into that call — no model fact is re-hardcoded here (CLAUDE.md rule 1).
  */
 private fun buildModelListText(state: ModelManagementViewModel.UiState): String {
-    val total = state.usage.size + state.unresolved.size
-    val lines = mutableListOf("Downloaded models ($total) — ${formatBytes(state.totalBytes)} total")
-    state.usage.forEach { usage ->
-        val label = originLabel(usage.descriptor.origin)
-        lines += "• ${usage.descriptor.displayName} — $label · ${formatBytes(usage.sizeBytes)}"
-    }
-    state.unresolved.forEach { unresolved ->
-        lines += "• ${unresolved.bundleId} — ${formatBytes(unresolved.sizeBytes)} · no engine yet"
-    }
-    return lines.joinToString("\n")
+    val resolved = state.usage.map { ExportableModel.from(it, state.factsByModelId[it.descriptor.modelId]) }
+    return ModelListExport.build(resolved, state.unresolved)
 }
 
 /** "1.5 GB" / "320 KB" / "512 B" style formatting for a storage-usage display. */

@@ -11,6 +11,7 @@ import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
+import com.phonetts.core.resolver.SelectableEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,14 +28,23 @@ import kotlinx.coroutines.withContext
  *
  * It also surfaces the resource-cost hint (issue #38): each row shows an estimated peak RAM (the
  * engine's a-priori estimate from the descriptor, refined by observed peaks in [resourceUsage]), and
- * the screen shows the device's current free RAM at the top. This is an INLINE hint, never a
- * blocking pop-up — the user can still attempt a heavy model on a small phone.
+ * the screen shows the device's total RAM at the top. A "won't fit" warning is only ever shown when
+ * the model's estimated peak genuinely exceeds this device's TOTAL RAM
+ * ([com.phonetts.core.model.DeviceRamFit]) — never merely because free RAM is currently low, which
+ * on a 4 GB phone is often true even for models that fit fine (a per-maintainer fix: a 3.5 GB model
+ * on a 4 GB phone should never warn). This is an INLINE hint, never a blocking pop-up — the user can
+ * still attempt a heavy model regardless.
  *
  * Also lists bundles no engine could identify ([UnresolvedModelUsage], issue #8) so a download that
  * detection declined is shown honestly ("downloaded, no engine available") instead of silently
  * vanishing as if nothing were ever fetched, and drives the storage-location picker (issue #4/#5):
  * [chooseFolder] resolves a SAF tree URI to a real folder and, if usable, hands it straight to
  * [ModelManager.changeStorageLocation] — the same seam a future non-SAF caller could use too.
+ *
+ * Each unresolved bundle also gets a working manual "pick an engine" fallback (bug #1: this used to
+ * be described but unreachable from the UI). [assignEngine] hands the bundle to the chosen engine's
+ * `forcedMatch` via [ModelManager.assignEngine] and re-[refresh]es, so on success the row moves from
+ * "unresolved" into a normal, usable model row with no further action needed.
  *
  * Also surfaces, per downloaded model, an "Open on Hugging Face" link plus RAM/RTF/parameter-count
  * facts ([ManageModelFacts], derived by [InstalledModelFacts] — never a hardcoded per-model literal).
@@ -52,6 +62,10 @@ class ModelManagementViewModel(
     private val modelManager: ModelManager,
     private val resourceUsage: ResourceUsageStore,
     private val availableRamBytes: () -> Long,
+    // Defaults to [availableRamBytes] only so existing call sites that haven't been updated yet
+    // still compile; a real call site should always pass the device's actual TOTAL ram (issue:
+    // "RAM warning fires against free ram" fix) since free RAM is the wrong number to warn against.
+    private val totalRamBytes: () -> Long = availableRamBytes,
     private val benchmarkHistory: BenchmarkHistory? = null,
     private val deviceName: String = "",
 ) : ViewModel() {
@@ -62,13 +76,20 @@ class ModelManagementViewModel(
         val peakRamByModelId: Map<String, Long?> = emptyMap(),
         /** modelId → derived link/RAM/RTF/param-count facts (issue: Manage screen model info). */
         val factsByModelId: Map<String, ManageModelFacts> = emptyMap(),
-        /** Device free RAM right now, shown at the top so the estimates have a reference point. */
+        /** Device free RAM right now — informational only, no longer what the fit warning checks. */
         val availableRamBytes: Long = 0L,
+        /** This device's TOTAL RAM — the only figure [com.phonetts.core.model.DeviceRamFit] checks. */
+        val totalRamBytes: Long = 0L,
         val deletingId: String? = null,
         val error: String? = null,
-        /** Downloaded bundles no engine claimed (issue #8) — shown, but never selectable. */
+        /** Downloaded bundles no engine claimed (issue #8) — each offers a manual engine picker. */
         val unresolved: List<UnresolvedModelUsage> = emptyList(),
         val deletingUnresolvedId: String? = null,
+        /** Engines a manual pick can offer for an unresolved bundle — the same registered set the
+         * resolver's auto-detection already checks (SSOT: no engine name is hardcoded in the UI). */
+        val selectableEngines: List<SelectableEngine> = emptyList(),
+        /** bundleId currently being assigned an engine, so its row shows a spinner, not the picker. */
+        val assigningUnresolvedId: String? = null,
         /** Where models are stored right now (issue #4/#5) — the app-private default or a picked folder. */
         val storageDescription: String = "",
         /** Feedback from the last storage-location action (folder picked / rejected / reset). */
@@ -97,9 +118,11 @@ class ModelManagementViewModel(
                 peakRamByModelId = estimates,
                 factsByModelId = facts,
                 availableRamBytes = availableRamBytes(),
+                totalRamBytes = totalRamBytes(),
                 error = null,
                 unresolved = modelManager.unresolvedUsage(),
                 storageDescription = modelManager.currentStorageDescription(),
+                selectableEngines = modelManager.selectableEngines(),
             )
         }
     }
@@ -140,6 +163,32 @@ class ModelManagementViewModel(
             runCatching { withContext(Dispatchers.IO) { modelManager.removeUnresolved(bundleId) } }
                 .onSuccess { mutableState.update { it.copy(deletingUnresolvedId = null) } }
                 .onFailure { e -> mutableState.update { it.copy(deletingUnresolvedId = null, error = e.message) } }
+            refresh()
+        }
+    }
+
+    /**
+     * Manually assign an unresolved bundle to [engineId] (bug #1 — the picker the resolver's fallback
+     * promised had nothing on the UI side that could actually drive it). Runs
+     * [ModelManager.assignEngine] off the main thread; on success the bundle disappears from
+     * [UiState.unresolved] and reappears as a normal [UiState.usage] entry on the [refresh] this
+     * always triggers. A rejection (e.g. the chosen engine's forcedMatch declining the bundle, most
+     * likely because it's missing a file that family structurally needs) is surfaced as
+     * [UiState.error] rather than crashing — the bundle stays unresolved and can be tried again.
+     */
+    fun assignEngine(
+        bundleId: String,
+        engineId: String,
+    ) {
+        mutableState.update { it.copy(assigningUnresolvedId = bundleId, error = null) }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { modelManager.assignEngine(bundleId, engineId) } }
+                .onSuccess { mutableState.update { it.copy(assigningUnresolvedId = null) } }
+                .onFailure { e ->
+                    mutableState.update {
+                        it.copy(assigningUnresolvedId = null, error = e.message ?: "Couldn't use that engine.")
+                    }
+                }
             refresh()
         }
     }

@@ -33,4 +33,24 @@ class ModelImporter(
             .onFailure { e -> catalog.markUnresolved(bundle.id, e.message ?: "could not identify this model") }
             .getOrThrow()
     }
+
+    /**
+     * Re-read [location] and resolve it via the engine the user manually chose ([engineId]),
+     * rather than auto-detection — the actual, working end of the resolver's "fail closed, then
+     * let the user pick" fallback (a downloaded-but-unresolved bundle previously only ever landed
+     * as an [com.phonetts.core.registry.UnresolvedModel] with nothing that could act on it). On
+     * success the bundle is added to the [catalog], which also drops its unresolved marker
+     * ([com.phonetts.core.registry.ModelCatalog.add]). Any failure (unknown [engineId], or the
+     * chosen engine's `forcedMatch` rejecting the bundle) propagates to the caller unchanged so a
+     * "manage models" UI can show it rather than the app crashing.
+     */
+    fun importWithChosenEngine(
+        location: String,
+        engineId: String,
+    ): ModelDescriptor {
+        val bundle = reader.read(location)
+        val descriptor = resolver.resolveWithChosenEngine(bundle, engineId)
+        catalog.add(descriptor)
+        return descriptor
+    }
 }

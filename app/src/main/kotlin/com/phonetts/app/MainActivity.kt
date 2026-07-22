@@ -38,6 +38,7 @@ import com.phonetts.app.benchmark.BenchmarkScreen
 import com.phonetts.app.benchmark.BenchmarkViewModel
 import com.phonetts.app.compare.CompareScreen
 import com.phonetts.app.compare.CompareViewModel
+import com.phonetts.app.device.DeviceInfo
 import com.phonetts.app.hf.DownloadNotifier
 import com.phonetts.app.hf.HfBrowseScreen
 import com.phonetts.app.hf.HfBrowseViewModel
@@ -241,6 +242,10 @@ private fun AppNav(
                                     // Turns on the per-download progress notification (#70); null would
                                     // silently disable it. Uses the app context — no Activity leak.
                                     notifier = DownloadNotifier(graph.appContext),
+                                    // Feeds the RTF sort/filter (issue: real-time-factor sort) from the
+                                    // SAME persisted history the Benchmarks screen writes to — never a
+                                    // second measurement path.
+                                    benchmarkHistory = graph.benchmarkHistory,
                                 )
                             }
                         },
@@ -260,6 +265,12 @@ private fun AppNav(
                                     modelManager = graph.modelManager,
                                     resourceUsage = graph.resourceUsageStore,
                                     availableRamBytes = graph::availableRamBytes,
+                                    // TOTAL ram, not free — the only figure that decides whether a
+                                    // model can physically fit (DeviceRamFit); AppGraph itself is
+                                    // off-limits here, so this calls DeviceInfo directly off its
+                                    // already-public appContext instead of adding a new AppGraph
+                                    // method.
+                                    totalRamBytes = { DeviceInfo.totalRamBytes(graph.appContext) },
                                     // Enables a MEASURED real-time factor per model (from past
                                     // benchmarks on this device) instead of only the estimate.
                                     benchmarkHistory = graph.benchmarkHistory,

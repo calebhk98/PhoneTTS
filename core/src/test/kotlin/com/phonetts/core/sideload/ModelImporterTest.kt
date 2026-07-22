@@ -7,6 +7,7 @@ import com.phonetts.core.resolver.Resolver
 import com.phonetts.core.testing.FakeEngine
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /** A [BundleReader] that returns a fixed bundle, so the importer can be tested with no files. */
@@ -65,6 +66,41 @@ class ModelImporterTest {
         val thrown = kotlin.runCatching { importer.import("/anywhere") }.exceptionOrNull()
 
         assertTrue(thrown is IllegalStateException, "the failure must still propagate to the caller")
+        assertEquals(emptyList(), catalog.list())
+        assertEquals(listOf("dropped"), catalog.listUnresolved().map { it.bundleId })
+    }
+
+    // Bug #1: the manual "pick an engine" fallback must actually land the bundle in the catalog and
+    // clear its unresolved marker — this is the real, end-to-end fix, not just Resolver in isolation.
+    @Test
+    fun importWithChosenEngineResolvesViaForcedMatchAndClearsTheUnresolvedMarker() {
+        val rejecting = FakeEngine(id = "eng-a", claims = { false })
+        val chosen = FakeEngine(id = "eng-b", claims = { false })
+        val resolver =
+            Resolver(listOf(rejecting, chosen), InMemoryOverrideStore()) {
+                error("should not consult the auto fallback for a manual pick")
+            }
+        val catalog = ModelCatalog().apply { markUnresolved("dropped", "no engine recognized it") }
+        val importer = ModelImporter(StubReader(bundle), resolver, catalog)
+
+        val descriptor = importer.importWithChosenEngine("/anywhere", "eng-b")
+
+        assertEquals("eng-b", descriptor.engineId)
+        assertEquals(listOf(descriptor.modelId), catalog.list().map { it.modelId })
+        assertEquals(emptyList(), catalog.listUnresolved())
+    }
+
+    @Test
+    fun importWithChosenEngineLeavesTheBundleUnresolvedWhenForcedMatchRejectsIt() {
+        val rejecting = FakeEngine(id = "eng-a", forcedMatchError = IllegalStateException("no weights file found"))
+        val resolver =
+            Resolver(listOf(rejecting), InMemoryOverrideStore()) { error("not exercised by this test") }
+        val catalog = ModelCatalog().apply { markUnresolved("dropped", "no engine recognized it") }
+        val importer = ModelImporter(StubReader(bundle), resolver, catalog)
+
+        val thrown = assertFailsWith<IllegalStateException> { importer.importWithChosenEngine("/anywhere", "eng-a") }
+
+        assertEquals("no weights file found", thrown.message)
         assertEquals(emptyList(), catalog.list())
         assertEquals(listOf("dropped"), catalog.listUnresolved().map { it.bundleId })
     }

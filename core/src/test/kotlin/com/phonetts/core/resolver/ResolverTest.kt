@@ -4,6 +4,7 @@ import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.testing.FakeEngine
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ResolverTest {
@@ -89,5 +90,81 @@ class ResolverTest {
         assertTrue(inspectCountAfterFirstResolve > 0, "sanity check: first resolve must have inspected")
         assertEquals(inspectCountAfterFirstResolve, claimingEngine.inspectCount)
         assertEquals("engine-a", descriptor.engineId)
+    }
+
+    // Bug #1: the manual "pick an engine" fallback must actually be reachable and working, not just
+    // described. selectableEngines() is what a picker UI reads to offer choices.
+    @Test
+    fun `selectableEngines exposes every registered engine's id and display name`() {
+        val engineA = FakeEngine(id = "engine-a", displayName = "Engine A")
+        val engineB = FakeEngine(id = "engine-b", displayName = "Engine B")
+        val resolver =
+            Resolver(
+                engines = listOf(engineA, engineB),
+                overrideStore = InMemoryOverrideStore(),
+                userPicksEngine = { error("not exercised by this test") },
+            )
+
+        val selectable = resolver.selectableEngines()
+
+        assertEquals(
+            listOf(SelectableEngine("engine-a", "Engine A"), SelectableEngine("engine-b", "Engine B")),
+            selectable,
+        )
+    }
+
+    @Test
+    fun `resolveWithChosenEngine uses forcedMatch and persists the choice for future resolves`() {
+        val chosenEngine = FakeEngine(id = "engine-b")
+        val otherEngine = FakeEngine(id = "engine-a")
+        val store = InMemoryOverrideStore()
+        val resolver =
+            Resolver(
+                engines = listOf(otherEngine, chosenEngine),
+                overrideStore = store,
+                userPicksEngine = { error("resolveWithChosenEngine must not consult the auto fallback") },
+            )
+
+        val descriptor = resolver.resolveWithChosenEngine(unknownBundle, "engine-b")
+
+        assertEquals("engine-b", descriptor.engineId)
+        assertEquals("engine-b", store.get(unknownBundle.id))
+
+        // A later plain resolve() for the same bundle now reads the saved override, not the fallback.
+        val secondDescriptor = resolver.resolve(unknownBundle)
+        assertEquals("engine-b", secondDescriptor.engineId)
+    }
+
+    // "Handle forcedMatch throwing... with a clear message rather than a crash" — the message itself
+    // is whatever the engine reports; this proves it propagates unmangled rather than being swallowed.
+    @Test
+    fun `resolveWithChosenEngine propagates a forcedMatch rejection instead of swallowing it`() {
+        val rejecting =
+            FakeEngine(
+                id = "engine-a",
+                forcedMatchError = IllegalStateException("missing tokenizer.json required by this family"),
+            )
+        val resolver =
+            Resolver(
+                engines = listOf(rejecting),
+                overrideStore = InMemoryOverrideStore(),
+                userPicksEngine = { error("not exercised by this test") },
+            )
+
+        val thrown =
+            assertFailsWith<IllegalStateException> { resolver.resolveWithChosenEngine(unknownBundle, "engine-a") }
+        assertEquals("missing tokenizer.json required by this family", thrown.message)
+    }
+
+    @Test
+    fun `resolveWithChosenEngine throws for an engine id that isn't registered`() {
+        val resolver =
+            Resolver(
+                engines = listOf(FakeEngine(id = "engine-a")),
+                overrideStore = InMemoryOverrideStore(),
+                userPicksEngine = { error("not exercised by this test") },
+            )
+
+        assertFailsWith<IllegalStateException> { resolver.resolveWithChosenEngine(unknownBundle, "no-such-engine") }
     }
 }

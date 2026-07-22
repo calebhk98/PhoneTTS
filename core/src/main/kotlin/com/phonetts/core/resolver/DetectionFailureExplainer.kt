@@ -64,22 +64,24 @@ class DetectionFailureExplainer {
         findings: CompanionFileFindings,
     ): String {
         if (claimedByEngineIds.isNotEmpty()) {
-            return "'${bundle.id}' was actually claimed by: ${claimedByEngineIds.joinToString()}. " +
-                "Detection did not fail for this bundle."
+            return "Good news — '${bundle.id}' was actually recognized by: ${claimedByEngineIds.joinToString()}. " +
+                "It should already be usable; this wasn't really a failure."
         }
         if (checkedEngineIds.isEmpty()) {
-            return "No engines are registered to check '${bundle.id}' against."
+            return "There are no engines installed yet to check '${bundle.id}' against, so nothing could " +
+                "recognize it."
         }
         if (findings.isBareWeightsFile) {
-            return "None of the ${checkedEngineIds.size} registered engine(s) claimed '${bundle.id}': " +
-                "it has none of the standard companion files ($COMPANION_FILE_LABEL_LIST). Per spec " +
-                "§6.2, a bare weights file with no side files is often not self-describing enough " +
-                "for confident auto-detection, so inspect() fails closed rather than guessing."
+            return "None of the ${checkedEngineIds.size} available engine(s) recognized '${bundle.id}'. " +
+                "It looks like a bare weights file with no extra files describing how to run it " +
+                "($COMPANION_FILE_LABEL_LIST are all missing), so the app can't safely guess which " +
+                "model this is. Try a download that includes those files, or pick an engine for it " +
+                "yourself below."
         }
-        return "None of the ${checkedEngineIds.size} registered engine(s) claimed '${bundle.id}'. " +
-            "It is missing these standard companion file categories: " +
-            "${findings.missingCategories.joinToString()}. Per spec §6.2, inspect() fails closed " +
-            "when a bundle's family cannot be established with confidence, rather than guessing."
+        return "None of the ${checkedEngineIds.size} available engine(s) recognized '${bundle.id}'. " +
+            "It's missing these usual files: ${findings.missingCategories.joinToString()} — without " +
+            "them the app can't tell which model this is with confidence. Try a download that " +
+            "includes those files, or pick an engine for it yourself below."
     }
 
     companion object {

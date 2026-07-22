@@ -61,6 +61,59 @@ class KittenEngineInspectTest {
     }
 
     @Test
+    fun `bundle whose marker lives only in kitten_config json is claimed and records it as config asset`() {
+        // Mirrors the real onnx-community/KittenTTS-{Nano,Mini,Micro}-v0.8-ONNX layout: config.json
+        // is present but generic, and the kitten_tts marker lives in a sibling kitten_config.json.
+        val bundle =
+            ModelBundle(
+                id = "kitten-nano-onnx-community",
+                fileNames =
+                    setOf(
+                        "onnx/model.onnx",
+                        KittenEngine.CONFIG_FILE,
+                        KittenEngine.KITTEN_CONFIG_FILE,
+                        KittenEngine.VOICES_FILE,
+                    ),
+                sideFiles =
+                    mapOf(
+                        KittenEngine.CONFIG_FILE to """{"model_type":"style_text_to_speech_2"}""",
+                        KittenEngine.KITTEN_CONFIG_FILE to validConfig,
+                    ),
+                rootPath = "/models/kitten-nano-onnx-community",
+            )
+
+        val match = assertNotNull(engine.inspect(bundle))
+
+        assertEquals(KittenEngine.ENGINE_ID, match.engineId)
+        assertEquals(
+            "/models/kitten-nano-onnx-community/${KittenEngine.KITTEN_CONFIG_FILE}",
+            match.descriptor.assetPaths[KittenEngine.CONFIG_ASSET_KEY],
+        )
+    }
+
+    @Test
+    fun `bundle whose marker is in neither config file is refused`() {
+        val bundle =
+            ModelBundle(
+                id = "onnx-community-lookalike",
+                fileNames =
+                    setOf(
+                        "onnx/model.onnx",
+                        KittenEngine.CONFIG_FILE,
+                        KittenEngine.KITTEN_CONFIG_FILE,
+                        KittenEngine.VOICES_FILE,
+                    ),
+                sideFiles =
+                    mapOf(
+                        KittenEngine.CONFIG_FILE to """{"model_type":"style_text_to_speech_2"}""",
+                        KittenEngine.KITTEN_CONFIG_FILE to """{"model_type":"totally_different_family"}""",
+                    ),
+            )
+
+        assertInspectRejects(engine, bundle)
+    }
+
+    @Test
     fun `genuine KittenTTS bundle is claimed and produces a complete descriptor`() {
         val bundle =
             ModelBundle(
@@ -130,6 +183,24 @@ class KittenEngineInspectTest {
         assertEquals(Origin.SIDELOADED, match.descriptor.origin)
         assertEquals(8, match.descriptor.voices.size)
         assertEquals(KittenEngine.VOICE_NAMES, match.descriptor.voices.map { it.name })
+    }
+
+    @Test
+    fun `forcedMatch records kitten_config json as the config asset when only it carries the marker`() {
+        val bundle =
+            ModelBundle(
+                id = "sideloaded-onnx-community",
+                fileNames = setOf("weights.onnx", KittenEngine.KITTEN_CONFIG_FILE, KittenEngine.VOICES_FILE),
+                sideFiles = mapOf(KittenEngine.KITTEN_CONFIG_FILE to validConfig),
+                rootPath = "/models/sideloaded-onnx-community",
+            )
+
+        val match = engine.forcedMatch(bundle)
+
+        assertEquals(
+            "/models/sideloaded-onnx-community/${KittenEngine.KITTEN_CONFIG_FILE}",
+            match.descriptor.assetPaths[KittenEngine.CONFIG_ASSET_KEY],
+        )
     }
 
     @Test

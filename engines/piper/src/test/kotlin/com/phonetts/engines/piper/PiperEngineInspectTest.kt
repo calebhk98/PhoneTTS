@@ -111,4 +111,91 @@ class PiperEngineInspectTest {
 
         assertFailsWith<IllegalArgumentException> { engine.forcedMatch(bundle) }
     }
+
+    // issue #95: speaches-ai/*, ufozone/*, and Lucasllfs/Razo-piper-voice all ship a valid Piper
+    // sidecar under the plain name "config.json" instead of "<voice>.onnx.json".
+    @Test
+    fun `claims a single onnx paired with a plain config json sidecar`() {
+        val bundle =
+            ModelBundle(
+                id = "speaches-ai-voice",
+                fileNames = setOf("voice.onnx", "config.json"),
+                sideFiles = mapOf("config.json" to validSidecar),
+                rootPath = "/models/speaches-ai-voice",
+            )
+
+        val match = assertNotNull(engine.inspect(bundle))
+
+        val descriptor = match.descriptor
+        assertEquals(Origin.BUILT_IN, descriptor.origin)
+        assertEquals(22_050, descriptor.sampleRate)
+        assertEquals(listOf("voice"), descriptor.voices.map { it.id })
+        assertEquals("/models/speaches-ai-voice/voice.onnx", descriptor.assetPaths["voice.onnx"])
+        assertEquals("/models/speaches-ai-voice/config.json", descriptor.assetPaths["voice.onnx.json"])
+    }
+
+    @Test
+    fun `returns null when the single onnx's config json is not piper shaped`() {
+        val bundle =
+            ModelBundle(
+                id = "foreign-config-json",
+                fileNames = setOf("voice.onnx", "config.json"),
+                sideFiles = mapOf("config.json" to """{"totally_unrelated": true}"""),
+            )
+
+        assertInspectRejects(engine, bundle)
+    }
+
+    // ayousanz/piper-plus-* also ships a Piper-shaped config.json but needs extra
+    // language_id/prosody inputs this engine does not feed — out of scope for issue #95, but this
+    // pins the SAME rejection a foreign config.json gets, since [PiperVoiceConfig.parse] can't tell
+    // the two apart from the sidecar alone. Named separately so a future piper-plus fix updates the
+    // right expectation, not this one.
+    @Test
+    fun `does not falsely pair a stray config json across a multi onnx bundle`() {
+        val bundle =
+            ModelBundle(
+                id = "multi-onnx-with-stray-config",
+                fileNames = setOf("voice-a.onnx", "voice-b.onnx", "config.json"),
+                sideFiles = mapOf("config.json" to validSidecar),
+            )
+
+        assertInspectRejects(engine, bundle)
+    }
+
+    @Test
+    fun `still resolves the stem sidecar path when both stem json and a plain config json exist`() {
+        val bundle =
+            ModelBundle(
+                id = "has-both-sidecars",
+                fileNames = setOf("voice.onnx", "voice.onnx.json", "config.json"),
+                sideFiles =
+                    mapOf(
+                        "voice.onnx.json" to validSidecar,
+                        "config.json" to """{"totally_unrelated": true}""",
+                    ),
+                rootPath = "/models/has-both-sidecars",
+            )
+
+        val match = assertNotNull(engine.inspect(bundle))
+
+        assertEquals("/models/has-both-sidecars/voice.onnx.json", match.descriptor.assetPaths["voice.onnx.json"])
+    }
+
+    @Test
+    fun `forcedMatch also accepts a plain config json sidecar for a single onnx`() {
+        val bundle =
+            ModelBundle(
+                id = "forced-config-json",
+                fileNames = setOf("voice.onnx", "config.json"),
+                sideFiles = mapOf("config.json" to validSidecar),
+                rootPath = "/models/forced-config-json",
+            )
+
+        val match = engine.forcedMatch(bundle)
+
+        assertEquals(Origin.SIDELOADED, match.descriptor.origin)
+        assertEquals(22_050, match.descriptor.sampleRate)
+        assertEquals("/models/forced-config-json/config.json", match.descriptor.assetPaths["voice.onnx.json"])
+    }
 }

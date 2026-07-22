@@ -2,7 +2,7 @@ package com.phonetts.core.download.hf
 
 /**
  * Ways to order a list of [HfModelSummary] search results. Every option reads a field the Hub
- * already returned on the summary, or a value *derived* from one (size/params — see below) — no
+ * already returned on the summary, or a value *derived* from one (size/params/RTF — see below) — no
  * model list or family is named here (issue #6 SSOT rule: sort/filter options must derive from
  * data, never a hardcoded catalog).
  *
@@ -11,6 +11,12 @@ package com.phonetts.core.download.hf
  * [HfCatalog]'s kdoc), so results this app hasn't fetched a size for yet are sorted last regardless
  * of direction (see [HfResultsView.sortBySize]/[sortByParams]) — never given a fabricated 0-byte
  * size just to make them comparable.
+ *
+ * [FASTEST_RTF]/[SLOWEST_RTF] need a measured real-time factor, which only exists once the SAME
+ * repo has actually been downloaded and benchmarked on this device (see
+ * [com.phonetts.core.metrics.BenchmarkHistory]) — the Hub has no notion of "how fast does this run
+ * on your phone". A result with no benchmark on record sorts last in either direction, same as an
+ * unknown size (see [HfResultsView.sortByRtf]) — never a guessed/interpolated number.
  */
 enum class HfSortOption {
     /** As the Hub returned them (its own relevance/downloads ranking for the query). */
@@ -22,6 +28,8 @@ enum class HfSortOption {
     SMALLEST_SIZE,
     MOST_PARAMS,
     FEWEST_PARAMS,
+    FASTEST_RTF,
+    SLOWEST_RTF,
 }
 
 /** True for a sort option whose ordering needs each result's [HfSizeEstimate] — the signal the
@@ -29,8 +37,55 @@ enum class HfSortOption {
  * picks one of these (rather than only on request, or leaving most rows stuck "last" forever). */
 fun HfSortOption.needsSize(): Boolean = this in SIZE_DEPENDENT_SORTS
 
+/** True for a sort option whose ordering needs each result's measured real-time factor (see
+ * [HfSortOption]'s kdoc). Unlike size, there is nothing to eagerly fetch for this — a repo's RTF is
+ * either already on disk (benchmarked after a previous download) or it isn't, so this exists mainly
+ * so callers can label/explain the option consistently with [needsSize] rather than for any fetch
+ * trigger of its own. */
+fun HfSortOption.needsRtf(): Boolean = this in RTF_DEPENDENT_SORTS
+
 private val SIZE_DEPENDENT_SORTS =
     setOf(HfSortOption.LARGEST_SIZE, HfSortOption.SMALLEST_SIZE, HfSortOption.MOST_PARAMS, HfSortOption.FEWEST_PARAMS)
+
+private val RTF_DEPENDENT_SORTS = setOf(HfSortOption.FASTEST_RTF, HfSortOption.SLOWEST_RTF)
+
+/**
+ * Whether the browse view model should eagerly fetch every current result's [HfSizeEstimate] right
+ * now (issue: max-size filter regression). Sizes are needed not only when [sort] orders by them
+ * ([HfSortOption.needsSize]) but also whenever [sizeFilter] has an active bound — [filterBySize]
+ * excludes a result the moment its size isn't known, so without this second trigger those rows would
+ * simply vanish (their own per-row fetch never runs, because a filtered-out row is never composed to
+ * begin with) rather than eventually appearing once their size resolves.
+ */
+fun needsEagerSizeFetch(
+    sort: HfSortOption,
+    sizeFilter: HfSizeParamFilter,
+): Boolean = sort.needsSize() || sizeFilter.isActive
+
+/**
+ * Show all results, only ones already downloaded on this device, or only ones not yet downloaded
+ * (issue: installed/not-installed filter). Mirrors [HfSortOption]/[HfSizeParamFilter] in deriving
+ * from data the app already has (the local model catalog), never a hardcoded model list.
+ */
+enum class HfInstalledFilter {
+    ALL,
+    INSTALLED_ONLY,
+    NOT_INSTALLED_ONLY,
+}
+
+/**
+ * The optional filter/sort inputs [HfResultsView.apply] needs beyond the tag — size (#7), language,
+ * and RTF (issue: RTF sort/filter) — bundled into one parameter, mirroring the UI layer's own
+ * RowActions/SizeState pattern, so [HfResultsView.apply] stays under detekt's parameter-count limit
+ * as more lazily-known per-model facts get added over time. Every field defaults to "no
+ * filter"/"nothing known" so a caller that only cares about tag filtering keeps compiling unchanged.
+ */
+data class HfResultFilters(
+    val sizeEstimates: Map<String, HfSizeEstimate> = emptyMap(),
+    val sizeFilter: HfSizeParamFilter = HfSizeParamFilter(),
+    val language: String? = null,
+    val rtfEstimates: Map<String, Double> = emptyMap(),
+)
 
 /**
  * A size/parameter-count range to filter results by (issue: sort+filter by size/params). Every
@@ -63,6 +118,7 @@ object HfResultsView {
         results: List<HfModelSummary>,
         option: HfSortOption,
         sizeEstimates: Map<String, HfSizeEstimate> = emptyMap(),
+        rtfEstimates: Map<String, Double> = emptyMap(),
     ): List<HfModelSummary> =
         when (option) {
             HfSortOption.RELEVANCE -> results
@@ -73,6 +129,9 @@ object HfResultsView {
             HfSortOption.SMALLEST_SIZE -> sortBySize(results, sizeEstimates, descending = false)
             HfSortOption.MOST_PARAMS -> sortByParams(results, sizeEstimates, descending = true)
             HfSortOption.FEWEST_PARAMS -> sortByParams(results, sizeEstimates, descending = false)
+            // Fastest first = lowest RTF first (a smaller ratio is faster); slowest first = highest.
+            HfSortOption.FASTEST_RTF -> sortByRtf(results, rtfEstimates, descending = false)
+            HfSortOption.SLOWEST_RTF -> sortByRtf(results, rtfEstimates, descending = true)
         }
 
     // Unknown-size results always sort after every known one, in EITHER direction — see the
@@ -94,6 +153,19 @@ object HfResultsView {
     ): List<HfModelSummary> {
         val (known, unknown) = results.partition { sizeEstimates[it.id] != null }
         val ascending = known.sortedBy { paramCountOf(it, sizeEstimates) }
+        return (if (descending) ascending.reversed() else ascending) + unknown
+    }
+
+    // Same unknown-last rule as sortBySize/sortByParams (see HfSortOption's kdoc): a repo this
+    // device has never benchmarked has no honest position in a speed ordering, so it goes last
+    // regardless of direction rather than being treated as infinitely fast or slow.
+    private fun sortByRtf(
+        results: List<HfModelSummary>,
+        rtfEstimates: Map<String, Double>,
+        descending: Boolean,
+    ): List<HfModelSummary> {
+        val (known, unknown) = results.partition { rtfEstimates[it.id] != null }
+        val ascending = known.sortedBy { rtfEstimates.getValue(it.id) }
         return (if (descending) ascending.reversed() else ascending) + unknown
     }
 
@@ -163,6 +235,21 @@ object HfResultsView {
         }
     }
 
+    /** Keeps only results matching [filter] against [installedIds] — the set of [HfModelSummary.id]s
+     * the app already has a downloaded/resolved bundle for (computed by the caller from the local
+     * model catalog; this object never touches disk). [HfInstalledFilter.ALL] is a no-op, mirroring
+     * [filterByTag]'s "null/blank means no filter" shape. */
+    fun filterByInstalled(
+        results: List<HfModelSummary>,
+        installedIds: Set<String>,
+        filter: HfInstalledFilter,
+    ): List<HfModelSummary> =
+        when (filter) {
+            HfInstalledFilter.ALL -> results
+            HfInstalledFilter.INSTALLED_ONLY -> results.filter { it.id in installedIds }
+            HfInstalledFilter.NOT_INSTALLED_ONLY -> results.filter { it.id !in installedIds }
+        }
+
     /** Same as [filterBySize] but over the estimated parameter count derived from each result's size. */
     fun filterByParamCount(
         results: List<HfModelSummary>,
@@ -178,22 +265,29 @@ object HfResultsView {
         }
     }
 
-    /** Applies language, tag, size and param filtering, then [option] ordering, in that order.
-     * [language]/[sizeEstimates]/[sizeFilter] all default to "no filter" so the pre-existing call
-     * sites keep compiling and behaving exactly as before. */
+    /**
+     * Applies language, tag, size and param filtering, then [option] ordering, in that order — see
+     * [HfResultFilters] for the size/language/RTF inputs, bundled to stay under detekt's parameter
+     * limit. [filters] defaults to "nothing known" so the pre-existing call sites (tag-only) keep
+     * compiling and behaving exactly as before.
+     *
+     * Deliberately NOT included: [HfInstalledFilter] — installed-ness depends on the local model
+     * catalog (an app-layer concern with no representation on [HfModelSummary] itself), so callers
+     * apply [filterByInstalled] themselves; filtering after sorting only removes entries, so it never
+     * disturbs the order this function already computed.
+     */
     fun apply(
         results: List<HfModelSummary>,
         option: HfSortOption,
         tag: String?,
-        sizeEstimates: Map<String, HfSizeEstimate> = emptyMap(),
-        sizeFilter: HfSizeParamFilter = HfSizeParamFilter(),
-        language: String? = null,
+        filters: HfResultFilters = HfResultFilters(),
     ): List<HfModelSummary> {
-        val byLanguage = HfLanguages.filterByLanguage(results, language)
+        val byLanguage = HfLanguages.filterByLanguage(results, filters.language)
         val tagged = filterByTag(byLanguage, tag)
-        val sized = filterBySize(tagged, sizeEstimates, sizeFilter.minBytes, sizeFilter.maxBytes)
-        val paramed = filterByParamCount(sized, sizeEstimates, sizeFilter.minParams, sizeFilter.maxParams)
-        return sort(paramed, option, sizeEstimates)
+        val sizeFilter = filters.sizeFilter
+        val sized = filterBySize(tagged, filters.sizeEstimates, sizeFilter.minBytes, sizeFilter.maxBytes)
+        val paramed = filterByParamCount(sized, filters.sizeEstimates, sizeFilter.minParams, sizeFilter.maxParams)
+        return sort(paramed, option, filters.sizeEstimates, filters.rtfEstimates)
     }
 
     // A tag menu longer than this is more scroll than signal on a phone; the most common tags are

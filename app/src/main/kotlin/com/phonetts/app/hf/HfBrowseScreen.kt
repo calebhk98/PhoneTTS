@@ -52,6 +52,7 @@ import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.DiagnosticsKind
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.download.hf.HfInstalledFilter
 import com.phonetts.core.download.hf.HfLanguages
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
@@ -125,6 +126,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         val onTagFilterChange = remember(viewModel) { viewModel::onTagFilterChange }
         val onLanguageFilterChange = remember(viewModel) { viewModel::onLanguageFilterChange }
         val onSizeFilterChange = remember(viewModel) { viewModel::onSizeFilterChange }
+        val onInstalledFilterChange = remember(viewModel) { viewModel::onInstalledFilterChange }
         // All keyed on only the fields they actually depend on — NOT recomputed on every
         // recomposition (e.g. a download-progress tick), which was the other half of bug #3. The tag
         // list is now the trimmed/frequency-ranked set (viewModel.availableTags → frequentTags), so
@@ -140,6 +142,8 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             languageFilter = state.languageFilter,
             availableLanguages = availableLanguages,
             onLanguageFilterChange = onLanguageFilterChange,
+            installedFilter = state.installedFilter,
+            onInstalledFilterChange = onInstalledFilterChange,
         )
         // Size/param-count filter (issue: sort+filter by size/params) — a separate row from the
         // sort/tag dropdowns above since it takes numeric bounds, not a single choice from a menu.
@@ -188,9 +192,23 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
         // size/param bound — actually reorders/refilters the list. Safe perf-wise despite bug #3's
         // "don't recompute on every tick" lesson: sizeEstimates changes at most once per row (each
         // repo's size resolves once and is cached), never the many-times-a-second cadence a
-        // download's byte progress produces.
+        // download's byte progress produces. Also keyed on installedFilter (issue: installed filter)
+        // and downloads.keys (NOT the whole downloads map — its values tick many times a second
+        // mid-download, which is exactly the bug #3 perf trap this function's kdoc warns about).
+        // Installed-ness is read live off the catalog, not stored in state; a download STARTING or
+        // FINISHING is exactly when it can have changed, and that's precisely when the key set
+        // changes, so it's a cheap, correct invalidation signal without polling the catalog every
+        // recomposition.
         val displayedResults =
-            remember(state.results, state.sort, state.tagFilter, state.sizeEstimates, state.sizeFilter) {
+            remember(
+                state.results,
+                state.sort,
+                state.tagFilter,
+                state.sizeEstimates,
+                state.sizeFilter,
+                state.installedFilter,
+                state.downloads.keys,
+            ) {
                 viewModel.displayedResults(state)
             }
         // Same rationale as displayedResults above: only recomputed when the query or the fetched
@@ -200,13 +218,25 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             remember(state.piperVoices, state.piperVoiceQuery) {
                 viewModel.filterPiperVoices(state.piperVoices, state.piperVoiceQuery)
             }
+        // Collapsible "Recommended" box (issue: collapsible recommended box) — local Compose state,
+        // not HfBrowseUiState, since (unlike the Piper voices section) nothing here needs to survive
+        // navigating away and back, or trigger a fetch on first expand; the list is already computed
+        // up front (viewModel.recommended). Expanded by default so existing behavior is unchanged
+        // until the user chooses to collapse it.
+        var recommendedExpanded by remember { mutableStateOf(true) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // Recommended one-tap models come first — they're the curated, known-good downloads most
             // users want; the broader Hugging Face results follow under their own header.
             if (viewModel.recommended.isNotEmpty()) {
                 item(key = "recommended-header") {
-                    Text("Recommended (one-tap)", fontWeight = FontWeight.Bold)
+                    RecommendedHeader(
+                        expanded = recommendedExpanded,
+                        count = viewModel.recommended.size,
+                        onExpandedChange = { recommendedExpanded = it },
+                    )
                 }
+            }
+            if (viewModel.recommended.isNotEmpty() && recommendedExpanded) {
                 items(viewModel.recommended, key = { "rec:${it.id}" }) { model ->
                     RecommendedRow(
                         model = model,
@@ -345,11 +375,13 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
 }
 
 /**
- * Sort + language + tag filters, every choice derived from the current result set (issue #6) — no
- * hardcoded model list, language list, or tag vocabulary. Laid out as two rows so three dropdowns
- * don't cram onto one phone-width line: sort and language together (language is the most-wanted
- * filter — many models are multilingual, see [HfLanguages]), then the tag filter full-width beneath,
- * shown only when there's actually something to filter by.
+ * Sort + language + tag + installed filters, every choice derived from the current result set
+ * (issue #6) — no hardcoded model list, language list, or tag vocabulary; the installed filter's
+ * three choices are the only fixed enum here, since "installed" is a device fact, not a model fact.
+ * Laid out as three rows so the dropdowns don't cram onto one phone-width line: sort and language
+ * together (language is the most-wanted filter — many models are multilingual, see [HfLanguages]),
+ * installed-state alongside the tag filter, then the tag filter full-width beneath when there's
+ * actually something to filter by.
  */
 @Composable
 private fun SortAndFilterRow(
@@ -361,6 +393,8 @@ private fun SortAndFilterRow(
     languageFilter: String?,
     availableLanguages: List<String>,
     onLanguageFilterChange: (String?) -> Unit,
+    installedFilter: HfInstalledFilter,
+    onInstalledFilterChange: (HfInstalledFilter) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -378,8 +412,32 @@ private fun SortAndFilterRow(
                 )
             }
         }
+        InstalledFilterDropdown(
+            installedFilter = installedFilter,
+            onInstalledFilterChange = onInstalledFilterChange,
+            modifier = Modifier.fillMaxWidth(),
+        )
         if (availableTags.isNotEmpty()) {
             TagFilterDropdown(tagFilter = tagFilter, availableTags = availableTags, onTagFilterChange = onTagFilterChange)
+        }
+    }
+}
+
+/** "Installed"/"Not installed"/"All" filter (issue: installed/not-installed filter) — the three
+ * choices are fixed since installed-ness is a device fact rather than data derived per-search, but
+ * the underlying membership itself is always read live from the local catalog (never cached here). */
+@Composable
+private fun InstalledFilterDropdown(
+    installedFilter: HfInstalledFilter,
+    onInstalledFilterChange: (HfInstalledFilter) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    DropdownBox(label = "Show", value = installedFilterLabel(installedFilter), modifier = modifier) { dismiss ->
+        HfInstalledFilter.entries.forEach { option ->
+            DropdownMenuItem(
+                text = { Text(installedFilterLabel(option)) },
+                onClick = { onInstalledFilterChange(option); dismiss() },
+            )
         }
     }
 }
@@ -458,6 +516,17 @@ private fun sortLabel(option: HfSortOption): String =
         HfSortOption.SMALLEST_SIZE -> "Smallest size"
         HfSortOption.MOST_PARAMS -> "Most params (est.)"
         HfSortOption.FEWEST_PARAMS -> "Fewest params (est.)"
+        HfSortOption.FASTEST_RTF -> "Fastest (measured)"
+        HfSortOption.SLOWEST_RTF -> "Slowest (measured)"
+    }
+
+/** "Installed" filter menu choices (issue: installed/not-installed filter) — every value is a
+ * genuine [HfInstalledFilter], not a hardcoded model list. */
+private fun installedFilterLabel(filter: HfInstalledFilter): String =
+    when (filter) {
+        HfInstalledFilter.ALL -> "All models"
+        HfInstalledFilter.INSTALLED_ONLY -> "Installed only"
+        HfInstalledFilter.NOT_INSTALLED_ONLY -> "Not installed"
     }
 
 /**
@@ -527,6 +596,25 @@ private fun NumberField(
         singleLine = true,
         modifier = modifier,
     )
+}
+
+/**
+ * Collapsible header for the "Recommended (one-tap)" box (issue: collapsible recommended box) — lets
+ * the curated models be hidden entirely rather than always taking the top of the screen. Mirrors
+ * [PiperVoicesHeader]'s ▾/▸ affordance for a consistent expand/collapse pattern across the screen.
+ */
+@Composable
+private fun RecommendedHeader(
+    expanded: Boolean,
+    count: Int,
+    onExpandedChange: (Boolean) -> Unit,
+) {
+    TextButton(onClick = { onExpandedChange(!expanded) }) {
+        Text(
+            if (expanded) "Recommended (one-tap) — $count ▾" else "Recommended (one-tap) — $count ▸",
+            fontWeight = FontWeight.Bold,
+        )
+    }
 }
 
 /**

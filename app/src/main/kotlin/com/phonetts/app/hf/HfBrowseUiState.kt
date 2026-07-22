@@ -3,6 +3,7 @@ package com.phonetts.app.hf
 import com.phonetts.core.download.builtin.BuiltInModel
 import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.HfDownloadProgress
+import com.phonetts.core.download.hf.HfInstalledFilter
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
 import com.phonetts.core.download.hf.HfSizeParamFilter
@@ -60,6 +61,10 @@ data class HfBrowseUiState(
     // any bound here (or picking a size/param HfSortOption) is what triggers eagerly fetching sizes
     // for the whole current result set — see HfBrowseViewModel.ensureSizesLoaded.
     val sizeFilter: HfSizeParamFilter = HfSizeParamFilter(),
+    // Installed / not-installed filter (issue: installed filter) — "installed" is read live from the
+    // local model catalog (HfBrowseViewModel.isInstalled), never cached here, so this only carries
+    // the user's ALL/INSTALLED_ONLY/NOT_INSTALLED_ONLY *choice*.
+    val installedFilter: HfInstalledFilter = HfInstalledFilter.ALL,
     // Pagination (issue: Browse "Load more") — the Hub's /api/models list is paged with limit+skip
     // (HfEndpoints.searchModelsUrl); [results] above only ever holds the pages fetched SO far,
     // appended in order. [canLoadMore] is false once a page came back shorter than the page size

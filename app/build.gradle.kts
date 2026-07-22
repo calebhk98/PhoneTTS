@@ -198,6 +198,11 @@ dependencies {
     runtimeOnly(project(":engines:piper"))
     runtimeOnly(project(":engines:kittentts"))
     runtimeOnly(project(":engines:kokoro"))
+    runtimeOnly(project(":engines:mms"))
+    runtimeOnly(project(":engines:f5tts"))
+    runtimeOnly(project(":engines:ggmltts"))
+    runtimeOnly(project(":engines:executorch"))
+    runtimeOnly(project(":engines:pytorch"))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json) // HfCatalog exposes a kotlinx.serialization Json default
@@ -220,4 +225,5 @@ dependencies {
 
     // ONNX Runtime for the Tier-A/B engines (a second, LLM-style runtime is added for CosyVoice2).
     implementation(libs.onnxruntime.android)
+    implementation(libs.executorch.android) // ExecuTorch .pte runtime — ships in the main APK (BSD-3, ~7 MB, no NDK)
 }

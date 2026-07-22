@@ -3,11 +3,13 @@ package com.phonetts.core.registry
 import com.phonetts.core.prefs.InMemoryPreferenceStore
 import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.OverrideStore
+import com.phonetts.core.resolver.SelectableEngine
 import com.phonetts.core.testing.FakeEngine
 import com.phonetts.core.testing.testDescriptor
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -239,6 +241,74 @@ class ModelManagerTest {
         assertTrue(filesDeleted)
         assertEquals("mystery", deleteCalledWith)
         assertEquals(emptyList(), manager.unresolvedUsage())
+    }
+
+    // Bug #1: the manual "pick an engine" fallback must be reachable through ModelManager, the class
+    // the Manage screen's ViewModel actually talks to — not just live in Resolver in isolation.
+    @Test
+    fun selectableEnginesReturnsWhateverTheInjectedProviderReports() {
+        val engines = listOf(SelectableEngine("eng-a", "Engine A"), SelectableEngine("eng-b", "Engine B"))
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                selectableEnginesProvider = { engines },
+            )
+
+        assertEquals(engines, manager.selectableEngines())
+    }
+
+    @Test
+    fun selectableEnginesDefaultsToEmptyWhenNoProviderIsWired() {
+        val manager = ModelManager(ModelCatalog(), dirSizeBytes = { 0L }, deleteModelDir = { true })
+
+        assertEquals(emptyList(), manager.selectableEngines())
+    }
+
+    @Test
+    fun assignEngineDelegatesToTheInjectedActionWithBothIds() {
+        var seenBundleId: String? = null
+        var seenEngineId: String? = null
+        val descriptor = testDescriptor("mystery", "eng-b")
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                assignEngineAction = { bundleId, engineId ->
+                    seenBundleId = bundleId
+                    seenEngineId = engineId
+                    descriptor
+                },
+            )
+
+        val result = manager.assignEngine("mystery", "eng-b")
+
+        assertEquals("mystery", seenBundleId)
+        assertEquals("eng-b", seenEngineId)
+        assertEquals(descriptor, result)
+    }
+
+    @Test
+    fun assignEngineFailsClosedWhenNoActionIsWired() {
+        val manager = ModelManager(ModelCatalog(), dirSizeBytes = { 0L }, deleteModelDir = { true })
+
+        assertFailsWith<IllegalStateException> { manager.assignEngine("mystery", "eng-b") }
+    }
+
+    @Test
+    fun assignEngineLetsTheInjectedActionsFailurePropagate() {
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                assignEngineAction = { _, _ -> error("engine rejected this bundle: missing config.json") },
+            )
+
+        val thrown = assertFailsWith<IllegalStateException> { manager.assignEngine("mystery", "eng-b") }
+        assertEquals("engine rejected this bundle: missing config.json", thrown.message)
     }
 
     // Issue #4/#5: switching storage location persists the choice and runs the app's rebuild hook.

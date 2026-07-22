@@ -23,6 +23,8 @@ class DetectionFailureExplainerTest {
         assertTrue(report.claimedByEngineIds.isEmpty())
         assertEquals(listOf("engine-a", "engine-b"), report.checkedEngineIds)
         assertTrue(report.summary.contains("bare weights file", ignoreCase = true))
+        assertFalse(report.summary.contains("spec"))
+        assertFalse(report.summary.contains("inspect()"))
     }
 
     @Test
@@ -40,6 +42,9 @@ class DetectionFailureExplainerTest {
         assertTrue(report.missingCompanionFiles.containsAll(listOf("phoneme map", "voice/speaker table")))
         assertFalse(report.isBareWeightsFile)
         assertTrue(report.summary.contains("phoneme map"))
+        assertTrue(report.summary.contains("pick an engine", ignoreCase = true))
+        assertFalse(report.summary.contains("spec"))
+        assertFalse(report.summary.contains("inspect()"))
     }
 
     @Test
@@ -50,6 +55,7 @@ class DetectionFailureExplainerTest {
 
         assertTrue(report.checkedEngineIds.isEmpty())
         assertTrue(report.summary.contains("no engines", ignoreCase = true))
+        assertFalse(report.summary.contains("spec"))
     }
 
     @Test
@@ -60,7 +66,8 @@ class DetectionFailureExplainerTest {
         val report = explainer.explain(bundle, listOf(claimingEngine))
 
         assertEquals(listOf("engine-a"), report.claimedByEngineIds)
-        assertTrue(report.summary.contains("did not fail", ignoreCase = true))
+        assertTrue(report.summary.contains("recognized", ignoreCase = true))
+        assertTrue(report.summary.contains("wasn't really a failure", ignoreCase = true))
     }
 
     @Test
