@@ -9,11 +9,13 @@ import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.RtfResult
 import com.phonetts.core.metrics.ThermalRegressionDetector
 import com.phonetts.core.model.ModelDescriptor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Drives the Benchmarks screen: measure every downloaded model's real generation speed on the same
@@ -91,10 +93,14 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     private suspend fun benchmarkOne(descriptor: ModelDescriptor): Row {
         val estimatedRam = graph.resourceUsageStore.peakRamEstimate(descriptor)
         return runCatching {
-            graph.engineManager.switchTo(descriptor.engineId, descriptor)
-            val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
-            val params = SynthesisParams(descriptor.parameters.associate { it.id to it.default })
-            RtfEstimator.estimate(engine, descriptor.defaultVoiceId, params, BENCH_PHRASE, descriptor.sampleRate)
+            // Weight load (switchTo) + the synthesis drain in RtfEstimator both block; keep the whole
+            // per-model benchmark off the main thread (issue #18-4b).
+            withContext(Dispatchers.IO) {
+                graph.engineManager.switchTo(descriptor.engineId, descriptor)
+                val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
+                val params = SynthesisParams(descriptor.parameters.associate { it.id to it.default })
+                RtfEstimator.estimate(engine, descriptor.defaultVoiceId, params, BENCH_PHRASE, descriptor.sampleRate)
+            }
         }.fold(
             onSuccess = { result -> successRow(descriptor, result) },
             onFailure = { e -> failureRow(descriptor, estimatedRam, e) },
