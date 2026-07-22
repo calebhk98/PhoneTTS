@@ -2,6 +2,8 @@ package com.phonetts.core.audio.buffer
 
 import com.phonetts.core.audio.AudioSink
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 
@@ -10,9 +12,26 @@ import kotlinx.coroutines.flow.first
 // reads by index from the retained buffer, so pausing simply stops advancing the index and
 // resuming continues from exactly where it left off — no audio is dropped and nothing is
 // re-synthesized. Play the same buffer again from the start to replay already-generated audio.
+//
+// Reading strictly one chunk at a time by index is also what keeps GeneratedAudio's long-document
+// spill mode (issue #34) bounded: [GeneratedAudio.chunkAt] may serve a below-live-window index from
+// the scratch file, and because playback never snapshots the whole buffer, only the current chunk
+// is ever resident — a spilled chunk is read from disk, handed to the sink, and released.
 class BufferedPlayback {
     private val paused = MutableStateFlow(false)
     private val stopped = MutableStateFlow(false)
+
+    // Playback position, exposed so a caller can drive a progress indicator (issue #26). Both advance
+    // as chunks are actually delivered to the sink (not as they are generated), so they reflect what
+    // has been heard. A BufferedPlayback is single-use, so these start at 0 for each play session.
+    private val playedSamplesState = MutableStateFlow(0L)
+    private val playedChunksState = MutableStateFlow(0)
+
+    /** Total samples delivered to the sink so far this run (elapsed position, in samples). */
+    val playedSamples: StateFlow<Long> = playedSamplesState.asStateFlow()
+
+    /** Chunks (== sentences) delivered to the sink so far this run. */
+    val playedChunks: StateFlow<Int> = playedChunksState.asStateFlow()
 
     fun pause() {
         paused.value = true
@@ -65,7 +84,10 @@ class BufferedPlayback {
                 index
             }
             index < audio.count.value -> {
-                sink.onChunk(audio.chunkAt(index))
+                val chunk = audio.chunkAt(index)
+                sink.onChunk(chunk)
+                playedSamplesState.value += chunk.size
+                playedChunksState.value = index + 1
                 index + 1
             }
             else -> {

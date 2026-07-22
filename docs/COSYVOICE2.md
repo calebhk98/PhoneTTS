@@ -149,7 +149,10 @@ ONNX flow/HiFT graph for this engine — the earlier skeleton's `CosyVoice2Front
 `char.code % vocab` placeholder), `CosyVoice2Graphs` (ONNX flow/HiFT) and `CosyVoice2SpeakerPrompt`
 are **deleted**. Speed: the CrispASR synth C ABI exposes no speed knob, and CLAUDE.md rule 2 forbids
 resampling to fake one (it shifts pitch), so the descriptor advertises a **locked speed of 1.0**
-(honest-closed) until the native synth routes a native token-rate parameter.
+(honest-closed) until the native synth routes a native token-rate parameter. If a user genuinely
+needs faster-than-native playback of a locked model like this, that is exactly what the off-by-default,
+playback-only `TempoStretch` transform (issue #43) is for — a separate, pitch-preserving WSOLA
+time-stretch that never touches this locked native speed and is applied only on the playback sink.
 
 ### The new seam (`:core`)
 

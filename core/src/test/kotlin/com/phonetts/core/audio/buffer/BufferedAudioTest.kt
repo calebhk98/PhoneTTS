@@ -91,6 +91,50 @@ class BufferedAudioTest {
         }
 
     @Test
+    fun stopBeforePlaybackDropsEveryBufferedChunk() =
+        runTest {
+            val audio = GeneratedAudio()
+            listOf(floatArrayOf(1f), floatArrayOf(2f), floatArrayOf(3f)).forEach(audio::append)
+            audio.markComplete()
+            val playback = BufferedPlayback()
+            val sink = RecordingSink()
+
+            playback.stop() // barge-in before a single chunk is consumed
+            playback.play(audio, RATE, sink)
+
+            // The drop step of the 3-step cancel (issue #45): a stopped playback delivers NONE of
+            // the buffered-but-unplayed chunks, even though the buffer is full and complete.
+            assertEquals(0, sink.chunkCount)
+            assertTrue(sink.recorded.isEmpty())
+            assertTrue(sink.ended)
+        }
+
+    @Test
+    fun stopMidPlaybackDropsRemainingAndLaterGeneratedChunks() =
+        runTest(UnconfinedTestDispatcher()) {
+            val audio = GeneratedAudio()
+            audio.append(floatArrayOf(1f)) // one chunk ready before playback starts
+            val playback = BufferedPlayback()
+            val sink = RecordingSink()
+
+            val job = backgroundScope.launch { playback.play(audio, RATE, sink) }
+            runCurrent()
+            assertEquals(1, sink.chunkCount) // played what was ready, now parked at the live edge
+
+            playback.stop() // barge-in mid-utterance (stop / skip / switch-voice)
+            audio.append(floatArrayOf(2f)) // more audio becomes available AFTER the cancel
+            audio.append(floatArrayOf(3f))
+            audio.markComplete()
+            runCurrent()
+
+            // Dropped: nothing generated after the cancel is ever delivered.
+            assertEquals(1, sink.chunkCount)
+            assertEquals(listOf(1f), sink.recorded.toList())
+            assertTrue(sink.ended)
+            job.join()
+        }
+
+    @Test
     fun playbackStartsBeforeGenerationCompletesAndFollowsTheLiveEdge() =
         runTest(UnconfinedTestDispatcher()) {
             val audio = GeneratedAudio()

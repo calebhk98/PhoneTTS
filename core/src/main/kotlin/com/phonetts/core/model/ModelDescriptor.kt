@@ -41,6 +41,24 @@ data class ModelDescriptor(
      * WHICH names an engine looks up is the engine's own business, never shared code's.
      */
     val assetPaths: Map<String, String> = emptyMap(),
+    /**
+     * Approximate resource footprint (peak RAM) of this model — the engine's a-priori estimate,
+     * discovered when it inspects the model (issue #38). Surfaced as an inline, non-blocking hint so
+     * the user can still ATTEMPT a heavy model on a small phone; refined at runtime from observed
+     * peak RAM of previous loads. Defaults to [ResourceCost.UNKNOWN] so a model that declares nothing
+     * simply shows "unknown".
+     */
+    val resourceCost: ResourceCost = ResourceCost.UNKNOWN,
+    /**
+     * Whether this model's graph represents voices as a CONTINUOUS speaker/style vector that can be
+     * linearly interpolated between two voices for an in-between timbre (issue #42). A pure
+     * descriptor fact so the "mix voices" UI is DERIVED, never a hardcoded per-model special case
+     * (CLAUDE.md rule 5): the engine sets this from what its graph actually accepts — true for the
+     * StyleTTS2 engines that feed a `style` vector (Kokoro/KittenTTS), false for models that select
+     * a voice by a discrete integer/id or a separate graph (MeloTTS `sid`, Piper, CosyVoice2), which
+     * cannot interpolate. Default false: a model is not blendable unless it says so.
+     */
+    val supportsVoiceBlend: Boolean = false,
 ) {
     /** The speed knob if this model has one, else null (e.g. CosyVoice3 exposes no speed parameter). */
     val speedParameter: ModelParameter?

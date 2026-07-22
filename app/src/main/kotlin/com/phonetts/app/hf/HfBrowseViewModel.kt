@@ -13,7 +13,9 @@ import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.QuantizationVariant
 import com.phonetts.core.registry.ModelCatalog
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +64,10 @@ class HfBrowseViewModel(
     private val mutableState = MutableStateFlow(UiState(installedIds = installedIdsSnapshot()))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
+    // The in-flight download coroutine (file listing + fetch + import), tracked so the user can
+    // cancel a long download. Cancelling leaves any partial file on disk so a later retry resumes.
+    private var downloadJob: Job? = null
+
     /**
      * Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md), minus any whose
      * required runtime isn't available on this build — so a standard APK shows the four ONNX models
@@ -99,13 +105,26 @@ class HfBrowseViewModel(
 
     fun download(model: HfModelSummary) {
         mutableState.update { it.copy(downloadingId = model.id, progress = null, error = null) }
-        viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { catalog.listFiles(model.id) } }
-                .onSuccess { files -> onFilesListed(model.id, files) }
-                .onFailure { e ->
-                    mutableState.update { it.copy(downloadingId = null, progress = null, error = e.message) }
-                }
-        }
+        downloadJob =
+            viewModelScope.launch {
+                runCatching { withContext(Dispatchers.IO) { catalog.listFiles(model.id) } }
+                    .onSuccess { files -> onFilesListed(model.id, files) }
+                    .onFailure { e ->
+                        if (e is CancellationException) throw e
+                        mutableState.update { it.copy(downloadingId = null, progress = null, error = e.message) }
+                    }
+            }
+    }
+
+    /**
+     * Cancel the in-flight download. The coroutine is cancelled cooperatively (the fetch loop checks
+     * for it each buffer) and any partially-downloaded file is left on disk, so re-tapping Download
+     * resumes from where it stopped rather than starting the whole weight file over.
+     */
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        downloadJob = null
+        mutableState.update { it.copy(downloadingId = null, progress = null, variantChoice = null) }
     }
 
     // If the repo ships one precision (or none classifiable), download it straight away; if it
@@ -138,22 +157,26 @@ class HfBrowseViewModel(
         items: List<com.phonetts.core.download.hf.HfDownloadItem>,
     ) {
         mutableState.update { it.copy(downloadingId = modelId, progress = null, error = null) }
-        viewModelScope.launch {
-            runCatching {
-                downloader.downloadAndImport(modelId, items) { done, total ->
-                    mutableState.update { it.copy(progress = done to total) }
+        downloadJob =
+            viewModelScope.launch {
+                runCatching {
+                    downloader.downloadAndImport(modelId, items) { done, total ->
+                        mutableState.update { it.copy(progress = done to total) }
+                    }
+                }.onSuccess { descriptor ->
+                    mutableState.update {
+                        it.copy(
+                            downloadingId = null,
+                            progress = null,
+                            installedIds = it.installedIds + descriptor.modelId,
+                        )
+                    }
+                }.onFailure { e ->
+                    // Cancellation is a user action, not a failure — let it propagate; cancelDownload
+                    // already reset the UI. Only real errors surface an error line.
+                    if (e is CancellationException) throw e
+                    mutableState.update { it.copy(downloadingId = null, progress = null, error = e.message) }
                 }
-            }.onSuccess { descriptor ->
-                mutableState.update {
-                    it.copy(
-                        downloadingId = null,
-                        progress = null,
-                        installedIds = it.installedIds + descriptor.modelId,
-                    )
-                }
-            }.onFailure { e ->
-                mutableState.update { it.copy(downloadingId = null, progress = null, error = e.message) }
             }
-        }
     }
 }

@@ -6,9 +6,13 @@ import android.os.Build
 import com.phonetts.core.audio.Pcm16
 import com.phonetts.core.audio.export.AudioEncoder
 import com.phonetts.core.audio.export.ExportFormat
+import com.phonetts.core.audio.export.SegmentWriter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.OutputStream
 
 private const val CHANNEL_COUNT = 1
@@ -23,10 +27,11 @@ private const val OPUS_BIT_RATE = 64_000
  * (`MUXER_OUTPUT_WEBM`) is the only container `MediaMuxer` offers Opus into, and it's only worth
  * using once the encoder itself exists (API 29+). PhoneTTS's minSdk is 24, so this class is
  * unusable on ~API 24-28 devices by construction of the platform, not a bug here: [encodeToFile]
- * and [writeEncoded] both throw [UnsupportedOperationException] below API 29 instead of silently
- * producing a broken/empty file. [com.phonetts.app.audio.export.ExportFormats] only advertises
- * this encoder to the UI when `Build.VERSION.SDK_INT >= 29`, so the failure path here is a
- * defensive backstop for direct callers, not something the picker should ever trigger.
+ * and [openWriter] both throw [UnsupportedOperationException] below API 29 (the writer throws up
+ * front, before any scratch file is created) instead of silently producing a broken/empty file.
+ * [com.phonetts.app.audio.export.ExportFormats] only advertises this encoder to the UI when
+ * `Build.VERSION.SDK_INT >= 29`, so the failure path here is a defensive backstop for direct
+ * callers, not something the picker should ever trigger.
  *
  * NEEDS ON-DEVICE VERIFICATION: unlike AAC, Opus encoders commonly only accept a fixed set of
  * sample rates (8000/12000/16000/24000/48000 Hz). No emulator/device was available in this
@@ -40,30 +45,30 @@ private const val OPUS_BIT_RATE = 64_000
 class OpusAudioEncoder(private val tempDir: File) : AudioEncoder() {
     override val format: ExportFormat = FORMAT
 
-    override suspend fun writeEncoded(
-        segments: List<FloatArray>,
+    override fun openWriter(
         sampleRate: Int,
         out: OutputStream,
-    ) {
-        requireSupported()
-        val temp = File.createTempFile(TEMP_PREFIX, ".${format.fileExtension}", tempDir)
-        try {
-            encodeToFile(segments, sampleRate, temp)
-            temp.inputStream().use { it.copyTo(out) }
-        } finally {
-            temp.delete()
+    ): SegmentWriter =
+        MediaCodecSegmentWriter(sampleRate, out, tempDir, ENCODER, format.fileExtension, CHANNEL_COUNT) {
+            requireSupported()
         }
-    }
 
-    /** Encode straight to [target], skipping the temp-file/copy [writeEncoded] needs for an OutputStream. */
+    /** Encode [flow] straight to [target], spilling PCM to a scratch file first (bounded memory). */
     suspend fun encodeToFile(
-        segments: List<FloatArray>,
+        flow: Flow<FloatArray>,
         sampleRate: Int,
         target: File,
     ) = withContext(Dispatchers.IO) {
         requireSupported()
-        val pcm = segments.fold(ByteArray(0)) { acc, segment -> acc + Pcm16.encode(segment) }
-        ENCODER.encode(pcm, sampleRate, CHANNEL_COUNT, target)
+        val pcm = File.createTempFile(TEMP_PREFIX, ".pcm", tempDir)
+        try {
+            BufferedOutputStream(FileOutputStream(pcm)).use { sink ->
+                flow.collect { segment -> sink.write(Pcm16.encode(segment)) }
+            }
+            ENCODER.encode(pcm, sampleRate, CHANNEL_COUNT, target)
+        } finally {
+            pcm.delete()
+        }
     }
 
     private fun requireSupported() {

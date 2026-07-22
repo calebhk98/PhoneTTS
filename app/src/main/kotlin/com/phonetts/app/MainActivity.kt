@@ -42,12 +42,16 @@ import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.manage.ModelManagementScreen
 import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.ui.HelpScreen
+import com.phonetts.app.ui.MixVoicesScreen
+import com.phonetts.app.ui.MixVoicesViewModel
+import com.phonetts.app.ui.OnboardingScreen
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
 import com.phonetts.app.ui.theme.PhoneTtsTheme
+import com.phonetts.core.prefs.AppTheme
 
-private enum class Screen { MAIN, BROWSE, MANAGE, BENCHMARK, HELP }
+private enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -67,10 +71,14 @@ class MainActivity : ComponentActivity() {
                 val localBinder = service as? PlaybackService.LocalBinder ?: return
                 binderState.value = localBinder
                 localBinder.attachController(ttsViewModel.playbackController)
+                // In-app Stop bypasses the service, so route it a "this stop is user-initiated"
+                // signal, otherwise a manual Stop reads as natural completion and chimes (issue #32).
+                ttsViewModel.onUserStopRequested = { localBinder.notifyUserStop() }
                 forwardState(localBinder)
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
+                ttsViewModel.onUserStopRequested = null
                 binderState.value = null
             }
         }
@@ -80,9 +88,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val sharedText = intent?.readSharedText()
         setContent {
-            PhoneTtsTheme {
+            // Theme choice is hoisted above PhoneTtsTheme so a pick in the picker recomposes the
+            // whole tree; persisted through AppThemePreference so it survives relaunch.
+            var theme by remember { mutableStateOf(graph.appThemePreference.selected()) }
+            PhoneTtsTheme(theme = theme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    AppNav(graph, ttsViewModel, sharedText, binderState)
+                    AppNav(
+                        graph = graph,
+                        ttsViewModel = ttsViewModel,
+                        sharedText = sharedText,
+                        binderState = binderState,
+                        theme = theme,
+                        onThemeSelected = { chosen ->
+                            theme = chosen
+                            graph.appThemePreference.select(chosen)
+                        },
+                    )
                 }
             }
         }
@@ -95,6 +116,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        ttsViewModel.onUserStopRequested = null
         binderState.value?.detachController()
         unbindService(connection)
         binderState.value = null
@@ -143,8 +165,14 @@ private fun AppNav(
     ttsViewModel: TtsViewModel,
     sharedText: String?,
     binderState: State<PlaybackService.LocalBinder?>,
+    theme: AppTheme,
+    onThemeSelected: (AppTheme) -> Unit,
 ) {
-    var screen by remember { mutableStateOf(Screen.MAIN) }
+    // First run lands on the walkthrough; every launch after it has been dismissed goes straight
+    // to the reader. remember{} reads the flag once so dismissing it mid-session sticks.
+    var screen by remember {
+        mutableStateOf(if (graph.onboardingState.hasSeenOnboarding()) Screen.MAIN else Screen.ONBOARDING)
+    }
     val binder by binderState
 
     // Load shared/handed-in text into the reader once, when the activity was opened via a share.
@@ -153,6 +181,13 @@ private fun AppNav(
     }
 
     when (screen) {
+        Screen.ONBOARDING ->
+            OnboardingScreen(
+                onFinish = {
+                    graph.onboardingState.markSeen()
+                    screen = Screen.MAIN
+                },
+            )
         Screen.MAIN ->
             TtsScreen(
                 viewModel = ttsViewModel,
@@ -160,6 +195,7 @@ private fun AppNav(
                 onManageModels = { screen = Screen.MANAGE },
                 onBenchmarks = { screen = Screen.BENCHMARK },
                 onHelp = { screen = Screen.HELP },
+                onMixVoices = { screen = Screen.MIX },
                 appVersion = BuildConfig.VERSION_NAME,
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
@@ -185,7 +221,18 @@ private fun AppNav(
         }
         Screen.MANAGE -> {
             val manageViewModel: ModelManagementViewModel =
-                viewModel(factory = viewModelFactory { initializer { ModelManagementViewModel(graph.modelManager) } })
+                viewModel(
+                    factory =
+                        viewModelFactory {
+                            initializer {
+                                ModelManagementViewModel(
+                                    modelManager = graph.modelManager,
+                                    resourceUsage = graph.resourceUsageStore,
+                                    availableRamBytes = graph::availableRamBytes,
+                                )
+                            }
+                        },
+                )
             BackScaffold(title = "Downloaded models", onBack = {
                 ttsViewModel.refreshModels() // a delete removes it from the model dropdown too
                 screen = Screen.MAIN
@@ -198,6 +245,18 @@ private fun AppNav(
                 BenchmarkScreen(benchmarkViewModel)
             }
         }
+        Screen.MIX -> {
+            val ttsState by ttsViewModel.state.collectAsState()
+            val mixViewModel: MixVoicesViewModel =
+                viewModel(
+                    key = ttsState.selected?.modelId,
+                    factory = viewModelFactory { initializer { MixVoicesViewModel(graph, ttsState.selected) } },
+                )
+            BackScaffold(title = "Mix voices", onBack = {
+                ttsViewModel.refreshModels() // a saved mix may have become selectable
+                screen = Screen.MAIN
+            }) { MixVoicesScreen(mixViewModel) }
+        }
         Screen.HELP -> {
             val ttsState by ttsViewModel.state.collectAsState()
             BackScaffold(title = "Help", onBack = { screen = Screen.MAIN }) {
@@ -206,6 +265,8 @@ private fun AppNav(
                     update = ttsState.update,
                     checkStatus = ttsState.updateCheckStatus,
                     onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
+                    currentTheme = theme,
+                    onThemeSelected = onThemeSelected,
                 )
             }
         }

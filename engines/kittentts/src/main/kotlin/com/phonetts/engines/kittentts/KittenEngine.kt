@@ -1,13 +1,17 @@
 package com.phonetts.engines.kittentts
 
+import com.phonetts.core.engine.BlendableVoices
+import com.phonetts.core.engine.BlendedVoiceSpec
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.EngineMatch
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
+import com.phonetts.core.engine.VoiceBlend
 import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
+import com.phonetts.core.model.ResourceCost
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
 import com.phonetts.engines.common.AbstractVoiceEngine
@@ -42,7 +46,8 @@ internal class KittenEngine(
     // KokoroEngine's fileReader seam) -- here reading bytes rather than text, since voices.npz
     // is binary.
     private val fileReader: (path: String) -> ByteArray = { File(it).readBytes() },
-) : AbstractVoiceEngine(context) {
+) : AbstractVoiceEngine(context),
+    BlendableVoices {
     override val id: String = ENGINE_ID
     override val displayName: String = DISPLAY_NAME
     override val engineLabel: String = ENGINE_ID
@@ -93,6 +98,21 @@ internal class KittenEngine(
     }
 
     override fun voices(): List<Voice> = loadedVoices
+
+    /**
+     * Voice mixing (issue #42): KittenTTS's StyleTTS2 graph feeds a continuous 256-dim `style`
+     * vector, so an in-between voice is just the [VoiceBlend] of two loaded embeddings — registered
+     * as a new selectable voice that synthesis then feeds like any other. Fails closed if either
+     * source id isn't loaded.
+     */
+    override fun addBlendedVoice(spec: BlendedVoiceSpec): Voice? {
+        val a = voiceEmbeddings[spec.voiceAId] ?: return null
+        val b = voiceEmbeddings[spec.voiceBId] ?: return null
+        val voice = Voice(id = spec.id, name = spec.name, language = LANGUAGE)
+        voiceEmbeddings = voiceEmbeddings + (spec.id to VoiceBlend.blend(a, b, spec.weight))
+        loadedVoices = loadedVoices.filterNot { it.id == spec.id } + voice
+        return voice
+    }
 
     override fun synthesizeSentence(
         sentence: String,
@@ -157,12 +177,19 @@ internal class KittenEngine(
             // Introspected: KittenTTS's StyleTTS2 graph has a native "speed" input, so it advertises
             // a speed knob (routed to that scalar — never resampled, CLAUDE.md rule 2).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
+            // Introspected: the StyleTTS2 graph takes a continuous 256-dim `style` vector, so two
+            // voices can be linearly interpolated into an in-between one (issue #42). A descriptor
+            // fact the "mix voices" UI derives from — never a model-name special case (rule 5).
+            supportsVoiceBlend = true,
             assetPaths =
                 mapOf(
                     MODEL_ASSET_KEY to joinAssetPath(bundle, modelFile),
                     CONFIG_ASSET_KEY to joinAssetPath(bundle, CONFIG_FILE),
                     VOICES_ASSET_KEY to joinAssetPath(bundle, VOICES_FILE),
                 ),
+            // Approximate peak-RAM estimate (issue #38): KittenTTS is the tiny ~15M-param model, the
+            // lightest engine here. A-priori only — refined by observed peak RAM.
+            resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
     }
 
@@ -174,6 +201,9 @@ internal class KittenEngine(
         const val RUNTIME_ID = "onnx"
 
         const val SAMPLE_RATE = 24_000
+
+        // Approximate peak resident RAM (MiB) while loaded + generating — the lightest model here.
+        private const val PEAK_RAM_MIB = 80L
 
         // VALIDATED (docs/research/onnx-io.md): the ONNX graph takes a native "speed" scalar, same
         // family/range convention as the sibling ONNX engines.

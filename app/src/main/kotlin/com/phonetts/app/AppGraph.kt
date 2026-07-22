@@ -2,6 +2,7 @@ package com.phonetts.app
 
 import android.content.Context
 import com.phonetts.app.audio.export.ExportFormats
+import com.phonetts.app.device.DeviceInfo
 import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
 import com.phonetts.app.runtime.NativeCosyVoiceRuntime
@@ -11,8 +12,15 @@ import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
+import com.phonetts.core.metrics.BenchmarkHistory
+import com.phonetts.core.prefs.AppThemePreference
+import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.FavoriteVoices
+import com.phonetts.core.prefs.LongDocumentPreferences
+import com.phonetts.core.prefs.OnboardingState
+import com.phonetts.core.prefs.ReadingTextPreferences
+import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.resolver.DetectionFailureExplainer
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
@@ -91,7 +99,44 @@ class AppGraph(context: Context) {
     private val preferenceStore = PrefsPreferenceStore(appContext)
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
+    val readingTextPreferences = ReadingTextPreferences(preferenceStore)
+
+    // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
+    // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
+    val blendedVoices = BlendedVoiceStore(preferenceStore)
+
+    // Long-document (spill-to-disk) mode (issue #34): an opt-in toggle only; the actual scratch file
+    // is minted by [newSpillFile] so :core stays Android-free (it takes a plain java.io.File).
+    val longDocumentPreferences = LongDocumentPreferences(preferenceStore)
     val detectionFailureExplainer = DetectionFailureExplainer()
+
+    // UI-preference seams over the same store: the chosen color theme (reading/OLED schemes) and
+    // the one-shot "has the first-run walkthrough been seen?" flag. Both hold only the user's
+    // choice — the theme's concrete colors live in the theme layer, the walkthrough copy in its UI.
+    val appThemePreference = AppThemePreference(preferenceStore)
+    val onboardingState = OnboardingState(preferenceStore)
+
+    // Resource-cost hinting (issue #38): the descriptor carries each engine's a-priori peak-RAM
+    // estimate; this store refines it from peak RAM previous loads actually cost. Persisted benchmark
+    // history (issue #39, off-by-default power-user view) rides the same preference store.
+    val resourceUsageStore = ResourceUsageStore(preferenceStore)
+    val benchmarkHistory = BenchmarkHistory(preferenceStore)
+
+    /**
+     * A fresh scratch file in app cache for a [com.phonetts.core.audio.buffer.ChunkSpill] (issue #34).
+     * Lives in `cacheDir` so the OS can reclaim it under storage pressure; [ChunkSpill.close] deletes
+     * it when the buffer is released.
+     */
+    fun newSpillFile(): java.io.File = java.io.File.createTempFile("phonetts_spill_", ".pcm", appContext.cacheDir)
+
+    /** Device free RAM right now, in bytes — the reference point the resource-cost hints display against. */
+    fun availableRamBytes(): Long = DeviceInfo.availableRamBytes(appContext)
+
+    /** This process's current footprint, in bytes — recorded after a load to refine RAM estimates. */
+    fun processMemoryBytes(): Long = DeviceInfo.processMemoryBytes()
+
+    /** A stable name for this device, used to compare benchmark history like-for-like (issue #39). */
+    val deviceName: String get() = DeviceInfo.name
 
     // The export-format registry (WAV always; AAC always; Opus on API 29+). The picker reads
     // display names/extensions/MIME from here — no format string is hardcoded in the UI (SSOT).

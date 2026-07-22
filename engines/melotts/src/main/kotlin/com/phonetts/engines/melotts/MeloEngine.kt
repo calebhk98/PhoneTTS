@@ -9,6 +9,7 @@ import com.phonetts.core.model.ModelBundle
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.model.Origin
+import com.phonetts.core.model.ResourceCost
 import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Tensor
 import com.phonetts.engines.common.AbstractVoiceEngine
@@ -197,6 +198,9 @@ internal class MeloEngine(
             // speed knob (routed to length_scale = 1/speed — never resampled, CLAUDE.md rule 2).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths = assetPaths,
+            // Approximate peak-RAM estimate (issue #38): a VITS2 acoustic model plus a BERT frontend
+            // session. A-priori only — refined by observed peak RAM.
+            resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
 
     private fun defaultVoiceId(
@@ -231,6 +235,9 @@ internal class MeloEngine(
         // sanctioned descriptor-building layer, same pattern as KittenEngine.SAMPLE_RATE). When
         // metadata IS present, its own "sample_rate" always wins.
         private const val DEFAULT_SAMPLE_RATE = 44_100
+
+        // Approximate peak resident RAM (MiB) while loaded + generating — acoustic + BERT sessions.
+        private const val PEAK_RAM_MIB = 300L
         private val SPEED_RANGE = 0.5f..2.0f
         private const val DEFAULT_SPEED = 1.0f
         private const val DEFAULT_VOICE_ID = "0"

@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- End-of-document haptic cue (issue #32): PlaybackChime's optional vibration pulse. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".PhoneTtsApplication"
@@ -39,6 +41,22 @@
             </intent-filter>
         </activity>
 
+        <!-- Automation surface (issue #41): a headless, exported activity that runs one synthesis
+             job from an intent (Tasker / MacroDroid / `adb shell am start -a
+             com.phonetts.action.SYNTHESIZE`) and returns a result intent. A third consumer of the
+             one generation path — no new synthesis logic. -->
+        <activity
+            android:name=".automation.TtsAutomationActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="com.phonetts.action.SYNTHESIZE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- Foreground service driving background playback + the lock-screen media session
              (com.phonetts.app.playback.PlaybackService). Not exported: only this app binds to
              it. -->
@@ -46,6 +64,32 @@
             android:name=".playback.PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Home-screen widget (issue #25): last document title + Play/Pause. Its button fires the
+             same PlaybackService action the notification uses. Exported so the launcher can host it. -->
+        <receiver
+            android:name=".playback.PlaybackWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/playback_widget_info" />
+        </receiver>
+
+        <!-- Quick Settings tile (issue #27): toggle play/pause on the last-loaded document from the
+             shade. Guarded by the system BIND_QUICK_SETTINGS_TILE permission; exported for the OS. -->
+        <service
+            android:name=".playback.ResumeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="Resume reading"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

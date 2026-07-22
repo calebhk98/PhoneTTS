@@ -3,23 +3,32 @@ package com.phonetts.app.audio.export
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import com.phonetts.core.audio.Pcm16
+import com.phonetts.core.audio.export.SegmentWriter
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 
 // Shared MediaCodec dequeue/drain plumbing used by both AacAudioEncoder and OpusAudioEncoder.
 // This is plain composition, NOT part of the core AudioEncoder hierarchy — that hierarchy already
 // eliminates the flow-drain/transform duplication (AudioEncoder.encode is inherited by every
 // child, WavEncoder included). This class exists one level below that: it stops the two
 // MediaCodec-backed children from each re-implementing the same encoder-loop boilerplate.
+//
+// Bounded memory (issue #33): the PCM is read from a scratch FILE as a stream, fed one input
+// buffer at a time, so a book-length export never materializes its raw PCM as one giant byte[].
 private const val TIMEOUT_US = 10_000L
 
-/** Encodes raw PCM16 bytes into [target] using a MediaCodec encoder muxed via [muxerOutputFormat]. */
+/** Encodes raw PCM16 bytes (streamed from [pcmSource]) into [target] muxed via [muxerOutputFormat]. */
 internal class MediaCodecFileEncoder(
     private val mimeType: String,
     private val muxerOutputFormat: Int,
     private val configure: (MediaFormat) -> Unit,
 ) {
     fun encode(
-        pcm: ByteArray,
+        pcmSource: File,
         sampleRate: Int,
         channelCount: Int,
         target: File,
@@ -31,7 +40,7 @@ internal class MediaCodecFileEncoder(
         codec.start()
         val muxer = MediaMuxer(target.absolutePath, muxerOutputFormat)
         try {
-            drive(codec, muxer, pcm)
+            pcmSource.inputStream().buffered().use { input -> drive(codec, muxer, input) }
         } finally {
             releaseQuietly(codec, muxer)
         }
@@ -40,17 +49,12 @@ internal class MediaCodecFileEncoder(
     private fun drive(
         codec: MediaCodec,
         muxer: MediaMuxer,
-        pcm: ByteArray,
+        input: InputStream,
     ) {
         val session = CodecSession(codec, muxer)
-        var offset = 0
         var eosSent = false
         while (!session.outputDone) {
-            if (!eosSent) {
-                val next = session.feedInput(pcm, offset)
-                eosSent = next >= pcm.size
-                offset = next
-            }
+            if (!eosSent) eosSent = session.feedInput(input)
             session.drainOutput()
         }
     }
@@ -66,7 +70,7 @@ internal class MediaCodecFileEncoder(
     }
 }
 
-/** Mutable per-encode state: how much of [pcm] has been queued and whether the muxer has started. */
+/** Mutable per-encode state: streams PCM into the codec and whether the muxer has started. */
 private class CodecSession(
     private val codec: MediaCodec,
     private val muxer: MediaMuxer,
@@ -77,24 +81,21 @@ private class CodecSession(
     var outputDone = false
         private set
 
-    /** Queue as much of [pcm] starting at [offset] as the next free input buffer holds. */
-    fun feedInput(
-        pcm: ByteArray,
-        offset: Int,
-    ): Int {
+    /** Queue the next slice of PCM from [input]; returns true once end-of-stream has been signalled. */
+    fun feedInput(input: InputStream): Boolean {
         val index = codec.dequeueInputBuffer(TIMEOUT_US)
-        if (index < 0) return offset
-        val remaining = pcm.size - offset
-        if (remaining <= 0) {
-            codec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-            return pcm.size
-        }
-        val buffer = codec.getInputBuffer(index) ?: return offset
-        val chunk = minOf(buffer.capacity(), remaining)
+        if (index < 0) return false
+        val buffer = codec.getInputBuffer(index) ?: return false
         buffer.clear()
-        buffer.put(pcm, offset, chunk)
-        codec.queueInputBuffer(index, 0, chunk, 0, 0)
-        return offset + chunk
+        val scratch = ByteArray(buffer.capacity())
+        val read = input.read(scratch)
+        if (read <= 0) {
+            codec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            return true
+        }
+        buffer.put(scratch, 0, read)
+        codec.queueInputBuffer(index, 0, read, 0, 0)
+        return false
     }
 
     /** Pull one available output event (format-changed or an encoded buffer) and handle it. */
@@ -120,5 +121,45 @@ private class CodecSession(
         val isEos = bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
         codec.releaseOutputBuffer(index, false)
         if (isEos) outputDone = true
+    }
+}
+
+// Shared bounded-memory [SegmentWriter] for the MediaCodec-backed formats. Spills PCM16 to a scratch
+// file as segments arrive (heap stays at one segment), then on close() runs the codec from that
+// file into a temp container and copies it into [out]. [precondition] runs up front so an
+// unsupported codec (Opus below API 29) fails before any scratch file is created.
+internal class MediaCodecSegmentWriter(
+    private val sampleRate: Int,
+    private val out: OutputStream,
+    private val tempDir: File,
+    private val encoder: MediaCodecFileEncoder,
+    private val extension: String,
+    private val channelCount: Int,
+    precondition: () -> Unit,
+) : SegmentWriter {
+    private val pcmScratch: File
+
+    init {
+        precondition()
+        pcmScratch = File.createTempFile("phonetts_pcm_", ".pcm", tempDir)
+    }
+
+    private val pcmOut = BufferedOutputStream(FileOutputStream(pcmScratch))
+
+    override fun write(segment: FloatArray) {
+        pcmOut.write(Pcm16.encode(segment))
+    }
+
+    override fun close() {
+        pcmOut.flush()
+        pcmOut.close()
+        val container = File.createTempFile("phonetts_enc_", ".$extension", tempDir)
+        try {
+            encoder.encode(pcmScratch, sampleRate, channelCount, container)
+            container.inputStream().use { it.copyTo(out) }
+        } finally {
+            pcmScratch.delete()
+            container.delete()
+        }
     }
 }
