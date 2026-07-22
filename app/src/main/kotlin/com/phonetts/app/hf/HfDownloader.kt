@@ -1,6 +1,8 @@
 package com.phonetts.app.hf
 
+import android.os.StatFs
 import com.phonetts.app.ModelStorage
+import com.phonetts.core.download.DownloadStorageCap
 import com.phonetts.core.download.SafePath
 import com.phonetts.core.download.hf.DownloadDiagnosticsLog
 import com.phonetts.core.download.hf.HfCatalog
@@ -52,7 +54,10 @@ class HfDownloader(
     private val importer: ModelImporter,
     private val userAgent: Map<String, String> = HfCatalog.USER_AGENT,
     private val timeoutMs: Int = DEFAULT_TIMEOUT_MS,
-    private val maxFileBytes: Long = DEFAULT_MAX_FILE_BYTES,
+    // The per-file guard is free-storage-based, not a fixed ceiling — a large model (a multi-GB
+    // weights file) must download whenever it actually fits, only failing when it genuinely won't.
+    // Injectable so the guard stays deterministic in tests.
+    private val freeBytes: () -> Long = { StatFs(filesDir.path).availableBytes },
     /** Persistent, user-viewable record of download failures and "downloaded, no engine yet"
      * imports (see [DownloadDiagnosticsLog]). Defaults to a small file under [filesDir] so callers
      * that already construct an [HfDownloader] with just a base dir + importer (the common case)
@@ -113,6 +118,7 @@ class HfDownloader(
         target: File,
         reportWithinFile: (Long) -> Unit,
     ) {
+        requireFitsStorage(item)
         var attempt = 1
         while (true) {
             val onDisk = if (target.isFile) target.length() else 0L
@@ -129,6 +135,17 @@ class HfDownloader(
             delay(RETRY_BACKOFF_MS[attempt - 1])
             attempt++
         }
+    }
+
+    // Fail fast (before spending bandwidth) when a file's advertised size can't fit free storage —
+    // an upfront, clearer version of copyCapped's streaming guard. Unknown sizes fall through to it.
+    private fun requireFitsStorage(item: HfDownloadItem) {
+        if (!DownloadStorageCap.exceedsFreeStorage(item.sizeBytes, freeBytes())) return
+        throw describedFailure(
+            item,
+            DownloadCapExceededException("not enough free storage (needs ${item.sizeBytes} bytes, ${freeBytes()} free)"),
+            attempts = 1,
+        )
     }
 
     // Runs one download attempt and returns the [IOException] it failed with, or null on success —
@@ -167,7 +184,7 @@ class HfDownloader(
             val startOffset = if (serverResumed) resumeFrom else 0L
             connection.inputStream.use { input ->
                 java.io.FileOutputStream(target, serverResumed).use { output ->
-                    copyCapped(input, output, startOffset, reportWithinFile)
+                    copyCapped(input, output, startOffset, DownloadStorageCap.capFor(freeBytes()), reportWithinFile)
                 }
             }
         } finally {
@@ -225,6 +242,7 @@ class HfDownloader(
         input: java.io.InputStream,
         output: java.io.OutputStream,
         startOffset: Long,
+        cap: Long,
         reportWithinFile: (Long) -> Unit,
     ) {
         val buffer = ByteArray(BUFFER_SIZE)
@@ -235,7 +253,7 @@ class HfDownloader(
             coroutineContext.ensureActive()
             total += read
             sinceReport += read
-            if (total > maxFileBytes) throw DownloadCapExceededException("download exceeds $maxFileBytes bytes cap")
+            if (total > cap) throw DownloadCapExceededException("not enough free storage to finish this download")
             output.write(buffer, 0, read)
             if (sinceReport >= BYTES_PROGRESS_STEP) {
                 reportWithinFile(total)
@@ -248,7 +266,6 @@ class HfDownloader(
 
     companion object {
         private const val DEFAULT_TIMEOUT_MS = 30_000
-        private const val DEFAULT_MAX_FILE_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB per file
         private const val BUFFER_SIZE = 8192
         private const val BYTES_PROGRESS_STEP = 256L * 1024 // throttle progress callbacks to every 256 KB
         private const val DIAGNOSTICS_LOG_FILENAME = "hf_download_diagnostics.json"
@@ -271,7 +288,6 @@ class HfDownloader(
 private class HttpStatusException(val code: Int, statusMessage: String?) :
     IOException("HTTP $code${statusMessage?.let { " $it" } ?: ""}")
 
-/** The per-file byte cap ([HfDownloader]'s `maxFileBytes`) was exceeded. Distinct from a generic
- * [IOException] so it is never retried — the file will never fit no matter how many times it's
- * fetched. */
+/** The download can't fit in free storage. Distinct from a generic [IOException] so it is never
+ * retried — the file won't fit no matter how many times it's fetched. */
 private class DownloadCapExceededException(message: String) : IOException(message)
