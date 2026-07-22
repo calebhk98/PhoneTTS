@@ -25,8 +25,10 @@ class AudioTrackSink : AudioSink {
 
     override fun onFormat(sampleRate: Int) {
         // Every real call site routes through stop() first, but release defensively so a missed
-        // discipline never leaks a native track instead of silently doing nothing.
-        release()
+        // discipline never leaks a native track instead of silently doing nothing. This is the
+        // "starting a new session" case, so an immediate (flush) release is correct here — any
+        // leftover audio from a track a caller forgot to stop is not this session's to play.
+        releaseImmediately()
         val floatTrack = buildTrack(sampleRate, AudioFormat.ENCODING_PCM_FLOAT)
         if (floatTrack != null) {
             track = floatTrack
@@ -89,27 +91,85 @@ class AudioTrackSink : AudioSink {
 
     override fun onChunk(samples: FloatArray) {
         val active = track ?: return
-        val written =
-            if (useFloatEncoding) {
-                active.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
-            } else {
-                val shorts = ShortArray(samples.size) { i -> Pcm16.toShort(samples[i]) }
-                active.write(shorts, 0, shorts.size, AudioTrack.WRITE_BLOCKING)
-            }
-        if (written >= 0) return
-        // A negative return is one of AudioTrack's ERROR_* codes (bad state, dead object, invalid
-        // operation, ...) — surface it instead of silently dropping the rest of the utterance; the
-        // ViewModel's runCatching around playback.play() turns this into a "Playback failed" status.
-        release()
+        if (useFloatEncoding) {
+            writeAllFloat(active, samples)
+        } else {
+            writeAllShort(active, ShortArray(samples.size) { i -> Pcm16.toShort(samples[i]) })
+        }
+    }
+
+    // AudioTrack.write(..., WRITE_BLOCKING) is documented to block until every requested sample is
+    // consumed OR the track is paused/stopped/released out from under it (which can yield a SHORT
+    // positive count, not just a negative error code) — e.g. a concurrent stop() (barge-in) racing a
+    // still-in-flight write. Treating any non-negative return as "fully written" (the previous
+    // behaviour) silently dropped the unwritten tail of that chunk, one contributor to audio cutting
+    // out before the end. Loop until the whole chunk is actually consumed, a real error occurs, or
+    // the track stops accepting data entirely (repeated zero-progress writes) so a barge-in still
+    // terminates instead of spinning.
+    private fun writeAllFloat(
+        active: AudioTrack,
+        samples: FloatArray,
+    ) {
+        var offset = 0
+        while (offset < samples.size) {
+            val written = active.write(samples, offset, samples.size - offset, AudioTrack.WRITE_BLOCKING)
+            if (written < 0) failWrite(written)
+            if (written == 0) return // track stopped accepting data mid-write (e.g. a concurrent barge-in)
+            offset += written
+        }
+    }
+
+    private fun writeAllShort(
+        active: AudioTrack,
+        shorts: ShortArray,
+    ) {
+        var offset = 0
+        while (offset < shorts.size) {
+            val written = active.write(shorts, offset, shorts.size - offset, AudioTrack.WRITE_BLOCKING)
+            if (written < 0) failWrite(written)
+            if (written == 0) return
+            offset += written
+        }
+    }
+
+    // A negative return is one of AudioTrack's ERROR_* codes (bad state, dead object, invalid
+    // operation, ...) — surfaced instead of silently dropping the rest of the utterance; the
+    // ViewModel's runCatching around playback.play() turns this into a "Playback failed" status.
+    private fun failWrite(written: Int): Nothing {
+        releaseImmediately()
         error("AudioTrack.write failed with error code $written")
     }
 
-    override fun onEnd() = release()
+    // Natural end of a fully-delivered utterance (spec: no error, no barge-in). WRITE_BLOCKING only
+    // guarantees the last chunk's samples were copied into the AudioTrack's internal ring buffer —
+    // that buffer is at least half a second deep (see BYTES_PER_FLOAT/BYTES_PER_SHORT sizing below),
+    // so audio can still be sitting there, not yet physically played, the instant the last onChunk()
+    // call returns. The previous implementation funnelled onEnd() through the same release() used for
+    // user-initiated stop, which calls flush() — and AudioTrack.flush() is documented to DISCARD any
+    // audio that has been written but not yet presented. That silently truncated up to that whole
+    // buffer's worth of audio off the end of EVERY playback, not just an occasional race: for a short
+    // utterance (a single sentence, or a quick fresh Play before enough chunks have queued up) the
+    // entire clip could still be sitting unpresented when onEnd() fired, so the trim was total —
+    // "pressing Play produces no sound" — while a long cached replay only lost an inaudible sliver off
+    // the tail after minutes of already-drained playback, which read as "replay works". stop()
+    // (below) keeps flush() — that IS the intended immediate-cutoff behaviour for a deliberate
+    // barge-in (issue #45) — only the natural-completion path drops it so queued audio finishes.
+    override fun onEnd() {
+        track?.let { active ->
+            runCatching { active.stop() } // MODE_STREAM: already-queued audio keeps playing to completion.
+            active.release()
+        }
+        track = null
+    }
 
     /** Stop playback immediately (e.g. the user switched models mid-utterance). */
-    fun stop() = release()
+    fun stop() = releaseImmediately()
 
-    private fun release() {
+    // Defensive/barge-in teardown: discards anything queued but not yet heard (via flush()). Used by
+    // [stop] (the deliberate immediate-cutoff path, issue #45) and defensively at the top of
+    // [onFormat] in case a previous session's track was never cleaned up — deliberately NOT used by
+    // [onEnd] (natural completion), see its kdoc above.
+    private fun releaseImmediately() {
         track?.let { active ->
             runCatching {
                 active.pause()
