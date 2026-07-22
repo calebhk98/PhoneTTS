@@ -36,7 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.model.ExportableModel
 import com.phonetts.core.model.ManageModelFacts
+import com.phonetts.core.model.ModelListExport
 import com.phonetts.core.model.Origin
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
@@ -301,22 +303,18 @@ private fun allFilesAccessIntent(packageName: String): Intent =
     Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
 
 /**
- * A plain-text listing of the downloaded models for the "Copy list" button (issue: no way to copy
- * the list of downloaded models). Includes resolved models (name · origin · size) and the
- * downloaded-but-unclaimed bundles, headed by the count and total size — no model is named as a
- * literal, it's all read from the same catalog-derived state the screen already shows.
+ * A plain-text listing of the downloaded models for the "Copy list" button (issue #98, extending
+ * the original "no way to copy the list of downloaded models"). Each resolved model's line carries
+ * whatever [ManageModelFacts] knows for it (HF link, est. RAM, param count, measured/estimated
+ * RTF), and each downloaded-but-unclaimed bundle carries a best-effort HF link too — the whole
+ * point of listing it is letting the user click through to what didn't resolve. Headed by the
+ * count and grand total size. The actual formatting is pure logic in [ModelListExport] (`:core`,
+ * no Android deps) so it's unit-testable on a plain JVM; this function only maps the screen's own
+ * state into that call — no model fact is re-hardcoded here (CLAUDE.md rule 1).
  */
 private fun buildModelListText(state: ModelManagementViewModel.UiState): String {
-    val total = state.usage.size + state.unresolved.size
-    val lines = mutableListOf("Downloaded models ($total) — ${formatBytes(state.totalBytes)} total")
-    state.usage.forEach { usage ->
-        val label = originLabel(usage.descriptor.origin)
-        lines += "• ${usage.descriptor.displayName} — $label · ${formatBytes(usage.sizeBytes)}"
-    }
-    state.unresolved.forEach { unresolved ->
-        lines += "• ${unresolved.bundleId} — ${formatBytes(unresolved.sizeBytes)} · no engine yet"
-    }
-    return lines.joinToString("\n")
+    val resolved = state.usage.map { ExportableModel.from(it, state.factsByModelId[it.descriptor.modelId]) }
+    return ModelListExport.build(resolved, state.unresolved)
 }
 
 /** "1.5 GB" / "320 KB" / "512 B" style formatting for a storage-usage display. */
