@@ -19,6 +19,19 @@ object DeviceInfo {
         return info.availMem
     }
 
+    /**
+     * This device's TOTAL RAM in bytes (`ActivityManager.MemoryInfo.totalMem`), not what's free
+     * right now; 0 if it can't be read. This is the figure that decides whether a model can
+     * physically fit at all ([com.phonetts.core.model.DeviceRamFit]) — free RAM churns with
+     * whatever else happens to be running and is the wrong number to warn against.
+     */
+    fun totalRamBytes(context: Context): Long {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return 0L
+        val info = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(info)
+        return info.totalMem
+    }
+
     /** A human-readable model name for this device (e.g. "SM-A165F"), used to key benchmark history. */
     val name: String = Build.MODEL ?: Build.DEVICE ?: "unknown-device"
 

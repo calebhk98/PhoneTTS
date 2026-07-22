@@ -28,8 +28,12 @@ import kotlinx.coroutines.withContext
  *
  * It also surfaces the resource-cost hint (issue #38): each row shows an estimated peak RAM (the
  * engine's a-priori estimate from the descriptor, refined by observed peaks in [resourceUsage]), and
- * the screen shows the device's current free RAM at the top. This is an INLINE hint, never a
- * blocking pop-up — the user can still attempt a heavy model on a small phone.
+ * the screen shows the device's total RAM at the top. A "won't fit" warning is only ever shown when
+ * the model's estimated peak genuinely exceeds this device's TOTAL RAM
+ * ([com.phonetts.core.model.DeviceRamFit]) — never merely because free RAM is currently low, which
+ * on a 4 GB phone is often true even for models that fit fine (a per-maintainer fix: a 3.5 GB model
+ * on a 4 GB phone should never warn). This is an INLINE hint, never a blocking pop-up — the user can
+ * still attempt a heavy model regardless.
  *
  * Also lists bundles no engine could identify ([UnresolvedModelUsage], issue #8) so a download that
  * detection declined is shown honestly ("downloaded, no engine available") instead of silently
@@ -58,6 +62,10 @@ class ModelManagementViewModel(
     private val modelManager: ModelManager,
     private val resourceUsage: ResourceUsageStore,
     private val availableRamBytes: () -> Long,
+    // Defaults to [availableRamBytes] only so existing call sites that haven't been updated yet
+    // still compile; a real call site should always pass the device's actual TOTAL ram (issue:
+    // "RAM warning fires against free ram" fix) since free RAM is the wrong number to warn against.
+    private val totalRamBytes: () -> Long = availableRamBytes,
     private val benchmarkHistory: BenchmarkHistory? = null,
     private val deviceName: String = "",
 ) : ViewModel() {
@@ -68,8 +76,10 @@ class ModelManagementViewModel(
         val peakRamByModelId: Map<String, Long?> = emptyMap(),
         /** modelId → derived link/RAM/RTF/param-count facts (issue: Manage screen model info). */
         val factsByModelId: Map<String, ManageModelFacts> = emptyMap(),
-        /** Device free RAM right now, shown at the top so the estimates have a reference point. */
+        /** Device free RAM right now — informational only, no longer what the fit warning checks. */
         val availableRamBytes: Long = 0L,
+        /** This device's TOTAL RAM — the only figure [com.phonetts.core.model.DeviceRamFit] checks. */
+        val totalRamBytes: Long = 0L,
         val deletingId: String? = null,
         val error: String? = null,
         /** Downloaded bundles no engine claimed (issue #8) — each offers a manual engine picker. */
@@ -108,6 +118,7 @@ class ModelManagementViewModel(
                 peakRamByModelId = estimates,
                 factsByModelId = facts,
                 availableRamBytes = availableRamBytes(),
+                totalRamBytes = totalRamBytes(),
                 error = null,
                 unresolved = modelManager.unresolvedUsage(),
                 storageDescription = modelManager.currentStorageDescription(),

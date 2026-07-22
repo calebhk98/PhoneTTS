@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.model.DeviceRamFit
 import com.phonetts.core.model.ExportableModel
 import com.phonetts.core.model.ManageModelFacts
 import com.phonetts.core.model.ModelListExport
@@ -90,8 +91,10 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                 enabled = state.usage.isNotEmpty() || state.unresolved.isNotEmpty(),
             ) { Text("Copy list") }
         }
+        // Both numbers shown so neither reads as the one that decides whether a model "fits" — that
+        // decision is against total RAM only (see [ramHint]), free RAM is shown purely as context.
         Text(
-            "Device free RAM: ${formatBytes(state.availableRamBytes)}",
+            "Device RAM: ${formatBytes(state.availableRamBytes)} free of ${formatBytes(state.totalRamBytes)} total",
             style = MaterialTheme.typography.bodyMedium,
         )
 
@@ -117,7 +120,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                 ModelUsageRow(
                     usage = usage,
                     peakRamBytes = state.peakRamByModelId[usage.descriptor.modelId],
-                    freeRamBytes = state.availableRamBytes,
+                    totalRamBytes = state.totalRamBytes,
                     facts = state.factsByModelId[usage.descriptor.modelId],
                     isDeleting = state.deletingId == usage.descriptor.modelId,
                     onDelete = { viewModel.delete(usage.descriptor.modelId) },
@@ -143,7 +146,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
 private fun ModelUsageRow(
     usage: ModelUsage,
     peakRamBytes: Long?,
-    freeRamBytes: Long,
+    totalRamBytes: Long,
     facts: ManageModelFacts?,
     isDeleting: Boolean,
     onDelete: () -> Unit,
@@ -156,7 +159,7 @@ private fun ModelUsageRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold)
             Text(originLabel(usage.descriptor.origin) + " · " + formatBytes(usage.sizeBytes))
-            Text(ramHint(peakRamBytes, freeRamBytes), style = MaterialTheme.typography.bodySmall)
+            Text(ramHint(peakRamBytes, totalRamBytes), style = MaterialTheme.typography.bodySmall)
             ModelFactsBlock(facts)
         }
         DeleteControl(isDeleting, onDelete)
@@ -285,12 +288,15 @@ private fun EngineAssignmentControl(
     }
 }
 
-// Inline, non-blocking hint (issue #38): shows the estimated peak RAM and, when it exceeds free RAM,
-// a gentle "may not fit" note — the user can still attempt it. "unknown" when no estimate exists.
-private fun ramHint(peakRamBytes: Long?, freeRamBytes: Long): String {
+// Inline, non-blocking hint (issue #38, fixed per maintainer): shows the estimated peak RAM and,
+// ONLY when the model genuinely can't physically fit this device — its peak exceeds TOTAL RAM, not
+// merely whatever happens to be free right now — a "won't fit" warning. A tight-but-possible fit
+// (e.g. a 3.5 GB model on a 4 GB phone) never warns; [DeviceRamFit] is the single source of truth
+// for that call, no "tight"/tier language here or anywhere else. "unknown" when no estimate exists.
+private fun ramHint(peakRamBytes: Long?, totalRamBytes: Long): String {
     if (peakRamBytes == null) return "Est. RAM: unknown"
     val base = "Est. RAM: ~${formatBytes(peakRamBytes)}"
-    if (freeRamBytes in 1 until peakRamBytes) return "$base · may not fit — you can still try"
+    if (DeviceRamFit.modelExceedsDeviceRam(peakRamBytes, totalRamBytes)) return "$base · won't fit this device"
     return base
 }
 
