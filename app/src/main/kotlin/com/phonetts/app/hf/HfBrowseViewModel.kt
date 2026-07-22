@@ -77,19 +77,27 @@ class HfBrowseViewModel(
     private fun installedIdsSnapshot(): Set<String> = modelCatalog.list().map { it.modelId }.toSet()
 
     /** The current results after [HfBrowseUiState.sort]/[HfBrowseUiState.tagFilter] are applied — a
-     * pure recompute over already-fetched data (issue #6), never a second network call. */
-    fun displayedResults(): List<HfModelSummary> {
-        val current = mutableState.value
-        return HfResultsView.apply(current.results, current.sort, current.tagFilter)
-    }
+     * pure recompute over already-fetched data (issue #6), never a second network call. Takes
+     * [state] explicitly (rather than reading [mutableState] internally) so the Compose call site
+     * can `remember` this keyed on exactly the fields it depends on — see [HfBrowseScreen] (issue
+     * #3): recomputing this on every unrelated state change, e.g. a download-progress tick, is
+     * what made the sort/filter dropdown janky.
+     */
+    fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> =
+        HfResultsView.apply(state.results, state.sort, state.tagFilter)
 
     /** Every tag present in the current result set, for the filter menu's choices — derived from
-     * data, never a hardcoded list (issue #6 SSOT rule). */
-    fun availableTags(): List<String> = HfResultsView.availableTags(mutableState.value.results)
+     * data, never a hardcoded list (issue #6 SSOT rule). Same [state]-parameter rationale as
+     * [displayedResults]. */
+    fun availableTags(state: HfBrowseUiState): List<String> = HfResultsView.availableTags(state.results)
 
     fun onSortChange(sort: HfSortOption) = mutableState.update { it.copy(sort = sort) }
 
     fun onTagFilterChange(tag: String?) = mutableState.update { it.copy(tagFilter = tag) }
+
+    /** Clears the current inline error banner (issue #2). The full session log in [HfBrowseError]
+     * is untouched — dismissing only hides the one-line banner, it doesn't forget the error. */
+    fun dismissError() = mutableState.update { it.copy(error = null) }
 
     /** Download a curated model directly — no search, no webpage — using its known file list. */
     fun downloadBuiltIn(model: BuiltInModel) = runDownload(model.id, model.downloadItems())

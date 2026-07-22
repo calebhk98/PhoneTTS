@@ -23,6 +23,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -30,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +51,7 @@ import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
 import com.phonetts.core.download.hf.HfSizeEstimator
 import com.phonetts.core.download.hf.HfSortOption
+import com.phonetts.core.download.hf.ModelSpeedEstimate
 import com.phonetts.core.download.hf.QuantizationFilter
 import java.text.DateFormat
 import java.util.Date
@@ -65,7 +68,25 @@ import kotlin.math.roundToLong
  * one scrolling list. More than one row can download at once (issue #2): each row tracks its own
  * progress instead of the whole screen being locked to a single in-flight download. Errors — search
  * or download — are retained for the session and readable/copyable from the "Errors" button rather
- * than only flashing by (issue #3).
+ * than only flashing by (issue #3), and the inline banner itself is dismissible (bug #2) without
+ * losing that retained log.
+ *
+ * Sort/filter recompute (bug #3): [displayedResults]/[availableTags] are `remember`-cached keyed on
+ * exactly the state fields they read (`results`/`sort`/`tagFilter`), not recomputed on every
+ * recomposition. Without that, any unrelated state change — most commonly a download's
+ * bytes/files-progress tick, which can fire many times a second per in-flight download (issue #2
+ * allows several at once) — replaces the whole [HfBrowseUiState] and forces `collectAsState` to
+ * recompose this screen, re-sorting/re-filtering and re-flattening tags from scratch every time.
+ * That alone is wasted work; it got worse because [SortAndFilterRow]'s callbacks were passed as bare
+ * `viewModel::method` references, which Kotlin allocates fresh on every call — an unstable lambda
+ * that defeats Compose's skip check, so the dropdown's own composable (and, if it happened to be
+ * open, its full item list) re-composed on every one of those ticks too. On the target budget
+ * hardware (4 GB RAM, no NPU) that steady drip of small-but-frequent allocations and recompositions
+ * is enough GC/main-thread pressure that a tap's input event sits behind a backlog of pending frames
+ * instead of being handled promptly — which reads as the dropdown "doing nothing" until a click
+ * happens to land in a gap. The fix here is the `remember` scoping below plus `remember`-wrapped
+ * stable callbacks — the dropdown's own open/close state was always local and cheap; it only *looked*
+ * unresponsive because the main thread was busy with unrelated work.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,23 +110,37 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             Button(onClick = viewModel::search, enabled = !state.loading) { Text("Search") }
         }
 
+        // Wrapped in `remember(viewModel)` so the SAME lambda instance is passed on every
+        // recomposition (a bare `viewModel::onSortChange` reference allocates a new one each time,
+        // which is exactly the unstable-lambda half of the bug #3 root cause described above).
+        val onSortChange = remember(viewModel) { viewModel::onSortChange }
+        val onTagFilterChange = remember(viewModel) { viewModel::onTagFilterChange }
+        // Both keyed on only the fields they actually depend on — NOT recomputed on every
+        // recomposition (e.g. a download-progress tick), which was the other half of bug #3.
+        val availableTags = remember(state.results) { viewModel.availableTags(state) }
         SortAndFilterRow(
             sort = state.sort,
-            onSortChange = viewModel::onSortChange,
+            onSortChange = onSortChange,
             tagFilter = state.tagFilter,
-            availableTags = viewModel.availableTags(),
-            onTagFilterChange = viewModel::onTagFilterChange,
+            availableTags = availableTags,
+            onTagFilterChange = onTagFilterChange,
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            state.error?.let { Text("Error: $it", modifier = Modifier.weight(1f)) }
+            state.error?.let { message ->
+                Text("Error: $message", modifier = Modifier.weight(1f))
+                // Bug #2: the inline banner is now dismissible — this only hides the banner, the
+                // full session log below is untouched (HfBrowseViewModel.dismissError).
+                IconButton(onClick = viewModel::dismissError) { Text("✕") }
+            }
             if (state.errorLog.isNotEmpty()) {
                 TextButton(onClick = { showErrorLog = true }) { Text("Errors (${state.errorLog.size})") }
             }
         }
         if (state.loading) CircularProgressIndicator()
 
-        val displayedResults = viewModel.displayedResults()
+        val displayedResults =
+            remember(state.results, state.sort, state.tagFilter) { viewModel.displayedResults(state) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // Recommended one-tap models come first — they're the curated, known-good downloads most
             // users want; the broader Hugging Face results follow under their own header.
@@ -325,7 +360,9 @@ private data class RowActions(
 )
 
 /** A result row's on-demand size lookup (issue #7): the estimate once fetched, whether a fetch is
- * in flight, and how to trigger one — bundled into one parameter for the same reason as [RowActions]. */
+ * in flight, and how to trigger one — bundled into one parameter for the same reason as [RowActions].
+ * The fetch is now triggered automatically (bug #4 — no more "Show download size" tap gate); [onLoad]
+ * is idempotent (see [HfBrowseViewModel.loadSize]) so calling it once per row composition is safe. */
 private data class SizeState(
     val estimate: HfSizeEstimate?,
     val loading: Boolean,
@@ -349,6 +386,10 @@ private fun RecommendedRow(
                 Text(model.displayName, fontWeight = FontWeight.Bold)
                 Text("~${model.approxSizeMb} MB", style = MaterialTheme.typography.bodyMedium)
                 model.note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                // Bug #5: a curated model's approximate size is already known up front (no network
+                // round trip needed), so its param/speed hint can be derived immediately too.
+                val fileNames = remember(model.id) { model.files.map { it.localName } }
+                SpeedHintLine(totalBytes = model.approxSizeMb.toLong() * BYTES_PER_MB, precisionHints = fileNames)
             }
             DownloadControl(progress != null, isInstalled, actions.onDownload, actions.onCancel)
         }
@@ -365,6 +406,10 @@ private fun ModelRow(
     sizeState: SizeState,
     actions: RowActions,
 ) {
+    // Bug #4: the download size is no longer gated behind a "Show download size" tap — fetch it as
+    // soon as this row is shown. Runs once per model id (LaunchedEffect restarts only when the key
+    // changes) and loadSize() is a no-op if a fetch already ran/is running for this id.
+    LaunchedEffect(model.id) { sizeState.onLoad() }
     ModelCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -380,6 +425,7 @@ private fun ModelRow(
                 val subtitle = tags.joinToString(" · ")
                 if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall)
                 SizeLine(sizeState)
+                SpeedHintLine(totalBytes = sizeState.estimate?.knownBytes, precisionHints = model.tags)
             }
             DownloadControl(progress != null, isInstalled, actions.onDownload, actions.onCancel)
         }
@@ -388,8 +434,10 @@ private fun ModelRow(
     }
 }
 
-/** Issue #7: the repo's download size isn't known until its file tree is fetched, so this shows a
- * lazy "Size" action until then rather than a guess, then the computed (possibly partial) total. */
+/** Issue #7 + bug #4: the repo's download size isn't known until its file tree is fetched, so this
+ * shows "Checking size…" briefly (the fetch now starts automatically — see [ModelRow]'s
+ * `LaunchedEffect` — never behind a tap) and then the computed (possibly partial) total inline,
+ * with no gating button. */
 @Composable
 private fun SizeLine(sizeState: SizeState) {
     val estimate = sizeState.estimate
@@ -402,7 +450,32 @@ private fun SizeLine(sizeState: SizeState) {
         Text("Checking size…", style = MaterialTheme.typography.bodySmall)
         return
     }
-    TextButton(onClick = sizeState.onLoad) { Text("Show download size") }
+    // Neither loading nor known: the automatic fetch hasn't started yet this frame, or it failed
+    // (see HfBrowseViewModel.loadSize's onFailure — a network hiccup just clears the loading flag,
+    // never fabricates a number). Either way, no size to show and no button to gate it behind.
+    Text("Download size unavailable", style = MaterialTheme.typography.bodySmall)
+}
+
+/**
+ * Bug #5: a parameter-count + predicted-speed hint, derived purely from a total byte size (already
+ * on hand once the download size is known — no extra network call) via the pure [ModelSpeedEstimate]
+ * formula in `:core`. Both numbers are estimates and are labeled as such — the formula runs
+ * identically for every model, curated or browsed, with no per-model fact hardcoded here (spec
+ * rule 1). Renders nothing until [totalBytes] is known, since there's nothing honest to estimate
+ * from yet.
+ */
+@Composable
+private fun SpeedHintLine(
+    totalBytes: Long?,
+    precisionHints: List<String>,
+) {
+    if (totalBytes == null || totalBytes <= 0L) return
+    val speed = remember(totalBytes, precisionHints) { ModelSpeedEstimate.from(totalBytes, precisionHints) }
+    Text(
+        "~${formatParamCount(speed.paramCount)} params · " +
+            "~${formatRealtimeMultiple(speed.realtimeMultiple)}x real-time (both estimated)",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 /** Opens the model's Hugging Face page (its README / model card / files) in the browser. */
@@ -493,7 +566,23 @@ private fun formatDuration(seconds: Double): String {
     return "${hours}h ${minutes % MINUTES_PER_HOUR}m"
 }
 
+/** Bug #5 display helper: an estimated parameter count as a compact "82M"/"1.2B" label. */
+private fun formatParamCount(count: Long): String {
+    if (count <= 0L) return "?"
+    val millions = count / 1_000_000.0
+    if (millions >= THOUSAND) return "%.1fB".format(millions / THOUSAND)
+    if (millions >= 1.0) return "%.0fM".format(millions)
+    val thousands = count / 1_000.0
+    if (thousands >= 1.0) return "%.0fK".format(thousands)
+    return count.toString()
+}
+
+/** Bug #5 display helper: one decimal place is plenty of precision for a heuristic estimate. */
+private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
+
 private const val MAX_TAGS_SHOWN = 4
+private const val BYTES_PER_MB = 1024L * 1024L
+private const val THOUSAND = 1000.0
 private const val MB_TO_GB_THRESHOLD = 1024.0
 private const val SECONDS_PER_MINUTE = 60L
 private const val MINUTES_PER_HOUR = 60L
