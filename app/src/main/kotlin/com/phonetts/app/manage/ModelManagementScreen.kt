@@ -1,5 +1,12 @@
 package com.phonetts.app.manage
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,15 +21,19 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.model.Origin
 import com.phonetts.core.registry.ModelUsage
+import com.phonetts.core.registry.UnresolvedModelUsage
 import kotlin.math.ln
 import kotlin.math.pow
 
@@ -33,12 +44,21 @@ import kotlin.math.pow
  * [ModelManagementViewModel.refresh] with no code change (same SSOT discipline as the model
  * dropdown).
  *
- * Not wired into app navigation by this change — callers add a nav entry that constructs
- * [ModelManagementViewModel] from a [com.phonetts.core.registry.ModelManager] and passes it here.
+ * Re-reads the catalog every time this screen is (re)entered, not just once at first creation
+ * (issue #10 — the [ModelManagementViewModel] instance otherwise lives for the whole Activity and
+ * would keep showing whatever was downloaded the FIRST time this screen was ever opened).
+ *
+ * Also lists downloaded-but-unidentified bundles (issue #8) and a storage-location picker so
+ * models can be kept somewhere that survives an uninstall (issue #4/#5).
  */
 @Composable
 fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
     val state by viewModel.state.collectAsState()
+
+    // Fixes issue #10: this composable re-enters every time the user navigates to this screen (the
+    // caller un-mounts it on the way out), so LaunchedEffect(Unit) re-fires here even though the
+    // ViewModel itself is a single long-lived instance whose init{} only ran once.
+    LaunchedEffect(Unit) { viewModel.refresh() }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Storage used: ${formatBytes(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
@@ -49,7 +69,14 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
 
         state.error?.let { Text("Error: $it") }
 
-        if (state.usage.isEmpty()) {
+        StorageLocationSection(
+            description = state.storageDescription,
+            message = state.storageMessage,
+            onFolderPicked = viewModel::chooseFolder,
+            onResetToAppStorage = viewModel::resetStorageLocation,
+        )
+
+        if (state.usage.isEmpty() && state.unresolved.isEmpty()) {
             Text("No models downloaded yet.")
         }
 
@@ -61,6 +88,14 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                     freeRamBytes = state.availableRamBytes,
                     isDeleting = state.deletingId == usage.descriptor.modelId,
                     onDelete = { viewModel.delete(usage.descriptor.modelId) },
+                )
+                HorizontalDivider()
+            }
+            items(state.unresolved, key = { it.bundleId }) { unresolved ->
+                UnresolvedUsageRow(
+                    unresolved = unresolved,
+                    isDeleting = state.deletingUnresolvedId == unresolved.bundleId,
+                    onDelete = { viewModel.deleteUnresolved(unresolved.bundleId) },
                 )
                 HorizontalDivider()
             }
@@ -90,6 +125,28 @@ private fun ModelUsageRow(
     }
 }
 
+// Issue #8: a downloaded bundle no engine claimed — shown honestly instead of vanishing as if it
+// were never fetched. Never selectable; deleting it just reclaims the disk space.
+@Composable
+private fun UnresolvedUsageRow(
+    unresolved: UnresolvedModelUsage,
+    isDeleting: Boolean,
+    onDelete: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
+            Text("Downloaded, no engine available · " + formatBytes(unresolved.sizeBytes))
+            Text(unresolved.reason, style = MaterialTheme.typography.bodySmall)
+        }
+        DeleteControl(isDeleting, onDelete)
+    }
+}
+
 // Inline, non-blocking hint (issue #38): shows the estimated peak RAM and, when it exceeds free RAM,
 // a gentle "may not fit" note — the user can still attempt it. "unknown" when no estimate exists.
 private fun ramHint(peakRamBytes: Long?, freeRamBytes: Long): String {
@@ -113,6 +170,55 @@ private fun originLabel(origin: Origin): String =
         Origin.BUILT_IN -> "Built-in"
         Origin.SIDELOADED -> "Sideloaded"
     }
+
+/**
+ * Storage-location picker (issue #4/#5): shows where models live now, a button to pick a folder via
+ * the Storage Access Framework, and — when this device hasn't granted "All files access" yet — a
+ * button to request it (needed to read/write the picked folder as a plain file, not just through
+ * SAF). A folder pick that can't be used as a plain directory is refused with [message] rather than
+ * silently accepted; nothing here decides that itself, all of it is [ModelManagementViewModel]'s.
+ */
+@Composable
+private fun StorageLocationSection(
+    description: String,
+    message: String?,
+    onFolderPicked: (Uri) -> Unit,
+    onResetToAppStorage: () -> Unit,
+) {
+    val context = LocalContext.current
+    val folderPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
+            onFolderPicked(uri)
+        }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Storage location", style = MaterialTheme.typography.titleMedium)
+        Text(description, style = MaterialTheme.typography.bodyMedium)
+        message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { folderPicker.launch(null) }) { Text("Choose folder…") }
+            TextButton(onClick = onResetToAppStorage) { Text("Use app storage") }
+        }
+        if (!hasAllFilesAccess()) {
+            TextButton(onClick = { context.startActivity(allFilesAccessIntent(context.packageName)) }) {
+                Text("Grant \"All files access\" (needed for a picked folder)")
+            }
+        }
+    }
+    HorizontalDivider()
+}
+
+// MANAGE_EXTERNAL_STORAGE only exists from API 30 — below that there is no such gate to check, so
+// a picked folder either lives in app-private/media-store-reachable space or the write test in
+// StorageLocation.resolve() will already fail closed with a clear reason.
+private fun hasAllFilesAccess(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+
+private fun allFilesAccessIntent(packageName: String): Intent =
+    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
 
 /** "1.5 GB" / "320 KB" / "512 B" style formatting for a storage-usage display. */
 private fun formatBytes(bytes: Long): String {

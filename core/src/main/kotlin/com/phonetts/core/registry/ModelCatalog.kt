@@ -3,19 +3,36 @@ package com.phonetts.core.registry
 import com.phonetts.core.model.ModelDescriptor
 
 /**
+ * A downloaded bundle sitting on disk that no registered engine could identify (spec rule 4:
+ * `inspect()` fails closed rather than guessing — see [com.phonetts.core.sideload.ModelImporter]).
+ * Deliberately NOT a [ModelDescriptor]: nothing here is guessed, only what's externally
+ * observable — the bundle's own id (which doubles as its on-disk directory name, spec §7) and why
+ * detection declined it. Lets a "manage models" UI list it honestly (issue #8 — "downloaded, no
+ * engine available") instead of it silently vanishing as if nothing were ever downloaded.
+ */
+data class UnresolvedModel(val bundleId: String, val reason: String)
+
+/**
  * The set of models the user can pick — the single source of truth the model dropdown reads
  * (spec §7). Built-in models (downloaded via the manifest) and sideloaded models are added
  * through the SAME path (resolve → add); nothing here distinguishes them beyond
  * [ModelDescriptor.origin], which is for display only. Register a model → it appears; remove
  * it → it vanishes. No UI code is edited either way.
+ *
+ * Also tracks [UnresolvedModel]s (issue #8) alongside identified ones, so a bundle detection
+ * couldn't claim is represented honestly rather than disappearing as if it were never downloaded.
  */
 class ModelCatalog {
     private val models = LinkedHashMap<String, ModelDescriptor>()
+    private val unresolved = LinkedHashMap<String, UnresolvedModel>()
 
     /** Add or replace the descriptor for its [ModelDescriptor.modelId]. */
     @Synchronized
     fun add(descriptor: ModelDescriptor) {
         models[descriptor.modelId] = descriptor
+        // A later successful (re-)identification — e.g. an app update registered the right engine —
+        // supersedes any earlier "couldn't identify this" marker for the same bundle id.
+        unresolved.remove(descriptor.modelId)
     }
 
     @Synchronized
@@ -29,4 +46,32 @@ class ModelCatalog {
     /** Every model currently available, in insertion order. */
     @Synchronized
     fun list(): List<ModelDescriptor> = models.values.toList()
+
+    /** Record [bundleId] as present on disk but unclaimed by any registered engine. */
+    @Synchronized
+    fun markUnresolved(
+        bundleId: String,
+        reason: String,
+    ) {
+        // Already identified (e.g. this call is a stale retry) — an honest identified entry wins.
+        if (models.containsKey(bundleId)) return
+        unresolved[bundleId] = UnresolvedModel(bundleId, reason)
+    }
+
+    /** Drop [bundleId]'s unresolved marker — e.g. its on-disk files were deleted. */
+    @Synchronized
+    fun clearUnresolved(bundleId: String) {
+        unresolved.remove(bundleId)
+    }
+
+    /** Every bundle currently on disk that no engine has claimed, in insertion order. */
+    @Synchronized
+    fun listUnresolved(): List<UnresolvedModel> = unresolved.values.toList()
+
+    /** Drop every identified and unresolved entry (issue #4/#5 — switching the storage location). */
+    @Synchronized
+    fun clear() {
+        models.clear()
+        unresolved.clear()
+    }
 }

@@ -47,4 +47,25 @@ class ModelImporterTest {
         assertEquals("eng", descriptor.engineId)
         assertEquals(1, catalog.list().size)
     }
+
+    // Issue #8: a bundle no engine claims and the user-pick fallback itself declines (the real
+    // shape of "downloaded, no matching engine") must not just vanish — it lands in the catalog's
+    // unresolved list so a "manage models" screen can show it honestly instead of pretending
+    // nothing was ever downloaded.
+    @Test
+    fun unidentifiableBundleIsRecordedAsUnresolvedRatherThanSilentlyDropped() {
+        val rejecting = FakeEngine(id = "eng", claims = { false })
+        val resolver =
+            Resolver(listOf(rejecting), InMemoryOverrideStore()) {
+                throw IllegalStateException("could not identify model 'dropped'")
+            }
+        val catalog = ModelCatalog()
+        val importer = ModelImporter(StubReader(bundle), resolver, catalog)
+
+        val thrown = kotlin.runCatching { importer.import("/anywhere") }.exceptionOrNull()
+
+        assertTrue(thrown is IllegalStateException, "the failure must still propagate to the caller")
+        assertEquals(emptyList(), catalog.list())
+        assertEquals(listOf("dropped"), catalog.listUnresolved().map { it.bundleId })
+    }
 }

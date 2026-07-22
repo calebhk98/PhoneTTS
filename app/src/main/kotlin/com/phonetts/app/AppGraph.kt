@@ -23,6 +23,7 @@ import com.phonetts.core.prefs.LongDocumentPreferences
 import com.phonetts.core.prefs.OnboardingState
 import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.prefs.ResourceUsageStore
+import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.DetectionFailureExplainer
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
@@ -86,11 +87,30 @@ class AppGraph(context: Context) {
             throw UserPickRequiredException(bundle.id, report.summary)
         }
 
+    // Backs every preferences-derived feature below, including where models are stored (issue
+    // #4/#5) — declared early because [modelsBaseDir] (and anything built from it) needs it ready.
+    private val preferenceStore = PrefsPreferenceStore(appContext)
+
+    // App-private storage by default; a user-picked folder (internal or SD card) once one is
+    // chosen on the Manage screen, so downloaded weights SURVIVE an uninstall/reinstall (issue
+    // #4/#5). Read fresh on every call rather than cached, so switching it takes effect immediately
+    // for anything that calls this instead of capturing a fixed File once.
+    val storageLocationPreference = StorageLocationPreference(preferenceStore)
+
+    /** Where model folders currently live: the app-private default, or the user's chosen folder. */
+    fun modelsBaseDir(): java.io.File =
+        storageLocationPreference.customBasePath()?.let { java.io.File(it) } ?: appContext.filesDir
+
     val importer = ModelImporter(DirectoryBundleReader(), resolver, catalog)
     val fileTextImporter = FileTextImporter(appContext)
     val sideloadCoordinator = SideloadCoordinator(appContext, importer)
     val hfCatalog = HfCatalog(HttpUrlConnectionClient())
-    val hfDownloader = HfDownloader(appContext.filesDir, importer)
+
+    // A `var`, not a `val`: HfDownloader captures its base dir at construction (its own File field
+    // is fixed — that class is owned elsewhere and deliberately untouched here), so relocating
+    // storage (issue #4/#5) rebuilds it via [relocateStorage] rather than mutating it in place.
+    var hfDownloader: HfDownloader = HfDownloader(modelsBaseDir(), importer)
+        private set
 
     // Checks GitHub Releases for a newer APK than the running build (BuildConfig.VERSION_NAME) and
     // only ever OFFERS it — never force-updates (the UI shows a dismissible banner). Fail-closed.
@@ -98,21 +118,36 @@ class AppGraph(context: Context) {
 
     // Manage (list sizes / delete) downloaded models. File I/O is injected so :core stays pure;
     // deleting the loaded model unloads it first and forgets its saved override (PrefsOverrideStore
-    // is clearable), keeping the catalog, memory, and override store consistent.
+    // is clearable), keeping the catalog, memory, and override store consistent. Also owns the
+    // storage-location switch (issue #4/#5): [relocateStorage] rebuilds [hfDownloader] and re-scans
+    // the newly chosen folder so models already there load without a redownload.
     val modelManager =
         ModelManager(
             catalog = catalog,
-            dirSizeBytes = { modelId -> ModelStorage.sizeBytes(appContext.filesDir, modelId) },
-            deleteModelDir = { modelId -> ModelStorage.delete(appContext.filesDir, modelId) },
+            dirSizeBytes = { modelId -> ModelStorage.sizeBytes(modelsBaseDir(), modelId) },
+            deleteModelDir = { modelId -> ModelStorage.delete(modelsBaseDir(), modelId) },
             overrideStore = overrideStore,
             engineManager = engineManager,
+            storageLocation = storageLocationPreference,
+            onStorageLocationChanged = ::relocateStorage,
         )
+
+    // Runs when the user picks a new storage location or resets to the default (issue #4/#5): the
+    // old catalog may name models that no longer exist at the new location, so it is cleared and
+    // immediately re-scanned (rather than trusting stale entries) — exactly [hydrate]'s own job, just
+    // triggered mid-session instead of at launch. Also unloads the current engine first (rule #6):
+    // its weights may live under the OLD base dir.
+    private fun relocateStorage() {
+        engineManager.unloadCurrent()
+        hfDownloader = HfDownloader(modelsBaseDir(), importer)
+        catalog.clear()
+        hydrate()
+    }
 
     // Preferences-backed features: favorite voices + per-language default, per-document resume,
     // and the GLOBAL last-used model/voice/speed (issue #19-1 — one shared "where I left off",
     // deliberately not per-document; see LastUsedSelection's kdoc). All model facts still come
     // from descriptor.voices / the registry — these only persist the user's choices.
-    private val preferenceStore = PrefsPreferenceStore(appContext)
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
@@ -166,10 +201,14 @@ class AppGraph(context: Context) {
     /**
      * Re-import previously downloaded/sideloaded model folders so the catalog is repopulated on
      * every launch (a saved override makes each re-resolve fast). Best-effort per folder — a
-     * folder the resolver can no longer identify is skipped, not fatal.
+     * folder the resolver can no longer identify is skipped, not fatal (though it IS recorded as an
+     * [com.phonetts.core.registry.UnresolvedModel] by [importer], issue #8).
+     *
+     * Reads [modelsBaseDir] fresh, not a cached path, so a storage location picked in an earlier
+     * session (issue #4/#5) is honored on this launch with no extra wiring.
      */
     fun hydrate() {
-        val modelsDir = appContext.filesDir.resolve(ModelStorage.MODELS_DIR)
+        val modelsDir = modelsBaseDir().resolve(ModelStorage.MODELS_DIR)
         val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: return
         folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
     }

@@ -1,5 +1,7 @@
 package com.phonetts.core.registry
 
+import com.phonetts.core.prefs.InMemoryPreferenceStore
+import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.OverrideStore
 import com.phonetts.core.testing.FakeEngine
 import com.phonetts.core.testing.testDescriptor
@@ -190,4 +192,79 @@ class ModelManagerTest {
             assertFalse(result.engineUnloaded)
             assertEquals(0, engineB.unloadCount)
         }
+
+    // Issue #8: an unidentified bundle must show up somewhere honest, not just disappear.
+    @Test
+    fun unresolvedUsageReportsUnclaimedBundlesWithTheirSize() {
+        val catalog = ModelCatalog().apply { markUnresolved("mystery", "no engine claimed it") }
+        val manager = ModelManager(catalog, dirSizeBytes = { 42L }, deleteModelDir = { true })
+
+        val usage = manager.unresolvedUsage()
+
+        assertEquals(listOf(UnresolvedModelUsage("mystery", 42L, "no engine claimed it")), usage)
+    }
+
+    @Test
+    fun removeUnresolvedDeletesFilesAndForgetsTheMarker() {
+        val catalog = ModelCatalog().apply { markUnresolved("mystery", "no engine claimed it") }
+        var deleteCalledWith: String? = null
+        val manager =
+            ModelManager(
+                catalog,
+                dirSizeBytes = { 0L },
+                deleteModelDir = { id ->
+                    deleteCalledWith = id
+                    true
+                },
+            )
+
+        val filesDeleted = manager.removeUnresolved("mystery")
+
+        assertTrue(filesDeleted)
+        assertEquals("mystery", deleteCalledWith)
+        assertEquals(emptyList(), manager.unresolvedUsage())
+    }
+
+    // Issue #4/#5: switching storage location persists the choice and runs the app's rebuild hook.
+    @Test
+    fun currentStorageDescriptionReportsTheAppPrivateDefaultWhenNoneIsSet() {
+        val manager = ModelManager(ModelCatalog(), dirSizeBytes = { 0L }, deleteModelDir = { true })
+        assertTrue(manager.currentStorageDescription().contains("default"))
+    }
+
+    @Test
+    fun changeStorageLocationPersistsThePathAndInvokesTheCallback() {
+        val storageLocation = StorageLocationPreference(InMemoryPreferenceStore())
+        var callbackRuns = 0
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                storageLocation = storageLocation,
+                onStorageLocationChanged = { callbackRuns++ },
+            )
+
+        manager.changeStorageLocation("/storage/1234-5678/PhoneTTS/models")
+
+        assertEquals("/storage/1234-5678/PhoneTTS/models", storageLocation.customBasePath())
+        assertEquals("/storage/1234-5678/PhoneTTS/models", manager.currentStorageDescription())
+        assertEquals(1, callbackRuns)
+    }
+
+    @Test
+    fun changeStorageLocationToNullRevertsToTheDefault() {
+        val storageLocation = StorageLocationPreference(InMemoryPreferenceStore()).apply { setCustomBasePath("/x") }
+        val manager =
+            ModelManager(
+                ModelCatalog(),
+                dirSizeBytes = { 0L },
+                deleteModelDir = { true },
+                storageLocation = storageLocation,
+            )
+
+        manager.changeStorageLocation(null)
+
+        assertNull(storageLocation.customBasePath())
+    }
 }
