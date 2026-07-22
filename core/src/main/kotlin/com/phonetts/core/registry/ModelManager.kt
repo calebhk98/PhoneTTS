@@ -3,6 +3,7 @@ package com.phonetts.core.registry
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.OverrideStore
+import com.phonetts.core.resolver.SelectableEngine
 
 /**
  * Optional capability an [OverrideStore] can support: dropping a previously saved bundle→engine
@@ -72,6 +73,16 @@ data class ModelRemoval(
  * [changeStorageLocation] has, by then, already overwritten — and may return a message (e.g. a
  * migration warning) to surface to the user; both are optional so existing callers that don't care
  * about relocatable storage are unaffected.
+ *
+ * [selectableEnginesProvider] and [assignEngineAction] back the manual "pick an engine" fallback for
+ * a bundle [inspect][com.phonetts.core.engine.VoiceEngine.inspect] declined (issue: manual engine
+ * pick was described but never actually reachable from the UI). Re-reading a bundle from disk and
+ * re-running it through a chosen engine's `forcedMatch` needs a
+ * [com.phonetts.core.sideload.BundleReader] and a [com.phonetts.core.resolver.Resolver], neither of
+ * which this class otherwise depends on — so, like [dirSizeBytes]/[deleteModelDir], that work is
+ * injected rather than pulled in directly. Both default to "not wired": [selectableEnginesProvider]
+ * to an empty list, [assignEngineAction] to null (making [assignEngine] throw), so existing callers
+ * that don't need manual assignment are unaffected.
  */
 class ModelManager(
     private val catalog: ModelCatalog,
@@ -81,6 +92,8 @@ class ModelManager(
     private val engineManager: EngineManager? = null,
     private val storageLocation: StorageLocationPreference? = null,
     private val onStorageLocationChanged: ((previous: String?, next: String?) -> String?)? = null,
+    private val selectableEnginesProvider: () -> List<SelectableEngine> = { emptyList() },
+    private val assignEngineAction: ((bundleId: String, engineId: String) -> ModelDescriptor)? = null,
 ) {
     /** Every model in the catalog, paired with its on-disk size. */
     fun usage(): List<ModelUsage> = catalog.list().map { ModelUsage(it, dirSizeBytes(it.modelId)) }
@@ -108,6 +121,26 @@ class ModelManager(
         val filesDeleted = deleteModelDir(bundleId)
         catalog.clearUnresolved(bundleId)
         return filesDeleted
+    }
+
+    /** Engines the user can manually assign an unresolved bundle to — see [assignEngine]. */
+    fun selectableEngines(): List<SelectableEngine> = selectableEnginesProvider()
+
+    /**
+     * Manually assign [bundleId] (a downloaded-but-unidentified bundle, [UnresolvedModelUsage]) to
+     * [engineId] — the working end of the "pick an engine" fallback. Re-resolves the bundle through
+     * that engine's `forcedMatch` and persists the choice, so on success [bundleId] moves from
+     * [unresolvedUsage] to a normal, usable [usage] entry. Throws [IllegalStateException] if no
+     * [assignEngineAction] callback was wired at construction, or whatever the injected callback
+     * throws (e.g. the chosen engine's `forcedMatch` rejecting the bundle) — a "manage models"
+     * caller is expected to catch and surface that message rather than let it crash the app.
+     */
+    fun assignEngine(
+        bundleId: String,
+        engineId: String,
+    ): ModelDescriptor {
+        val assign = assignEngineAction ?: error("manual engine assignment is not wired for this ModelManager")
+        return assign(bundleId, engineId)
     }
 
     /** Where models are currently stored — the app-private default, or a user-picked folder. */

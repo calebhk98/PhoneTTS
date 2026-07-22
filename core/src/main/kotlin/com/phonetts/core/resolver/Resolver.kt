@@ -41,6 +41,34 @@ class Resolver(
         return match.descriptor
     }
 
+    /**
+     * Every registered engine the "pick an engine" UI can offer for an unresolved bundle, reduced
+     * to just [SelectableEngine.id]/[SelectableEngine.displayName] — nothing else in [VoiceEngine]
+     * (inspect/forcedMatch/load/...) belongs in front of a UI.
+     */
+    fun selectableEngines(): List<SelectableEngine> = engines.map { SelectableEngine(it.id, it.displayName) }
+
+    /**
+     * Resolve [bundle] using the engine the user explicitly chose ([engineId]), bypassing
+     * auto-detection and [userPicksEngine] entirely — this is what actually makes the fail-closed
+     * fallback usable end to end, rather than only describing itself. Persists the choice exactly
+     * like [resolve] does, so a later resolve of the same bundle reads the saved override and skips
+     * re-detection.
+     *
+     * Throws if [engineId] isn't currently registered, or if the chosen engine's
+     * [VoiceEngine.forcedMatch] itself rejects the bundle (e.g. it's missing a file that family
+     * structurally requires) — the caller (the manual-pick UI) is expected to surface that message
+     * rather than silently failing.
+     */
+    fun resolveWithChosenEngine(
+        bundle: ModelBundle,
+        engineId: String,
+    ): ModelDescriptor {
+        val match = engineById(engineId).forcedMatch(bundle)
+        overrideStore.put(bundle.id, match.engineId)
+        return match.descriptor
+    }
+
     private fun autoDetect(bundle: ModelBundle): EngineMatch? = engines.firstNotNullOfOrNull { it.inspect(bundle) }
 
     private fun forcedMatchFromUserPick(bundle: ModelBundle): EngineMatch {
@@ -52,3 +80,6 @@ class Resolver(
         engines.firstOrNull { it.id == engineId }
             ?: error("No engine registered with id '$engineId'")
 }
+
+/** One engine a manual "pick an engine" UI can offer — id to act on, display name to show. */
+data class SelectableEngine(val id: String, val displayName: String)

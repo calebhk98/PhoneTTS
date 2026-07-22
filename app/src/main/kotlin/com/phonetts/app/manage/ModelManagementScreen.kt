@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -26,6 +28,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -42,6 +47,7 @@ import com.phonetts.core.model.ModelListExport
 import com.phonetts.core.model.Origin
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
+import com.phonetts.core.resolver.SelectableEngine
 import kotlin.math.ln
 import kotlin.math.pow
 
@@ -121,8 +127,11 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
             items(state.unresolved, key = { it.bundleId }) { unresolved ->
                 UnresolvedUsageRow(
                     unresolved = unresolved,
+                    selectableEngines = state.selectableEngines,
                     isDeleting = state.deletingUnresolvedId == unresolved.bundleId,
+                    isAssigning = state.assigningUnresolvedId == unresolved.bundleId,
                     onDelete = { viewModel.deleteUnresolved(unresolved.bundleId) },
+                    onAssignEngine = { engineId -> viewModel.assignEngine(unresolved.bundleId, engineId) },
                 )
                 HorizontalDivider()
             }
@@ -206,26 +215,73 @@ private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(mul
 // if it were never fetched, and worded to head off the natural (wrong) assumption that a bundle
 // with no engine must mean a failed/incomplete download that needs redoing. It's already fully on
 // disk (that's what [unresolved.sizeBytes] is showing); redownloading the same bytes changes
-// nothing without a matching engine. Deliberately offers no "use it anyway" affordance (that would
-// fake an engine, breaking rule 4's fail-closed guarantee) — Delete is the only action, so there is
-// no dead-end button pretending this row can be selected.
+// nothing without a matching engine.
+//
+// Bug #1: this used to offer no way to actually pick an engine — the resolver's documented
+// fail-closed fallback ("ask the user") had nothing on this screen that could drive it, so a user
+// who saw "pick an engine" had no button to press. [selectableEngines] (the SAME registered set
+// autodetection already checked — SSOT, nothing named here) now backs a real picker: choosing one
+// runs [onAssignEngine], which hands the bundle to that engine's forcedMatch. This is still not
+// "guessing" (rule 4 stands) — it is the user, not the app, making the call.
 @Composable
 private fun UnresolvedUsageRow(
     unresolved: UnresolvedModelUsage,
+    selectableEngines: List<SelectableEngine>,
     isDeleting: Boolean,
+    isAssigning: Boolean,
     onDelete: () -> Unit,
+    onAssignEngine: (engineId: String) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
-            Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
-            Text("Redownloading won't help — " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
+                Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
+                Text("Redownloading won't help — " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
+            }
+            DeleteControl(isDeleting, onDelete)
         }
-        DeleteControl(isDeleting, onDelete)
+        EngineAssignmentControl(selectableEngines, isAssigning, onAssignEngine)
+    }
+}
+
+/**
+ * The manual "pick an engine" affordance for an unresolved row (bug #1). Renders nothing when there
+ * are no [selectableEngines] to offer (e.g. no engines registered at all) rather than a dead-end
+ * button. Shows a spinner in place of the picker button while [isAssigning] this row.
+ */
+@Composable
+private fun EngineAssignmentControl(
+    selectableEngines: List<SelectableEngine>,
+    isAssigning: Boolean,
+    onAssignEngine: (engineId: String) -> Unit,
+) {
+    if (selectableEngines.isEmpty()) return
+    if (isAssigning) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            Text("Assigning engine…", style = MaterialTheme.typography.bodySmall)
+        }
+        return
+    }
+
+    var menuExpanded by remember { mutableStateOf(false) }
+    Row {
+        TextButton(onClick = { menuExpanded = true }) { Text("Pick an engine for it…") }
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            selectableEngines.forEach { engine ->
+                DropdownMenuItem(
+                    text = { Text(engine.displayName) },
+                    onClick = {
+                        menuExpanded = false
+                        onAssignEngine(engine.id)
+                    },
+                )
+            }
+        }
     }
 }
 
