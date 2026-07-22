@@ -81,7 +81,9 @@ internal class KittenEngine(
         return EngineMatch(id, buildDescriptor(bundle, modelFile, voiceNames, Origin.SIDELOADED))
     }
 
-    override suspend fun load(descriptor: ModelDescriptor) {
+    override fun isRuntimeAvailable(): Boolean = requireRuntime(context, RUNTIME_ID, engineLabel).isAvailable()
+
+    override suspend fun doLoad(descriptor: ModelDescriptor) {
         val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
         val modelPath = requireAssetPath(descriptor, MODEL_ASSET_KEY, engineLabel)
 

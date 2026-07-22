@@ -1,6 +1,9 @@
 package com.phonetts.core.audio
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import java.io.ByteArrayOutputStream
 import kotlin.test.Test
@@ -8,6 +11,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class StreamingConsumerTest {
     @Test
     fun playAnnouncesFormatThenForwardsEveryChunkInOrderThenSignalsEnd() =
@@ -54,6 +58,52 @@ class StreamingConsumerTest {
 
             assertEquals(totalInputSamples, sink.recorded.size)
             assertEquals(totalInputSamples, parseWav(out.toByteArray()).samples.size)
+        }
+
+    @Test
+    fun playBuffersOneChunkAheadSoTheNextChunkGeneratesWhileTheCurrentOnePlays() =
+        // UnconfinedTestDispatcher runs the buffer()-launched producer coroutine eagerly, so the
+        // interleaving below reflects genuine look-ahead rather than an artifact of test scheduling
+        // (mirrors the pattern GeneratedAudio/BufferedPlayback tests already use for this reason).
+        runTest(UnconfinedTestDispatcher()) {
+            val events = mutableListOf<String>()
+            val flow =
+                flow {
+                    events += "generate-1"
+                    emit(floatArrayOf(0.1f))
+                    events += "generate-2"
+                    emit(floatArrayOf(0.2f))
+                    events += "generate-3"
+                    emit(floatArrayOf(0.3f))
+                }
+            var consumed = 0
+            val sink =
+                object : AudioSink {
+                    override fun onFormat(sampleRate: Int) = Unit
+
+                    override fun onChunk(samples: FloatArray) {
+                        consumed++
+                        events += "consume-$consumed"
+                    }
+
+                    override fun onEnd() {
+                        events += "end"
+                    }
+                }
+
+            StreamingConsumer().play(flow, sampleRate = 24_000, sink = sink)
+
+            // Without buffering, chunk 2 could not start generating until chunk 1 had already been
+            // handed to the sink. With one chunk of look-ahead, generation of chunk 2 races ahead of
+            // (and here, completes before) the sink consuming chunk 1.
+            val generatedChunkTwoAt = events.indexOf("generate-2")
+            val consumedChunkOneAt = events.indexOf("consume-1")
+            assertTrue(
+                generatedChunkTwoAt in 0 until consumedChunkOneAt,
+                "expected chunk 2 to start generating before chunk 1 was consumed, got: $events",
+            )
+            assertEquals(3, consumed)
+            assertEquals("end", events.last())
         }
 }
 

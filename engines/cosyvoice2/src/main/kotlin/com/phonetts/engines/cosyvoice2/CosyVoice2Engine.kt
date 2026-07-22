@@ -64,12 +64,16 @@ internal class CosyVoice2Engine(
         return EngineMatch(id, buildDescriptor(bundle, Origin.SIDELOADED))
     }
 
-    override suspend fun load(descriptor: ModelDescriptor) {
+    // The availability check itself is the parent's job (issue #18 item 3, AbstractVoiceEngine.load);
+    // this only supplies WHICH runtime and WHAT to say when it's missing.
+    override fun isRuntimeAvailable(): Boolean = requireNativeTtsRuntime().isAvailable()
+
+    override fun runtimeUnavailableMessage(): String =
+        "$engineLabel needs the native CosyVoice ggml backend (build the app with -PwithCosyVoice=true);" +
+            " it is not available on this device, so CosyVoice cannot load"
+
+    override suspend fun doLoad(descriptor: ModelDescriptor) {
         val runtime = requireNativeTtsRuntime()
-        check(runtime.isAvailable()) {
-            "$engineLabel needs the native CosyVoice ggml backend (build the app with -PwithCosyVoice=true);" +
-                " it is not available on this device, so CosyVoice cannot load"
-        }
         // The native runtime loads all four GGUF stages that sit as siblings in the model directory,
         // so hand it that directory (the parent of the LLM gguf), not a single file.
         val llmPath = requireAssetPath(descriptor, LLM_ASSET, engineLabel)

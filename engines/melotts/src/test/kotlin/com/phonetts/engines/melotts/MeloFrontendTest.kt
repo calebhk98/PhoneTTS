@@ -33,7 +33,7 @@ class MeloFrontendTest {
 
         // "hi" -> lexicon phones [p, iy] -> ids [1, 2] -> intersperse_blank -> [0, 1, 0, 2, 0].
         assertEquals(listOf(0L, 1L, 0L, 2L, 0L), input.tokenIds.toList())
-        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONES) as LongArray
+        val tones = input.extras.getValue(MeloFrontend.TONES_KEY.name) as LongArray
         // tones [7, 8] -> intersperse_blank -> [0, 7, 0, 8, 0].
         assertEquals(listOf(0L, 7L, 0L, 8L, 0L), tones.toList())
     }
@@ -53,7 +53,7 @@ class MeloFrontendTest {
         // tokens: "hi" (lexicon) + "," (symbol table entry, tone 0).
         val commaId = tokens.getValue(",").toLong()
         assertEquals(commaId, input.tokenIds[5])
-        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONES) as LongArray
+        val tones = input.extras.getValue(MeloFrontend.TONES_KEY.name) as LongArray
         assertEquals(0L, tones[5])
     }
 
@@ -64,7 +64,7 @@ class MeloFrontendTest {
         val unkId = tokens.getValue("UNK").toLong()
         // core = [UNK] -> intersperse_blank -> [0, UNK, 0].
         assertEquals(listOf(0L, unkId, 0L), input.tokenIds.toList())
-        val tones = input.extras.getValue(MeloFrontend.EXTRA_TONES) as LongArray
+        val tones = input.extras.getValue(MeloFrontend.TONES_KEY.name) as LongArray
         assertEquals(listOf(0L, 0L, 0L), tones.toList())
     }
 

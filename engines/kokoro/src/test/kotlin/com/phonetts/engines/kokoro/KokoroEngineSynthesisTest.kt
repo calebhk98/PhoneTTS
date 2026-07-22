@@ -160,15 +160,20 @@ class KokoroEngineSynthesisTest {
         }
 
     @Test
-    fun synthesizeWithAnUnknownVoiceIdFails() =
+    fun synthesizeWithAnUnknownVoiceIdFailsThroughTheSharedVoiceLookupHelper() =
         runTest {
             val fixture = Fixture()
             val descriptor = requireNotNull(fixture.engine.inspect(inMemoryBundle())).descriptor
             fixture.engine.load(descriptor)
 
-            assertFailsWith<IllegalStateException> {
-                fixture.engine.synthesize("Hello.", "not-a-real-voice", 1.0f).toList()
-            }
+            // Same exception type/message shape as every other engine (issue #18 item 7): routed
+            // through engines.common's shared requireVoiceIndex, not a bespoke error() here.
+            val error =
+                assertFailsWith<IllegalArgumentException> {
+                    fixture.engine.synthesize("Hello.", "not-a-real-voice", 1.0f).toList()
+                }
+            assertTrue(error.message!!.contains("not-a-real-voice"))
+            assertTrue(error.message!!.contains("not among its known voices"))
         }
 
     @Test

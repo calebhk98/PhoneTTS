@@ -1,12 +1,18 @@
 package com.phonetts.core.text
 
 /**
- * Splits text into sentence-sized chunks so an engine can synthesize sequentially and start
- * emitting audio before the whole input is processed (spec §8). Purely mechanical and
- * model-agnostic: it knows nothing about any model, only about sentence terminators.
+ * The app's sentence chunker. This is a thin facade over a swappable [Chunker] (see that
+ * interface's docs for how to drop in an alternative implementation) plus the paragraph/offset
+ * utilities built on top of it. It is itself a valid [Chunker]—`TextChunker.intoSentences(text)`
+ * is exactly `chunker.intoSentences(text)` for the active [chunker], which defaults to
+ * [DefaultChunker]. Swapping the whole app onto a different splitting strategy is a one-line change
+ * to that default; every method below (paragraph indices, offset mapping) stays correct because
+ * they're derived from whatever [chunker] actually returns, not from a second copy of its rules.
  */
-object TextChunker {
-    private val terminators = charArrayOf('.', '!', '?', '\n', '…', ';')
+object TextChunker : Chunker {
+    // The single point of truth for "how do we split a sentence"—change this to try an
+    // alternative Chunker app-wide. See [Chunker]'s docs for how to A/B two implementations instead.
+    private val chunker: Chunker = DefaultChunker
 
     // A paragraph break: a blank line (one newline, optional whitespace, another newline). Because
     // '\n' is itself a sentence terminator, splitting on this never falls mid-sentence — the sentences
@@ -14,6 +20,8 @@ object TextChunker {
     // counts sum back to it. That alignment is what lets [paragraphStartSentenceIndices] map paragraph
     // boundaries onto sentence indices the one generation path already understands.
     private val paragraphBreak = Regex("\\n\\s*\\n")
+
+    override fun intoSentences(text: String): List<String> = chunker.intoSentences(text)
 
     /**
      * The sentence index at which each paragraph begins (issue #26), for jumping playback ±1
@@ -59,30 +67,15 @@ object TextChunker {
         return starts.lastOrNull { it < currentSentenceIndex } ?: 0
     }
 
-    fun intoSentences(text: String): List<String> {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return emptyList()
-
-        val chunks = mutableListOf<String>()
-        val current = StringBuilder()
-        for (ch in trimmed) {
-            current.append(ch)
-            if (ch !in terminators) continue
-            flush(current, chunks)
-        }
-        flush(current, chunks)
-        return chunks
-    }
-
     /**
      * The index into [intoSentences]'s result of the sentence that contains character [charOffset]
      * of the original [text] — the mapping "Read from here" needs to turn a tap position into a
      * starting sentence. Fails soft: an offset before the first sentence maps to 0, and an offset
      * past the last one (or in trailing whitespace) maps to the last sentence; empty text maps to 0.
      *
-     * The chunk boundaries are recomputed over the original (untrimmed) text so the returned index
-     * lines up exactly with [intoSentences] — the same terminator rule, the same dropping of empty
-     * pieces — while staying in the caller's character coordinates.
+     * The chunk boundaries are located by re-finding each of [intoSentences]'s sentences inside the
+     * original (untrimmed) [text], in order, rather than by re-running the splitting rule — so this
+     * always agrees with [intoSentences] no matter which [Chunker] is active, by construction.
      */
     fun sentenceIndexAt(
         text: String,
@@ -91,34 +84,27 @@ object TextChunker {
         val sentences = intoSentences(text)
         if (sentences.isEmpty()) return 0
         val offset = charOffset.coerceIn(0, text.length)
-        // The first chunk whose terminator is at/after the offset owns it. Offsets past every
-        // terminator fall in the trailing (terminator-less) chunk, i.e. the last sentence.
-        val index = chunkEndOffsets(text).indexOfFirst { offset <= it }
+        // The first sentence whose last character is at/after the offset owns it. Offsets past every
+        // sentence's end fall in the trailing sentence, i.e. the last one.
+        val index = chunkEndOffsets(text, sentences).indexOfFirst { offset <= it }
         return if (index < 0) sentences.lastIndex else index
     }
 
-    // The terminator position that ends each non-empty emitted chunk, in the original text's
-    // coordinates — one entry per sentence [intoSentences] would emit, minus any trailing chunk that
-    // has no terminator. Kept jump-free (no break/continue) so it reads as a straight scan.
-    private fun chunkEndOffsets(text: String): List<Int> {
+    // The index (in [text]'s coordinates) of the last character of each sentence, found by locating
+    // each of [sentences] in turn starting from where the previous one ended. Kept jump-free (no
+    // break/continue) so it reads as a straight scan.
+    private fun chunkEndOffsets(
+        text: String,
+        sentences: List<String>,
+    ): List<Int> {
         val ends = mutableListOf<Int>()
-        val current = StringBuilder()
-        for (i in text.indices) {
-            current.append(text[i])
-            val isTerminator = text[i] in terminators
-            if (isTerminator && current.isNotBlank()) ends.add(i)
-            if (isTerminator) current.setLength(0)
+        var searchFrom = 0
+        for (sentence in sentences) {
+            val start = text.indexOf(sentence, searchFrom).coerceAtLeast(searchFrom)
+            val end = start + sentence.length
+            ends.add((end - 1).coerceAtLeast(searchFrom))
+            searchFrom = end
         }
         return ends
-    }
-
-    private fun flush(
-        buffer: StringBuilder,
-        out: MutableList<String>,
-    ) {
-        val piece = buffer.toString().trim()
-        buffer.setLength(0)
-        if (piece.isEmpty()) return
-        out.add(piece)
     }
 }

@@ -61,7 +61,7 @@ class AppGraph(context: Context) {
     // internally and logs a warning if the native lib/data files aren't present on this device
     // or this build (docs/espeak-ng-integration.md), so no try/catch is needed here.
     private val phonemizer = EspeakPhonemizer(appContext)
-    private val engineContext = EngineContext(runtimeRegistry, phonemizer, appContext.filesDir.absolutePath)
+    private val engineContext = EngineContext(runtimeRegistry, phonemizer)
 
     val engineRegistry = EngineRegistry().also { EngineLoader.seed(it, engineContext) }
     val engineManager = EngineManager(engineRegistry)

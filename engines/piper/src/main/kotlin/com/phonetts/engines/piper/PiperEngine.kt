@@ -73,7 +73,9 @@ internal class PiperEngine(
         return EngineMatch(id, buildDescriptor(bundle, entries, Origin.SIDELOADED))
     }
 
-    override suspend fun load(descriptor: ModelDescriptor) {
+    override fun isRuntimeAvailable(): Boolean = requireRuntime(context, ONNX_RUNTIME_ID, engineLabel).isAvailable()
+
+    override suspend fun doLoad(descriptor: ModelDescriptor) {
         unload()
         val runtime = requireRuntime(context, ONNX_RUNTIME_ID, engineLabel)
         loadedVoices =

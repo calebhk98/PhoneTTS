@@ -1,5 +1,6 @@
 package com.phonetts.engines.melotts
 
+import com.phonetts.core.engine.ExtraKey
 import com.phonetts.core.engine.ModelInput
 import com.phonetts.core.engine.TextFrontend
 
@@ -33,7 +34,7 @@ class MeloFrontend(
 
         return ModelInput(
             tokenIds = intersperseBlank(symbolIds),
-            extras = mapOf(EXTRA_TONES to intersperseBlank(toneValues)),
+            extras = mapOf(TONES_KEY.name to intersperseBlank(toneValues)),
         )
     }
 
@@ -83,8 +84,12 @@ class MeloFrontend(
     }
 
     companion object {
-        /** Key under which the interspersed tone sequence rides in [ModelInput.extras]. */
-        const val EXTRA_TONES = "tones"
+        /**
+         * Typed key under which the interspersed tone sequence rides in [ModelInput.extras]
+         * (issue #18 item 2) -- read back via the generic `ModelInput.requireExtra` accessor in
+         * `com.phonetts.engines.common`, never a raw `as?` cast.
+         */
+        val TONES_KEY = ExtraKey.of<LongArray>("tones")
 
         private const val UNK_SYMBOL = "UNK"
         private const val BLANK_ID = 0
