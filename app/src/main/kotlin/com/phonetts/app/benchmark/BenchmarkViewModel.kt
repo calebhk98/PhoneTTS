@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
 import com.phonetts.core.engine.SynthesisParams
+import com.phonetts.core.metrics.BenchmarkMetrics
 import com.phonetts.core.metrics.BenchmarkRecord
 import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.RtfResult
@@ -16,6 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private const val NANOS_PER_SECOND = 1_000_000_000.0
 
 /**
  * Drives the Benchmarks screen: measure every downloaded model's real generation speed on the same
@@ -30,6 +33,11 @@ import kotlinx.coroutines.withContext
  *  - issue #39: each run is appended to a persisted history, and an off-by-default toggle
  *    ([toggleHistory]) reveals a thermal-regression note ("~Nx slower than last time"). It is OFF by
  *    default so casual users aren't confused by normal run-to-run variance.
+ *
+ * Issue #14 extends each row with: time to first audio (TTFA), the model-load time paid before
+ * synthesis even starts (timed around [com.phonetts.core.registry.EngineManager.switchTo]), and a
+ * snapshot of this process's RAM footprint against the device's available RAM at run time — all
+ * carried in [BenchmarkMetrics] (:core, so the derived math is unit-tested, not re-derived here).
  */
 class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     /** One model's measured result (or a failure), ready to render in the table and copy out. */
@@ -44,6 +52,12 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         /** A thermal-regression note vs the last benchmark, shown only when history is on (issue #39). */
         val regressionNote: String? = null,
         val error: String? = null,
+        /**
+         * TTFA / model-load time / RAM footprint for this run (issue #14), or null on a failed run
+         * where nothing beyond the failure itself was measured. All the honesty logic (what counts as
+         * "unknown" rather than a guess) lives in [BenchmarkMetrics] — this only carries the result.
+         */
+        val metrics: BenchmarkMetrics? = null,
     )
 
     data class UiState(
@@ -96,24 +110,40 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
             // Weight load (switchTo) + the synthesis drain in RtfEstimator both block; keep the whole
             // per-model benchmark off the main thread (issue #18-4b).
             withContext(Dispatchers.IO) {
+                val loadStartNanos = System.nanoTime()
                 graph.engineManager.switchTo(descriptor.engineId, descriptor)
+                val modelLoadSeconds = (System.nanoTime() - loadStartNanos) / NANOS_PER_SECOND
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
                 val params = SynthesisParams(descriptor.parameters.associate { it.id to it.default })
-                RtfEstimator.estimate(engine, descriptor.defaultVoiceId, params, BENCH_PHRASE, descriptor.sampleRate)
+                val rtf =
+                    RtfEstimator.estimate(engine, descriptor.defaultVoiceId, params, BENCH_PHRASE, descriptor.sampleRate)
+                modelLoadSeconds to rtf
             }
         }.fold(
-            onSuccess = { result -> successRow(descriptor, result) },
+            onSuccess = { (modelLoadSeconds, result) -> successRow(descriptor, modelLoadSeconds, result) },
             onFailure = { e -> failureRow(descriptor, estimatedRam, e) },
         )
     }
 
     private fun successRow(
         descriptor: ModelDescriptor,
+        modelLoadSeconds: Double,
         result: RtfResult,
     ): Row {
-        // Refine the RAM estimate from a real observed footprint now that the model has loaded + run.
-        val observed = graph.processMemoryBytes()
-        if (observed > 0L) graph.resourceUsageStore.recordPeakRam(descriptor.modelId, observed)
+        // Snapshot process/available RAM right after this run: refines the peak-RAM estimate (issue
+        // #38) and doubles as the honest "unknown unless actually read" RAM figures for issue #14.
+        // DeviceInfo returns <=0 when a reading isn't available; null out rather than show a lie.
+        val observedProcessBytes = graph.processMemoryBytes().takeIf { it > 0L }
+        observedProcessBytes?.let { graph.resourceUsageStore.recordPeakRam(descriptor.modelId, it) }
+        val availableBytes = graph.availableRamBytes().takeIf { it > 0L }
+
+        val metrics =
+            BenchmarkMetrics(
+                rtf = result,
+                modelLoadSeconds = modelLoadSeconds,
+                processMemoryBytes = observedProcessBytes,
+                availableRamBytes = availableBytes,
+            )
 
         return Row(
             displayName = descriptor.displayName,
@@ -123,6 +153,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
             wallSeconds = result.wallClockElapsedSeconds,
             peakRamBytes = graph.resourceUsageStore.peakRamEstimate(descriptor),
             regressionNote = recordAndDetect(descriptor, result.realTimeFactor),
+            metrics = metrics,
         )
     }
 
@@ -147,19 +178,25 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     /** The results as a Markdown table, for the "Copy results" button (paste into an issue/notes). */
     fun resultsAsMarkdown(): String {
         val header =
-            "| Model | RTF (×real-time) | Audio (s) | Wall (s) | Est. RAM |\n" +
-                "|---|---|---|---|---|"
+            "| Model | RTF (×real-time) | Audio (s) | Generation (s) | TTFA (s) | Load (s) | RAM used | Est. RAM |\n" +
+                "|---|---|---|---|---|---|---|---|"
         val body = mutableState.value.rows.joinToString("\n", transform = ::markdownRow)
         return "$header\n$body\n\n_Lower RTF is faster; below 1.0× means faster than real-time. Phrase: \"$BENCH_PHRASE\"._"
     }
 
     private fun markdownRow(row: Row): String {
-        if (!row.ok) return "| ${row.displayName} | failed | — | — | ${ramText(row.peakRamBytes)} |"
+        val ramUsed = ramText(row.metrics?.processMemoryBytes)
+        val estRam = ramText(row.peakRamBytes)
+        if (!row.ok) return "| ${row.displayName} | failed | — | — | — | — | $ramUsed | $estRam |"
         val speed = "${fmt(row.realTimeFactor)} | ${fmt(row.audioSeconds)} | ${fmt(row.wallSeconds)}"
-        return "| ${row.displayName} | $speed | ${ramText(row.peakRamBytes)} |"
+        val ttfa = optionalFmt(row.metrics?.timeToFirstAudioSeconds)
+        val load = optionalFmt(row.metrics?.modelLoadSeconds)
+        return "| ${row.displayName} | $speed | $ttfa | $load | $ramUsed | $estRam |"
     }
 
     private fun fmt(value: Double): String = "%.2f".format(value)
+
+    private fun optionalFmt(value: Double?): String = value?.let { fmt(it) } ?: "unknown"
 
     private fun ramText(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "unknown"
 
