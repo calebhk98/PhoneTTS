@@ -61,6 +61,19 @@ if(EXISTS "${ESPEAK_SRC_DIR}/CMakeLists.txt")
 
     add_subdirectory(${ESPEAK_SRC_DIR} espeak-ng-build)
 
+    # BUG FIX (found compiling with a real NDK + espeak-ng 1.52.0 checkout): upstream's
+    # src/CMakeLists.txt does `target_link_libraries(espeak-ng PUBLIC espeak-include)`, where
+    # espeak-include exposes BOTH `include` (the real espeak-ng/*.h public API -- what we actually
+    # need) AND `include/compat` (libc portability shims for espeak-ng's OWN .c files only, e.g.
+    # compat/wctype.h #include_next's the real <wctype.h> then adds `#include <ucd/ucd.h>`).
+    # Because -I entries always win over the toolchain's own search paths, leaving `include/compat`
+    # on phonetts_espeak's PUBLIC include path shadows the NDK libc++'s <wctype.h>/<cwctype> for
+    # THIS translation unit too (it only needs <mutex>/<string> plus espeak-ng/speak_lib.h) --
+    # breaking the build with "ucd/ucd.h file not found", since that header is never meant to be
+    # visible outside espeak-ng's own build. Re-expose only the real public headers before linking.
+    set_property(TARGET espeak-ng PROPERTY INTERFACE_LINK_LIBRARIES "")
+    set_target_properties(espeak-ng PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${ESPEAK_SRC_DIR}/src/include")
+
     target_link_libraries(phonetts_espeak PRIVATE espeak-ng)
     target_compile_definitions(phonetts_espeak PRIVATE PHONETTS_HAVE_ESPEAK=1)
 else()
