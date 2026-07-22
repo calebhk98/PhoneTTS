@@ -4,26 +4,16 @@ package com.phonetts.core.download.builtin
 // model immediately instead of having to search Hugging Face. Only models that are BOTH proven to
 // produce valid audio (docs/MODEL-VERIFICATION.md) AND handled end-to-end by an engine's
 // inspect()/load() belong here — a one-tap download must not land a model that then fails to load.
+// [ALL] stays deliberately small (one per engine family); the much larger [PIPER_VOICES] — every
+// voice rhasspy/piper-voices publishes, see [PiperVoiceCatalog] — is separate on purpose so a
+// "browse Piper voices" picker isn't crammed into the small recommended-downloads grid.
 object BuiltInCatalog {
+    // Sourced from PiperVoiceCatalog (SSOT: the repo paths/sizes for every Piper voice, including
+    // this one, live in exactly one place) rather than re-listing this voice's files here — only
+    // the "recommended first download" framing is specific to this curated slot.
     val PIPER_LESSAC =
-        BuiltInModel(
-            id = "piper-en_US-lessac-medium",
-            displayName = "Piper — Lessac (English, medium)",
-            repoId = "rhasspy/piper-voices",
-            approxSizeMb = 63,
-            files =
-                listOf(
-                    BuiltInFile(
-                        repoPath = "en/en_US/lessac/medium/en_US-lessac-medium.onnx",
-                        localName = "en_US-lessac-medium.onnx",
-                    ),
-                    BuiltInFile(
-                        repoPath = "en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
-                        localName = "en_US-lessac-medium.onnx.json",
-                    ),
-                ),
-            note = "Fast, clear English voice. Recommended first download.",
-        )
+        PiperVoiceCatalog.ALL.first { it.id == "piper-en_US-lessac-medium" }
+            .copy(note = "Fast, clear English voice. Recommended first download.")
 
     val KITTEN_NANO =
         BuiltInModel(
@@ -110,4 +100,13 @@ object BuiltInCatalog {
 
     /** Every recommended model, in display order (smallest-first is friendlier, but quality-first here). */
     val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M, MELO_EN, COSYVOICE3_05B)
+
+    /**
+     * Every Piper voice rhasspy/piper-voices publishes (currently 166, across 50+ languages), for
+     * a dedicated "browse Piper voices" picker rather than the one-tap [ALL] grid. Each entry
+     * still downloads only its own `<voice>.onnx` + `<voice>.onnx.json` pair and resolves through
+     * the Piper engine's existing `inspect()` path unchanged — this is data, not a new code path
+     * (CLAUDE.md rule 1).
+     */
+    val PIPER_VOICES: List<BuiltInModel> = PiperVoiceCatalog.ALL
 }
