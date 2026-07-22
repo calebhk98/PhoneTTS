@@ -103,7 +103,7 @@ class AppGraph(context: Context) {
 
     val importer = ModelImporter(DirectoryBundleReader(), resolver, catalog)
     val fileTextImporter = FileTextImporter(appContext)
-    val sideloadCoordinator = SideloadCoordinator(appContext, importer)
+    val sideloadCoordinator = SideloadCoordinator(appContext, importer, ::modelsBaseDir)
     val hfCatalog = HfCatalog(HttpUrlConnectionClient())
 
     // A `var`, not a `val`: HfDownloader captures its base dir at construction (its own File field
