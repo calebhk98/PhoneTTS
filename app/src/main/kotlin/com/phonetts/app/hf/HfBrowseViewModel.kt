@@ -6,6 +6,7 @@ import com.phonetts.app.ModelStorage
 import com.phonetts.app.UserPickRequiredException
 import com.phonetts.core.download.builtin.BuiltInCatalog
 import com.phonetts.core.download.builtin.BuiltInModel
+import com.phonetts.core.download.builtin.PiperVoicesIndex
 import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.DiagnosticsKind
 import com.phonetts.core.download.hf.HfCatalog
@@ -13,6 +14,7 @@ import com.phonetts.core.download.hf.HfCompatibility
 import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.download.hf.HfDownloadPlan
 import com.phonetts.core.download.hf.HfDownloadProgress
+import com.phonetts.core.download.hf.HfEndpoints
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfQuantizedDownloadPlan
 import com.phonetts.core.download.hf.HfResultsView
@@ -20,6 +22,7 @@ import com.phonetts.core.download.hf.HfSizeEstimator
 import com.phonetts.core.download.hf.HfSizeParamFilter
 import com.phonetts.core.download.hf.HfSortOption
 import com.phonetts.core.download.hf.HfTreeEntry
+import com.phonetts.core.download.hf.HttpClient
 import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.QuantizationVariant
 import com.phonetts.core.download.hf.needsSize
@@ -58,6 +61,11 @@ class HfBrowseViewModel(
     // this file's ownership) passes a real DownloadNotifier(context) to turn it on. See
     // DownloadNotifier's kdoc.
     private val notifier: DownloadNotifier? = null,
+    // The transport used ONLY to fetch upstream rhasspy/piper-voices' `voices.json` (issue: don't
+    // check in a static Piper voice snapshot — see PiperVoicesIndex). Defaults to the same real
+    // HTTP client [catalog] itself is built on elsewhere in the graph, so the caller wiring this up
+    // (AppGraph/MainActivity) needs no change; a test can still inject a fake.
+    private val piperHttp: HttpClient = HttpUrlConnectionClient(),
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(HfBrowseUiState())
     val state: StateFlow<HfBrowseUiState> = mutableState.asStateFlow()
@@ -74,15 +82,6 @@ class HfBrowseViewModel(
      */
     val recommended: List<BuiltInModel> =
         BuiltInCatalog.ALL.filter { model -> model.requiresRuntimeId?.let(isRuntimeAvailable) ?: true }
-
-    /**
-     * Every Piper voice this app can browse & download individually (issue #71) — a separate,
-     * much larger list from [recommended] so it doesn't crowd the curated one-tap grid; the
-     * screen renders it behind its own collapsible section. Sourced straight from
-     * [BuiltInCatalog.PIPER_VOICES] (SSOT — the same generated catalog [recommended]'s
-     * `PIPER_LESSAC` entry draws from), so this names no voice literal of its own.
-     */
-    val piperVoices: List<BuiltInModel> = BuiltInCatalog.PIPER_VOICES
 
     // Populate the list immediately so the screen isn't just the handful of recommended models until
     // the user types — a blank query lists the top TTS models (HfEndpoints.searchModelsUrl). Fail-
@@ -187,25 +186,67 @@ class HfBrowseViewModel(
         }
     }
 
-    /** Toggles the collapsible "Piper voices" section (issue #71) — collapsed by default so 166
-     * voices aren't dumped onto the screen unasked; nothing in the section is even filtered/laid
-     * out until this flips true. */
-    fun onPiperVoicesExpandedChange(expanded: Boolean) =
+    /** Toggles the collapsible "Piper voices" section (issue #71) — collapsed by default so
+     * 166+ voices aren't dumped onto the screen unasked; nothing in the section is even
+     * filtered/laid out until this flips true. Expanding it for the first time kicks off the
+     * runtime fetch of upstream's voice list ([loadPiperVoices]); re-collapsing/re-expanding never
+     * refetches (issue: don't check in a static Piper voice snapshot — see [PiperVoicesIndex]). */
+    fun onPiperVoicesExpandedChange(expanded: Boolean) {
         mutableState.update { it.copy(piperVoicesExpanded = expanded) }
+        if (expanded) loadPiperVoices()
+    }
 
     fun onPiperVoiceQueryChange(query: String) = mutableState.update { it.copy(piperVoiceQuery = query) }
 
     /**
-     * [piperVoices] narrowed to those whose display name matches [query] (issue #71) — a pure,
-     * in-memory filter over the static catalog, never a network call. The display name already
-     * encodes the language (e.g. "Piper — Kareem (Arabic, Jordan, low)"), so one substring match
-     * covers both a voice-name search and a language search without a second field. A blank query
-     * matches every voice.
+     * Fetches upstream rhasspy/piper-voices' `voices.json` and parses it via [PiperVoicesIndex] —
+     * the SAME manifest upstream itself publishes, so the browsable list is always current instead
+     * of a checked-in snapshot of it. A no-op if a fetch already succeeded this session
+     * ([HfBrowseUiState.piperVoices] non-empty — the in-memory cache) or is already in flight.
+     * Fails closed: a network hiccup sets [HfBrowseUiState.piperVoicesError] rather than showing a
+     * stale or guessed list, and never crashes the screen (CLAUDE.md rule 4's spirit applied here
+     * to data, not just model detection).
      */
-    fun filterPiperVoices(query: String): List<BuiltInModel> {
+    fun loadPiperVoices() {
+        val current = mutableState.value
+        if (current.piperVoices.isNotEmpty() || current.piperVoicesLoading) return
+        mutableState.update { it.copy(piperVoicesLoading = true, piperVoicesError = null) }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { fetchPiperVoices() } }
+                .onSuccess { voices ->
+                    mutableState.update { it.copy(piperVoicesLoading = false, piperVoices = voices) }
+                }.onFailure { e ->
+                    if (e is CancellationException) throw e
+                    mutableState.update {
+                        it.copy(
+                            piperVoicesLoading = false,
+                            piperVoicesError = "Couldn't load the Piper voice list — check your connection.",
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun fetchPiperVoices(): List<BuiltInModel> {
+        val url = HfEndpoints.resolveUrl(PiperVoicesIndex.REPO_ID, HfCatalog.DEFAULT_REVISION, "voices.json")
+        val body = piperHttp.getText(url, HfCatalog.USER_AGENT)
+        return PiperVoicesIndex.parse(body)
+    }
+
+    /**
+     * [voices] narrowed to those whose display name matches [query] (issue #71) — a pure,
+     * in-memory filter over the already-fetched list, never a network call of its own. The display
+     * name already encodes the language (e.g. "Piper — Kareem (Arabic, Jordan, low)"), so one
+     * substring match covers both a voice-name search and a language search without a second
+     * field. A blank query matches every voice.
+     */
+    fun filterPiperVoices(
+        voices: List<BuiltInModel>,
+        query: String,
+    ): List<BuiltInModel> {
         val trimmed = query.trim()
-        if (trimmed.isEmpty()) return piperVoices
-        return piperVoices.filter { it.displayName.contains(trimmed, ignoreCase = true) }
+        if (trimmed.isEmpty()) return voices
+        return voices.filter { it.displayName.contains(trimmed, ignoreCase = true) }
     }
 
     fun onQueryChange(query: String) = mutableState.update { it.copy(query = query) }

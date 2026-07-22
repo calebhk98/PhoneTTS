@@ -236,6 +236,10 @@ private fun AppNav(
                                     modelManager = graph.modelManager,
                                     resourceUsage = graph.resourceUsageStore,
                                     availableRamBytes = graph::availableRamBytes,
+                                    // Enables a MEASURED real-time factor per model (from past
+                                    // benchmarks on this device) instead of only the estimate.
+                                    benchmarkHistory = graph.benchmarkHistory,
+                                    deviceName = graph.deviceName,
                                 )
                             }
                         },

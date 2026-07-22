@@ -164,10 +164,13 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             remember(state.results, state.sort, state.tagFilter, state.sizeEstimates, state.sizeFilter) {
                 viewModel.displayedResults(state)
             }
-        // Same rationale as displayedResults above: only recomputed when the query actually changes,
-        // not on every unrelated state tick (e.g. a download's progress).
+        // Same rationale as displayedResults above: only recomputed when the query or the fetched
+        // voice list itself actually changes, not on every unrelated state tick (e.g. a download's
+        // progress). state.piperVoices starts empty and fills in once (see loadPiperVoices()).
         val filteredPiperVoices =
-            remember(state.piperVoiceQuery) { viewModel.filterPiperVoices(state.piperVoiceQuery) }
+            remember(state.piperVoices, state.piperVoiceQuery) {
+                viewModel.filterPiperVoices(state.piperVoices, state.piperVoiceQuery)
+            }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // Recommended one-tap models come first — they're the curated, known-good downloads most
             // users want; the broader Hugging Face results follow under their own header.
@@ -190,19 +193,40 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                 }
             }
 
-            // "Piper voices" (issue #71): 166 curated voices, one BuiltInModel each — reuses the exact
-            // same downloadBuiltIn() path (and RecommendedRow styling) the "Recommended" grid above
-            // uses, no second download path. Collapsed by default; the filter field + rows only enter
-            // the LazyColumn once expanded, so nothing here is eagerly laid out.
-            if (viewModel.piperVoices.isNotEmpty()) {
-                item(key = "piper-voices-header") {
-                    PiperVoicesHeader(
-                        expanded = state.piperVoicesExpanded,
-                        totalCount = viewModel.piperVoices.size,
-                        onExpandedChange = viewModel::onPiperVoicesExpandedChange,
-                    )
+            // "Piper voices" (issue #71): every voice rhasspy/piper-voices publishes, fetched at
+            // runtime from upstream's own `voices.json` the first time this section is expanded
+            // (never a checked-in snapshot — see PiperVoicesIndex/HfBrowseViewModel.loadPiperVoices)
+            // and cached in state for the rest of the session. Reuses the exact same
+            // downloadBuiltIn() path (and RecommendedRow styling) the "Recommended" grid above uses,
+            // no second download path. Collapsed by default; nothing below the header enters the
+            // LazyColumn until expanded, so nothing here is eagerly laid out or fetched.
+            item(key = "piper-voices-header") {
+                PiperVoicesHeader(
+                    expanded = state.piperVoicesExpanded,
+                    totalCount = state.piperVoices.size,
+                    onExpandedChange = viewModel::onPiperVoicesExpandedChange,
+                )
+            }
+            if (state.piperVoicesExpanded) {
+                if (state.piperVoicesLoading) {
+                    item(key = "piper-voices-loading") {
+                        Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+                            CircularProgressIndicator()
+                        }
+                    }
                 }
-                if (state.piperVoicesExpanded) {
+                state.piperVoicesError?.let { message ->
+                    item(key = "piper-voices-error") {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = viewModel::loadPiperVoices) { Text("Retry") }
+                        }
+                    }
+                }
+                if (state.piperVoices.isNotEmpty()) {
                     item(key = "piper-voices-search") {
                         PiperVoiceSearchField(state.piperVoiceQuery, viewModel::onPiperVoiceQueryChange)
                     }
@@ -440,10 +464,11 @@ private fun NumberField(
 }
 
 /**
- * Collapsible header for the "Piper voices" section (issue #71): 166 curated voices is too many
- * to dump into the list unfiltered, so this starts collapsed (`expanded = false`) and nothing
- * else in the section — not the search field, not a single row — enters the LazyColumn until the
- * user taps it open.
+ * Collapsible header for the "Piper voices" section (issue #71): 166+ voices, fetched at runtime
+ * (see [HfBrowseViewModel.loadPiperVoices]), is too many to dump into the list unfiltered, so this
+ * starts collapsed (`expanded = false`) and nothing else in the section — not the search field,
+ * not a single row — enters the LazyColumn until the user taps it open. [totalCount] is 0 before
+ * the first fetch completes (or on a failed one), so the count is only shown once it's real.
  */
 @Composable
 private fun PiperVoicesHeader(
@@ -451,10 +476,11 @@ private fun PiperVoicesHeader(
     totalCount: Int,
     onExpandedChange: (Boolean) -> Unit,
 ) {
+    val label = if (totalCount > 0) "Piper voices ($totalCount)" else "Piper voices"
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HorizontalDivider()
         TextButton(onClick = { onExpandedChange(!expanded) }) {
-            Text(if (expanded) "Piper voices ($totalCount) ▾" else "Piper voices ($totalCount) ▸")
+            Text(if (expanded) "$label ▾" else "$label ▸")
         }
     }
 }
