@@ -47,6 +47,15 @@ data class HfBrowseUiState(
     // (see HfResultsView.availableTags), never a hardcoded list.
     val sort: HfSortOption = HfSortOption.MOST_DOWNLOADS,
     val tagFilter: String? = null,
+    // Language filter (issue: many models are multilingual, user mostly wants English) — like the
+    // tag filter, the *choices* come from the current results (HfLanguages.availableLanguages),
+    // never a hardcoded language list. Null = all languages.
+    val languageFilter: String? = null,
+    // Repo/model ids whose most recent download attempt failed with a real error (not a cancel, not
+    // a "downloaded, no engine yet"). Drives the "Retry failed (N)" control (issue: a network drop
+    // failed a whole batch with no way to see/retry which ones). Each is still resumable from its
+    // partial file on disk — retry just re-runs its download. Cleared on success/cancel/retry.
+    val failedDownloadIds: Set<String> = emptySet(),
     // Size/param-count filter (issue: sort+filter by size/params) — see HfSizeParamFilter. Applying
     // any bound here (or picking a size/param HfSortOption) is what triggers eagerly fetching sizes
     // for the whole current result set — see HfBrowseViewModel.ensureSizesLoaded.

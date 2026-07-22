@@ -15,9 +15,11 @@ import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.download.hf.HfDownloadPlan
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.download.hf.HfLanguages
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfQuantizedDownloadPlan
 import com.phonetts.core.download.hf.HfResultsView
+import com.phonetts.core.download.hf.OfflineErrorHint
 import com.phonetts.core.download.hf.HfSizeEstimator
 import com.phonetts.core.download.hf.HfSizeParamFilter
 import com.phonetts.core.download.hf.HfSortOption
@@ -75,6 +77,13 @@ class HfBrowseViewModel(
     // still cancel each independently (issue #2).
     private val downloadJobs = mutableMapOf<String, Job>()
 
+    // How to re-run each download that has failed, keyed by repo id (issue: a network drop failed a
+    // whole batch with no way to retry them). Held here rather than in UI state because it's a
+    // callback, not display data — the UI only needs the failed *ids* (state.failedDownloadIds) to
+    // show the "Retry failed (N)" count. Registered when a download starts, invoked by
+    // [retryFailedDownloads], and dropped once a download completes or is cancelled.
+    private val retryActions = mutableMapOf<String, () -> Unit>()
+
     /**
      * Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md), minus any whose
      * required runtime isn't available on this build — so a standard APK shows the four ONNX models
@@ -106,12 +115,27 @@ class HfBrowseViewModel(
      * what made the sort/filter dropdown janky.
      */
     fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> =
-        HfResultsView.apply(state.results, state.sort, state.tagFilter, state.sizeEstimates, state.sizeFilter)
+        HfResultsView.apply(
+            state.results,
+            state.sort,
+            state.tagFilter,
+            state.sizeEstimates,
+            state.sizeFilter,
+            state.languageFilter,
+        )
 
-    /** Every tag present in the current result set, for the filter menu's choices — derived from
-     * data, never a hardcoded list (issue #6 SSOT rule). Same [state]-parameter rationale as
-     * [displayedResults]. */
-    fun availableTags(state: HfBrowseUiState): List<String> = HfResultsView.availableTags(state.results)
+    /** The tag filter menu's choices — the most common, *useful* tags across the current results
+     * (issue: the tag filter is slow with hundreds of raw tags). Boilerplate and language codes are
+     * stripped and the list is capped — see [HfResultsView.frequentTags]. Derived from data, never a
+     * hardcoded list (issue #6 SSOT rule); same [state]-parameter rationale as [displayedResults]. */
+    fun availableTags(state: HfBrowseUiState): List<String> = HfResultsView.frequentTags(state.results)
+
+    /** The language filter menu's choices — every language present in the current results (issue:
+     * add a language filter). Derived from the Hub's own language tags, never a hardcoded list — see
+     * [HfLanguages.availableLanguages]. Same [state]-parameter rationale as [displayedResults]. */
+    fun availableLanguages(state: HfBrowseUiState): List<String> = HfLanguages.availableLanguages(state.results)
+
+    fun onLanguageFilterChange(code: String?) = mutableState.update { it.copy(languageFilter = code) }
 
     /** Changing sort order to a size/param-derived one (see [HfSortOption.needsSize]) eagerly fetches
      * every currently-listed result's size — see [ensureSizesLoaded] — so the new order isn't just
@@ -156,6 +180,7 @@ class HfBrowseViewModel(
      */
     fun downloadBuiltIn(model: BuiltInModel) {
         if (mutableState.value.isDownloading(model.id)) return
+        retryActions[model.id] = { downloadBuiltIn(model) }
         beginTracking(model.id)
         downloadJobs[model.id] =
             viewModelScope.launch {
@@ -309,6 +334,7 @@ class HfBrowseViewModel(
 
     fun download(model: HfModelSummary) {
         if (mutableState.value.isDownloading(model.id)) return // already fetching this repo
+        retryActions[model.id] = { download(model) }
         beginTracking(model.id)
         downloadJobs[model.id] =
             viewModelScope.launch {
@@ -358,6 +384,8 @@ class HfBrowseViewModel(
      */
     fun cancelDownload(modelId: String) {
         downloadJobs.remove(modelId)?.cancel()
+        retryActions.remove(modelId)
+        mutableState.update { it.copy(failedDownloadIds = it.failedDownloadIds - modelId) }
         endTracking(modelId)
         // Drop any in-flight progress/failure notification too — a cancelled download shouldn't
         // leave a stale "downloading"/"failed" row sitting in the shade for something the user
@@ -430,7 +458,15 @@ class HfBrowseViewModel(
         bytesTotal: Long? = null,
     ) {
         val progress = HfDownloadProgress(filesTotal = filesTotal, bytesTotal = bytesTotal, startedAtMs = clock())
-        mutableState.update { it.copy(downloads = it.downloads + (modelId to progress), error = null) }
+        // Starting (or restarting) a download clears any prior "failed" mark for it — so both a
+        // manual re-tap of Download and a "Retry failed" run drop it out of the failed set.
+        mutableState.update {
+            it.copy(
+                downloads = it.downloads + (modelId to progress),
+                error = null,
+                failedDownloadIds = it.failedDownloadIds - modelId,
+            )
+        }
     }
 
     private fun endTracking(modelId: String) = mutableState.update { it.copy(downloads = it.downloads - modelId) }
@@ -454,7 +490,8 @@ class HfBrowseViewModel(
         displayName: String,
     ) {
         downloadJobs.remove(modelId)
-        mutableState.update { it.copy(downloads = it.downloads - modelId) }
+        retryActions.remove(modelId)
+        mutableState.update { it.copy(downloads = it.downloads - modelId, failedDownloadIds = it.failedDownloadIds - modelId) }
         notifier?.complete(modelId, displayName)
     }
 
@@ -471,6 +508,7 @@ class HfBrowseViewModel(
         e: UserPickRequiredException,
     ) {
         downloadJobs.remove(modelId)
+        retryActions.remove(modelId)
         recordDiagnostics(
             DiagnosticsEntry(
                 atMs = clock(),
@@ -479,7 +517,7 @@ class HfBrowseViewModel(
                 detail = e.explanation,
             ),
         )
-        mutableState.update { it.copy(downloads = it.downloads - modelId) }
+        mutableState.update { it.copy(downloads = it.downloads - modelId, failedDownloadIds = it.failedDownloadIds - modelId) }
         notifier?.complete(modelId, displayName)
     }
 
@@ -503,8 +541,23 @@ class HfBrowseViewModel(
         recordDiagnostics(
             DiagnosticsEntry(atMs = clock(), modelId = modelId, kind = DiagnosticsKind.FAILURE, detail = message),
         )
-        mutableState.update { it.copy(downloads = it.downloads - modelId, error = message) }
+        // Mark it failed (its retry action stays registered) so the "Retry failed (N)" control can
+        // re-run it; the partial file is left on disk, so the retry resumes rather than restarts.
+        mutableState.update {
+            it.copy(
+                downloads = it.downloads - modelId,
+                error = message,
+                failedDownloadIds = it.failedDownloadIds + modelId,
+            )
+        }
         notifier?.failed(modelId, displayName, message)
+    }
+
+    /** Re-run every download whose last attempt failed (issue: a network drop failed a batch with no
+     * way to retry them). Each retry resumes from its partial file on disk; [beginTracking] clears
+     * the failed mark as each one restarts. A no-op when nothing has failed. */
+    fun retryFailedDownloads() {
+        mutableState.value.failedDownloadIds.toList().forEach { id -> retryActions[id]?.invoke() }
     }
 
     /** Appends [e] to the retained error log (issue #3), bounded to [MAX_HF_ERROR_LOG] entries, and
@@ -513,7 +566,10 @@ class HfBrowseViewModel(
         modelId: String?,
         e: Throwable,
     ): String {
-        val message = e.message ?: e::class.simpleName ?: "Unknown error"
+        val raw = e.message ?: e::class.simpleName ?: "Unknown error"
+        // A bare "Unable to resolve host …" (a no-network DNS failure on a search/size fetch) reads
+        // as a plain connectivity line; a genuine, specific error is left untouched (OfflineErrorHint).
+        val message = OfflineErrorHint.humanize(raw)
         mutableState.update { current ->
             val entry = HfBrowseError(atMs = clock(), modelId = modelId, message = message)
             current.copy(errorLog = (listOf(entry) + current.errorLog).take(MAX_HF_ERROR_LOG))
