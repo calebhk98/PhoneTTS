@@ -43,12 +43,12 @@ private val NAV_DESTINATIONS: List<Pair<Screen, String>> =
     )
 
 /**
- * The hamburger-drawer + back-arrow scaffold every sub-page (Browse, Manage, Benchmark, Help, Mix,
- * Library, Compare) uses, so none of them strands the user with only a back arrow (issue #1) — the
- * same [Screen] destinations TtsScreen's own drawer lists are one tap away from anywhere in the app.
- * [current] highlights where you are; [onNavigate] drives the hamburger's destinations, while
- * [onBack] stays a separate callback for the back arrow (a sub-page's "back" happens to also mean
- * "go to [Screen.MAIN]", but that mapping is the caller's business, not this scaffold's).
+ * The hamburger-drawer scaffold every sub-page (Browse, Manage, Benchmark, Help, Mix, Library,
+ * Compare) uses, matching the main screen's layout: the hamburger lives on the left and there is
+ * no back arrow (issue #1) — the same [Screen] destinations TtsScreen's own drawer lists are one
+ * tap away from anywhere in the app. [current] highlights where you are; [onNavigate] drives the
+ * hamburger's destinations. [onBack] is currently unused by this scaffold but stays part of the
+ * signature since other screens still pass it.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,9 +76,6 @@ fun NavDrawerScaffold(
                 TopAppBar(
                     title = { Text(title) },
                     navigationIcon = {
-                        IconButton(onClick = onBack) { Text("←", style = MaterialTheme.typography.titleLarge) }
-                    },
-                    actions = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             // Matches TtsScreen's own hamburger glyph (no material-icons dependency).
                             Text("☰", style = MaterialTheme.typography.titleLarge)
