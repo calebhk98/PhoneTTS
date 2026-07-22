@@ -3,6 +3,8 @@ package com.phonetts.core.audio.export
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import javax.sound.sampled.AudioFileFormat
 import javax.sound.sampled.AudioSystem
 import kotlin.math.PI
@@ -61,6 +63,44 @@ class WavStandardDecoderTest {
         println("WAV standard-decoder check OK: ${wav.absolutePath} (${wav.length()} bytes)")
     }
 
+    /**
+     * Plays to completion, not "plays 1.499s then errors." A strict player plays the PCM and then
+     * errors at the end when the header's size fields disagree with the actual bytes (the original
+     * "error with the saved file, after playing it", issue #65). So this asserts the two size fields
+     * are byte-exact AND that feeding every frame reaches a single clean end-of-stream (-1) with no
+     * trailing partial frame — the structural guarantee that a player runs to the end without a tail
+     * error. (Actual speaker output is an on-device check; there is no audio line in CI.)
+     */
+    @Test
+    fun exportedWavPlaysToACleanEndInsteadOfErroringAtTheTail() {
+        val outDir = File("build/wavcheck").apply { mkdirs() }
+        val wav = File(outDir, "tail.wav")
+        runBlocking {
+            wav.outputStream().use { out -> WavEncoder().encode(sineChunks().asFlow(), sampleRate, out) }
+        }
+
+        val header = wav.inputStream().use { it.readNBytes(HEADER_BYTES.toInt()) }
+        val le = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
+        val riffSize = le.getInt(RIFF_SIZE_OFFSET).toLong() and 0xffffffffL
+        val dataSize = le.getInt(DATA_SIZE_OFFSET).toLong() and 0xffffffffL
+        assertEquals(wav.length() - RIFF_SIZE_TRAILING, riffSize, "RIFF ChunkSize must match the file")
+        assertEquals(wav.length() - HEADER_BYTES, dataSize, "data chunk size must match the PCM written")
+
+        AudioSystem.getAudioInputStream(wav).use { stream ->
+            val frameSize = stream.format.frameSize
+            val buf = ByteArray(4096)
+            var fed = 0L
+            var read = stream.read(buf)
+            while (read != -1) {
+                fed += read
+                read = stream.read(buf)
+            }
+            assertEquals(0L, fed % frameSize, "stream ended on a partial frame")
+            assertEquals(stream.frameLength * frameSize, fed, "player fed fewer bytes than the clip")
+            assertEquals(-1, stream.read(buf), "end-of-stream is not clean (dribble after EOF)")
+        }
+    }
+
     // A quiet 440 Hz sine split across [chunkCount] segments — mimics multi-sentence synthesis
     // arriving as separate flow emissions, which is what the streaming encoder must stitch together.
     private fun sineChunks(): List<FloatArray> =
@@ -73,5 +113,8 @@ class WavStandardDecoderTest {
 
     private companion object {
         const val HEADER_BYTES = 44L
+        const val RIFF_SIZE_OFFSET = 4 // "RIFF" is bytes 0-3; its 4-byte size follows
+        const val DATA_SIZE_OFFSET = 40 // the "data" chunk's 4-byte size, at byte 40 in a canonical header
+        const val RIFF_SIZE_TRAILING = 8L // RIFF ChunkSize excludes the "RIFF" tag + the size field itself
     }
 }
