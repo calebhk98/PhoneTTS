@@ -198,6 +198,8 @@ dependencies {
     runtimeOnly(project(":engines:piper"))
     runtimeOnly(project(":engines:kittentts"))
     runtimeOnly(project(":engines:kokoro"))
+    runtimeOnly(project(":engines:mms"))
+    runtimeOnly(project(":engines:f5tts"))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json) // HfCatalog exposes a kotlinx.serialization Json default

@@ -29,6 +29,8 @@ include(":engines:melotts")
 include(":engines:piper")
 include(":engines:kittentts")
 include(":engines:kokoro")
+include(":engines:mms")
+include(":engines:f5tts")
 
 // Cross-module integration tests (pure JVM) — the one place all engines share a classpath.
 include(":integration")
