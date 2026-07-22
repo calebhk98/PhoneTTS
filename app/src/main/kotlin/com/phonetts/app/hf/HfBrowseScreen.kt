@@ -45,6 +45,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.phonetts.core.download.hf.DiagnosticsEntry
+import com.phonetts.core.download.hf.DiagnosticsKind
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfEndpoints
 import com.phonetts.core.download.hf.HfModelSummary
@@ -94,6 +96,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
     val state by viewModel.state.collectAsState()
     val uriHandler = LocalUriHandler.current
     var showErrorLog by remember { mutableStateOf(false) }
+    var showDiagnosticsLog by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -136,6 +139,11 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
             if (state.errorLog.isNotEmpty()) {
                 TextButton(onClick = { showErrorLog = true }) { Text("Errors (${state.errorLog.size})") }
             }
+            // Persistent across app restarts (unlike the two logs above, which are session-only) —
+            // see DownloadDiagnosticsLog. Only shown once something has actually been recorded.
+            if (state.diagnostics.isNotEmpty()) {
+                TextButton(onClick = { showDiagnosticsLog = true }) { Text("Download log (${state.diagnostics.size})") }
+            }
         }
         if (state.loading) CircularProgressIndicator()
 
@@ -176,6 +184,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                     model = model,
                     progress = state.downloads[model.id],
                     isInstalled = viewModel.isInstalled(model.id),
+                    notYetSupported = model.id in state.notYetSupportedIds,
                     sizeState =
                         SizeState(
                             estimate = state.sizeEstimates[model.id],
@@ -203,6 +212,14 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
 
     if (showErrorLog) {
         ErrorLogDialog(errors = state.errorLog, onDismiss = { showErrorLog = false })
+    }
+
+    if (showDiagnosticsLog) {
+        DiagnosticsLogDialog(
+            entries = state.diagnostics,
+            onClear = viewModel::clearDiagnostics,
+            onDismiss = { showDiagnosticsLog = false },
+        )
     }
 }
 
@@ -322,6 +339,62 @@ private fun formatErrorLine(
     return "[$time] $prefix${error.message}"
 }
 
+/** Persistent (survives an app restart — see [DownloadDiagnosticsLog]) record of Browse download
+ * failures and "downloaded, but no engine claims it yet" imports, so the user can track which
+ * engines are worth adding next — not just a session-only toast. */
+@Composable
+private fun DiagnosticsLogDialog(
+    entries: List<DiagnosticsEntry>,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val formatter = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
+    val fullText = remember(entries) { entries.joinToString("\n\n") { formatDiagnosticsLine(it, formatter) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+                OutlinedButton(onClick = onClear) { Text("Clear") }
+            }
+        },
+        title = { Text("Download diagnostics") },
+        text = { DiagnosticsLogBody(entries, formatter) },
+    )
+}
+
+@Composable
+private fun DiagnosticsLogBody(
+    entries: List<DiagnosticsEntry>,
+    formatter: DateFormat,
+) {
+    if (entries.isEmpty()) {
+        Text("No download issues recorded yet.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    SelectionContainer {
+        Column(
+            modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            entries.forEach { entry ->
+                Text(formatDiagnosticsLine(entry, formatter), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+private fun formatDiagnosticsLine(
+    entry: DiagnosticsEntry,
+    formatter: DateFormat,
+): String {
+    val time = formatter.format(Date(entry.atMs))
+    val kind = if (entry.kind == DiagnosticsKind.FAILURE) "FAILED" else "downloaded, no engine yet"
+    return "[$time] ${entry.modelId} — $kind: ${entry.detail}"
+}
+
 /** Lets the user pick which weight precision to download when a repo ships more than one KNOWN
  * precision (issue #9 — an ambiguous, unlabeled auxiliary weight file never reaches this picker;
  * see [com.phonetts.core.download.hf.QuantizationFilter.requiresChoice]). Each option shows its own
@@ -403,12 +476,14 @@ private fun ModelRow(
     model: HfModelSummary,
     progress: HfDownloadProgress?,
     isInstalled: Boolean,
+    notYetSupported: Boolean,
     sizeState: SizeState,
     actions: RowActions,
 ) {
     // Bug #4: the download size is no longer gated behind a "Show download size" tap — fetch it as
     // soon as this row is shown. Runs once per model id (LaunchedEffect restarts only when the key
-    // changes) and loadSize() is a no-op if a fetch already ran/is running for this id.
+    // changes) and loadSize() is a no-op if a fetch already ran/is running for this id. The same
+    // file-tree fetch also determines [notYetSupported] (see HfBrowseViewModel.loadSize).
     LaunchedEffect(model.id) { sizeState.onLoad() }
     ModelCard {
         Row(
@@ -424,6 +499,7 @@ private fun ModelRow(
                 val tags = listOfNotNull(model.pipelineTag) + model.tags.take(MAX_TAGS_SHOWN)
                 val subtitle = tags.joinToString(" · ")
                 if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                if (notYetSupported) NotYetSupportedBadge()
                 SizeLine(sizeState)
                 SpeedHintLine(totalBytes = sizeState.estimate?.knownBytes, precisionHints = model.tags)
             }
@@ -432,6 +508,18 @@ private fun ModelRow(
         DownloadProgress(progress)
         OpenPageLink(actions.onOpenPage)
     }
+}
+
+/** A file-tree-derived, honest "may not run yet" label (see [com.phonetts.core.download.hf.
+ * HfCompatibility]) — greyed out, but never disables the Download button below it: the user may
+ * still want the weights on disk ahead of a future engine (spec rule 1: no hardcoded model list). */
+@Composable
+private fun NotYetSupportedBadge() {
+    Text(
+        "Not yet supported — may not run on this app yet",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = NOT_SUPPORTED_ALPHA),
+    )
 }
 
 /** Issue #7 + bug #4: the repo's download size isn't known until its file tree is fetched, so this
@@ -586,3 +674,4 @@ private const val THOUSAND = 1000.0
 private const val MB_TO_GB_THRESHOLD = 1024.0
 private const val SECONDS_PER_MINUTE = 60L
 private const val MINUTES_PER_HOUR = 60L
+private const val NOT_SUPPORTED_ALPHA = 0.5f

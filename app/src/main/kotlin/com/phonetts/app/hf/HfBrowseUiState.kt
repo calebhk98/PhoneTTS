@@ -1,5 +1,6 @@
 package com.phonetts.app.hf
 
+import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.download.hf.HfSizeEstimate
@@ -18,11 +19,6 @@ data class HfBrowseUiState(
     // The most recent error, for a quick inline banner; every error (this one included) is also
     // retained in [errorLog] for the session so it can be read/copied later (issue #3).
     val error: String? = null,
-    // Every model already in the catalog (this session's downloads AND anything imported in a
-    // prior session) keyed by the SAME sanitized id every engine's descriptor.modelId uses
-    // (ModelStorage.sanitize) — so "is this row already installed" survives leaving/reopening
-    // this screen, not just the moment right after a fresh download completes.
-    val installedIds: Set<String> = emptySet(),
     // Set when a chosen repo ships more than one weight precision and the user must pick one
     // (a budget-device win: fetch only fp16/q8 instead of every variant). Null otherwise.
     val variantChoice: VariantChoice? = null,
@@ -33,9 +29,18 @@ data class HfBrowseUiState(
     // until its file tree has been listed, so this starts empty and fills in as the user asks.
     val sizeEstimates: Map<String, HfSizeEstimate> = emptyMap(),
     val sizeLoading: Set<String> = emptySet(),
+    // Repo ids whose file tree, once listed, had no file a registered runtime in this app can load
+    // yet (see com.phonetts.core.download.hf.HfCompatibility) — drives the "Not yet supported" grey
+    // badge. Filled in alongside [sizeEstimates] since both need the same file-tree fetch; a repo
+    // not yet checked is simply absent here (no badge shown), never assumed unsupported.
+    val notYetSupportedIds: Set<String> = emptySet(),
     // Retained for the whole session (not just a transient toast) so the user can scroll back and
     // copy an error that already scrolled off screen (issue #3).
     val errorLog: List<HfBrowseError> = emptyList(),
+    // Persistent (not just this session — see DownloadDiagnosticsLog) record of download failures
+    // and "downloaded, no engine yet" imports, mirrored into state so the Browse screen's dialog is
+    // driven by the same collectAsState() flow as everything else.
+    val diagnostics: List<DiagnosticsEntry> = emptyList(),
     // Sort/filter controls (issue #6) — the *choices* for tagFilter come from the current results
     // (see HfResultsView.availableTags), never a hardcoded list.
     val sort: HfSortOption = HfSortOption.MOST_DOWNLOADS,

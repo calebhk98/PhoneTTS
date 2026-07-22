@@ -3,9 +3,13 @@ package com.phonetts.app.hf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.ModelStorage
+import com.phonetts.app.UserPickRequiredException
 import com.phonetts.core.download.builtin.BuiltInCatalog
 import com.phonetts.core.download.builtin.BuiltInModel
+import com.phonetts.core.download.hf.DiagnosticsEntry
+import com.phonetts.core.download.hf.DiagnosticsKind
 import com.phonetts.core.download.hf.HfCatalog
+import com.phonetts.core.download.hf.HfCompatibility
 import com.phonetts.core.download.hf.HfDownloadItem
 import com.phonetts.core.download.hf.HfDownloadPlan
 import com.phonetts.core.download.hf.HfDownloadProgress
@@ -17,7 +21,6 @@ import com.phonetts.core.download.hf.HfSortOption
 import com.phonetts.core.download.hf.HfTreeEntry
 import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.QuantizationVariant
-import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.registry.ModelCatalog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +51,7 @@ class HfBrowseViewModel(
     // the real clock on device.
     private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
-    private val mutableState = MutableStateFlow(HfBrowseUiState(installedIds = installedIdsSnapshot()))
+    private val mutableState = MutableStateFlow(HfBrowseUiState())
     val state: StateFlow<HfBrowseUiState> = mutableState.asStateFlow()
 
     // One coroutine per repo id currently in flight (listing files, or fetching them) — a map, not
@@ -69,12 +72,15 @@ class HfBrowseViewModel(
     // closed: no network just leaves results empty with an error line, the recommended list still shows.
     init {
         search()
+        loadDiagnostics()
     }
 
-    /** True if [rawId] (an [HfModelSummary.id] or [BuiltInModel.id]) is already in the catalog. */
-    fun isInstalled(rawId: String): Boolean = ModelStorage.sanitize(rawId) in mutableState.value.installedIds
-
-    private fun installedIdsSnapshot(): Set<String> = modelCatalog.list().map { it.modelId }.toSet()
+    /** True if [rawId] (an [HfModelSummary.id] or [BuiltInModel.id]) is already on disk — resolved
+     * OR unresolved (bug #6: [ModelCatalog.isKnown], not [ModelCatalog.list] alone, so a
+     * downloaded-but-unidentified bundle shows "Installed" rather than inviting a redownload). Read
+     * straight from the catalog (the SSOT) on every call rather than a locally cached copy, so it
+     * can never drift stale. */
+    fun isInstalled(rawId: String): Boolean = modelCatalog.isKnown(ModelStorage.sanitize(rawId))
 
     /** The current results after [HfBrowseUiState.sort]/[HfBrowseUiState.tagFilter] are applied — a
      * pure recompute over already-fetched data (issue #6), never a second network call. Takes
@@ -133,9 +139,11 @@ class HfBrowseViewModel(
     }
 
     /**
-     * Fetch just the repo's total download size, without downloading it (issue #7). Cached in
-     * state once known so re-opening the screen or scrolling doesn't refetch. A model whose size
-     * can't be determined (network hiccup) simply stays unknown — never a guessed number.
+     * Fetch just the repo's total download size, without downloading it (issue #7) — and, from the
+     * same file tree, whether this app has anything that can load it yet (the "Not yet supported"
+     * grey badge, [HfCompatibility]). Cached in state once known so re-opening the screen or
+     * scrolling doesn't refetch. A model whose size can't be determined (network hiccup) simply
+     * stays unknown — never a guessed number, and never labeled unsupported on a failed fetch.
      */
     fun loadSize(modelId: String) {
         val current = mutableState.value
@@ -145,10 +153,13 @@ class HfBrowseViewModel(
             runCatching { withContext(Dispatchers.IO) { catalog.listFiles(modelId) } }
                 .onSuccess { files ->
                     val estimate = HfSizeEstimator.estimate(files)
+                    val supported = HfCompatibility.hasRunnableFiles(files)
                     mutableState.update {
                         it.copy(
                             sizeLoading = it.sizeLoading - modelId,
                             sizeEstimates = it.sizeEstimates + (modelId to estimate),
+                            notYetSupportedIds =
+                                if (supported) it.notYetSupportedIds - modelId else it.notYetSupportedIds + modelId,
                         )
                     }
                 }.onFailure { e ->
@@ -218,7 +229,7 @@ class HfBrowseViewModel(
                             }
                         },
                     )
-                }.onSuccess { descriptor -> completeDownload(modelId, descriptor) }
+                }.onSuccess { completeDownload(modelId) }
                     .onFailure { e -> failDownload(modelId, e) }
             }
     }
@@ -244,25 +255,55 @@ class HfBrowseViewModel(
         }
     }
 
-    private fun completeDownload(
+    // ModelCatalog already has [descriptor] cataloged by the time this runs (ModelImporter.import
+    // added it before returning), so isInstalled()'s live modelCatalog.isKnown() check already
+    // reflects it — nothing to update here beyond ending the progress tracking.
+    private fun completeDownload(modelId: String) {
+        downloadJobs.remove(modelId)
+        mutableState.update { it.copy(downloads = it.downloads - modelId) }
+    }
+
+    // Bug #6: a resolve failure during a Browse download is NOT a network/IO failure — the bytes
+    // landed fine and ModelImporter already recorded the bundle as an UnresolvedModel (issue #8,
+    // ModelCatalog.markUnresolved) before rethrowing this. Treat it as "installed, no engine yet":
+    // no error banner/errorLog entry (that's for real failures), just a diagnostics-log row so the
+    // user can see which engine is worth adding next. isInstalled() already reflects it live via
+    // ModelCatalog.isKnown().
+    private fun completeUnresolvedDownload(
         modelId: String,
-        descriptor: ModelDescriptor,
+        e: UserPickRequiredException,
     ) {
         downloadJobs.remove(modelId)
-        mutableState.update {
-            it.copy(downloads = it.downloads - modelId, installedIds = it.installedIds + descriptor.modelId)
-        }
+        recordDiagnostics(
+            DiagnosticsEntry(
+                atMs = clock(),
+                modelId = modelId,
+                kind = DiagnosticsKind.NO_ENGINE_YET,
+                detail = e.explanation,
+            ),
+        )
+        mutableState.update { it.copy(downloads = it.downloads - modelId) }
     }
 
     // Cancellation is a user action, not a failure — let it propagate; cancelDownload already reset
-    // the UI. Only real errors surface an error line AND join the retained/copyable log (issue #3).
+    // the UI. Only real errors surface an error line AND join the retained/copyable log (issue #3)
+    // AND the persistent diagnostics log (bug: user-tracked download log). A resolve failure (bug
+    // #6, "downloaded, no engine yet") is a distinct, non-error outcome — see
+    // [completeUnresolvedDownload].
     private fun failDownload(
         modelId: String,
         e: Throwable,
     ) {
         if (e is CancellationException) throw e
+        if (e is UserPickRequiredException) {
+            completeUnresolvedDownload(modelId, e)
+            return
+        }
         downloadJobs.remove(modelId)
         val message = logError(modelId, e)
+        recordDiagnostics(
+            DiagnosticsEntry(atMs = clock(), modelId = modelId, kind = DiagnosticsKind.FAILURE, detail = message),
+        )
         mutableState.update { it.copy(downloads = it.downloads - modelId, error = message) }
     }
 
@@ -278,5 +319,36 @@ class HfBrowseViewModel(
             current.copy(errorLog = (listOf(entry) + current.errorLog).take(MAX_HF_ERROR_LOG))
         }
         return message
+    }
+
+    /** Clear the persistent diagnostics log (mirrors [DownloadDiagnosticsLog.clear] into state). */
+    fun clearDiagnostics() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { downloader.diagnosticsLog.clear() }
+            mutableState.update { it.copy(diagnostics = emptyList()) }
+        }
+    }
+
+    // Reads the persistent log off the main thread and mirrors it into [state] so the Browse
+    // screen's dialog is driven by the same collectAsState() flow as everything else, rather than
+    // reaching into HfDownloader/DownloadDiagnosticsLog directly from Compose.
+    private fun loadDiagnostics() {
+        viewModelScope.launch {
+            val entries = withContext(Dispatchers.IO) { downloader.diagnosticsLog.entries() }
+            mutableState.update { it.copy(diagnostics = entries) }
+        }
+    }
+
+    // Persists [entry] then re-reads the log so [state] stays exactly what's on disk (rather than
+    // hand-maintaining a parallel in-memory copy that could drift from it).
+    private fun recordDiagnostics(entry: DiagnosticsEntry) {
+        viewModelScope.launch {
+            val entries =
+                withContext(Dispatchers.IO) {
+                    downloader.diagnosticsLog.record(entry)
+                    downloader.diagnosticsLog.entries()
+                }
+            mutableState.update { it.copy(diagnostics = entries) }
+        }
     }
 }
