@@ -71,6 +71,69 @@ class DetectionFailureExplainerTest {
     }
 
     @Test
+    fun `a raw PyTorch or safetensors bundle is explained by its format, not missing companions`() {
+        val bundle =
+            ModelBundle(id = "kokoro-torch", fileNames = setOf("model.safetensors", "config.json"))
+        val engine = FakeEngine(id = "engine-a")
+
+        val report = explainer.explain(bundle, listOf(engine))
+
+        assertTrue(report.weightFormatIssue!!.contains("PyTorch"))
+        assertTrue(report.summary.contains("PyTorch"))
+        assertTrue(report.summary.contains("cannot run", ignoreCase = true))
+        // "cannot run", never "coming soon" - raw torch has no on-device runtime here, ever.
+        assertFalse(report.summary.contains("coming soon", ignoreCase = true))
+    }
+
+    @Test
+    fun `an Apple MLX bundle is called out as wrong-platform, not not-yet`() {
+        val bundle =
+            ModelBundle(id = "Kokoro-82M-MLX-bf16", fileNames = setOf("model.safetensors", "config.json"))
+
+        val report = explainer.explain(bundle, listOf(FakeEngine(id = "engine-a")))
+
+        assertTrue(report.summary.contains("MLX"))
+        assertTrue(report.summary.contains("Apple"))
+        assertTrue(report.summary.contains("cannot run", ignoreCase = true))
+        assertFalse(report.summary.contains("coming soon", ignoreCase = true))
+    }
+
+    @Test
+    fun `an Apple CoreML mlpackage is called out as wrong-platform`() {
+        val bundle =
+            ModelBundle(
+                id = "coreml-voice",
+                fileNames = setOf("Model.mlpackage/weights.bin", "Model.mlpackage/Manifest.json"),
+            )
+
+        val report = explainer.explain(bundle, listOf(FakeEngine(id = "engine-a")))
+
+        assertTrue(report.summary.contains("CoreML"))
+        assertTrue(report.summary.contains("Apple"))
+        assertTrue(report.summary.contains("cannot run", ignoreCase = true))
+    }
+
+    @Test
+    fun `a bare gguf without its manifest is explained by the missing sidecar`() {
+        val bundle = ModelBundle(id = "orpheus-tts", fileNames = setOf("orpheus-3b.gguf"))
+
+        val report = explainer.explain(bundle, listOf(FakeEngine(id = "engine-a")))
+
+        assertTrue(report.summary.contains("GGUF"))
+        assertTrue(report.summary.contains("manifest") || report.summary.contains(".gguf.json"))
+    }
+
+    @Test
+    fun `a plain onnx bundle keeps the companion-file explanation, not a format one`() {
+        val bundle = ModelBundle(id = "onnx-only", fileNames = setOf("model.onnx"))
+
+        val report = explainer.explain(bundle, listOf(FakeEngine(id = "engine-a")))
+
+        assertEquals(null, report.weightFormatIssue)
+        assertTrue(report.summary.contains("bare weights file", ignoreCase = true))
+    }
+
+    @Test
     fun `explaining does not mutate resolver state or require a Resolver at all`() {
         // The explainer takes only a bundle and a plain engine list -- no Resolver, no
         // OverrideStore -- proving it is read-only narration bolted onto nothing stateful.

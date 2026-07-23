@@ -86,6 +86,26 @@ fun HelpScreen(
             )
         }
 
+        Section("Which model formats work, and which cannot") {
+            Body(
+                "This app runs models on ONNX and a native GGUF/LiteRT backend. A model has to already " +
+                    "be in a format the app's own runtimes read - it cannot run a format by downloading " +
+                    "and executing new code, which Android blocks.",
+            )
+            Bullet("Works now: ONNX (.onnx), and native GGUF stacks (like the recommended CosyVoice3).")
+            Bullet(
+                "Needs converting first: raw PyTorch or safetensors, NVIDIA NeMo (.nemo), and " +
+                    "TensorFlow Lite (.tflite). These can often be converted to ONNX on a computer, then " +
+                    "sideloaded here.",
+            )
+            Bullet(
+                "Cannot run here at all: Apple MLX (Metal) and Apple CoreML (Neural Engine). They only " +
+                    "run on Apple hardware and there is no Android runtime for them - this is not a " +
+                    "'coming soon', they will never run in this app. Look for an ONNX or LiteRT sibling " +
+                    "of the model instead.",
+            )
+        }
+
         Section("Troubleshooting") {
             Q("No sound, or it's garbled?", "Piper/Kitten/Kokoro need the espeak add-on in the build; MeloTTS doesn't.")
             Q("Which Kokoro file?", "The fp32 onnx/model.onnx — the q8f16 one crashes the runtime.")
