@@ -10,6 +10,7 @@ import com.phonetts.app.runtime.NativeCosyVoiceRuntime
 import com.phonetts.app.runtime.NativeGgmlTtsRuntime
 import com.phonetts.app.runtime.OnnxRuntime
 import com.phonetts.app.sideload.SideloadCoordinator
+import com.phonetts.app.store.FilesDurableStore
 import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
 import com.phonetts.core.download.hf.HfCatalog
@@ -36,6 +37,8 @@ import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.RuntimeRegistry
 import com.phonetts.core.resolver.Resolver
 import com.phonetts.core.sideload.DirectoryBundleReader
+import com.phonetts.core.store.DurableErrorLog
+import com.phonetts.core.store.FavoritesStore
 import com.phonetts.core.sideload.ModelImporter
 import com.phonetts.core.storage.ModelStorageMigrator
 import com.phonetts.core.update.UpdateChecker
@@ -274,6 +277,27 @@ class AppGraph(context: Context) {
     // history (issue #39, off-by-default power-user view) rides the same preference store.
     val resourceUsageStore = ResourceUsageStore(preferenceStore)
     val benchmarkHistory = BenchmarkHistory(preferenceStore)
+
+    // Durable JSON-document storage foundation (issue #114): one filesDir-backed home shared by
+    // every "must survive a restart" store below, mirroring how DownloadDiagnosticsLog persists but
+    // generalised behind the :core DurableStore seam. Lives under filesDir/durable (app-private
+    // internal storage), so it is untouched by a model-storage relocation (only weights move).
+    private val durableStore = FilesDurableStore(java.io.File(appContext.filesDir, FilesDurableStore.DIRECTORY_NAME))
+
+    /**
+     * The shared Favorites store the tournament (#113), home-favorites (#119), and persistence (#114)
+     * work consume: favorite voices (modelId + voiceId), favorite models (modelId), and flagged/
+     * downvoted models (modelId + optional reason). Loaded from disk at construction, persisted on
+     * every change. Distinct from [favoriteVoices] (the older per-language default-voice preference).
+     */
+    val favoritesStore = FavoritesStore(durableStore)
+
+    /**
+     * The durable app-wide error/diagnostics log (issue #88 + #114): survives process death, unlike
+     * the in-memory Browse session error log. Provided here as the sink; routing the Browse
+     * search/size errors into it is a later, separate change (that VM is intentionally untouched now).
+     */
+    val durableErrorLog = DurableErrorLog(durableStore)
 
     /**
      * A fresh scratch file in app cache for a [com.phonetts.core.audio.buffer.ChunkSpill] (issue #34).
