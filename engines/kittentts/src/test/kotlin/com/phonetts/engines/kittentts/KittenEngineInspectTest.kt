@@ -114,6 +114,90 @@ class KittenEngineInspectTest {
     }
 
     @Test
+    fun `onnx-community v0-1 bin layout is claimed by its kitten voice signature`() {
+        // onnx-community/kitten-tts-nano-0.1-ONNX: a generic style_text_to_speech_2 config.json,
+        // tokenizer.json, and voices/expr-voice-*.bin (NO voices.npz, NO kitten_tts marker). It is
+        // recognized by the KittenTTS voice-name signature so the engine that can run it owns it,
+        // instead of Kokoro mislabeling it (issue #110 / #111).
+        val bundle =
+            ModelBundle(
+                id = "kitten-v0.1-onnx-community",
+                fileNames =
+                    setOf(
+                        "onnx/model.onnx",
+                        KittenEngine.CONFIG_FILE,
+                        "tokenizer.json",
+                        "voices/expr-voice-2-m.bin",
+                        "voices/expr-voice-2-f.bin",
+                    ),
+                sideFiles = mapOf(KittenEngine.CONFIG_FILE to """{"model_type":"style_text_to_speech_2"}"""),
+                rootPath = "/models/kitten-v0.1",
+            )
+
+        val match = assertNotNull(engine.inspect(bundle))
+
+        assertEquals(KittenEngine.ENGINE_ID, match.engineId)
+        assertEquals(
+            setOf("expr-voice-2-f", "expr-voice-2-m"),
+            match.descriptor.voices.map { it.id }.toSet(),
+        )
+        assertEquals(
+            "/models/kitten-v0.1/voices",
+            match.descriptor.assetPaths[KittenEngine.VOICES_DIR_ASSET],
+        )
+    }
+
+    @Test
+    fun `a style_text_to_speech_2 bin bundle whose voices are not the kitten signature is refused`() {
+        // A Kokoro-style bundle (af_/bf_ voices under voices/) must NOT be claimed by KittenTTS --
+        // that layout belongs to Kokoro. Fail closed on the missing kitten voice-name signature.
+        val bundle =
+            ModelBundle(
+                id = "kokoro-lookalike",
+                fileNames =
+                    setOf(
+                        "model.onnx",
+                        KittenEngine.CONFIG_FILE,
+                        "tokenizer.json",
+                        "voices/af_heart.bin",
+                        "voices/bf_emma.bin",
+                    ),
+                sideFiles = mapOf(KittenEngine.CONFIG_FILE to """{"model_type":"style_text_to_speech_2"}"""),
+            )
+
+        assertInspectRejects(engine, bundle)
+    }
+
+    @Test
+    fun `the v0-8 ONNX2 variant it cannot run is refused rather than claimed then crashed`() {
+        // onnx-community/KittenTTS-*-v0.8-ONNX ship voices.npz + a kitten_config.json whose
+        // "type":"ONNX2" graph contract differs from the verified v0.1 graph this engine implements.
+        // The kitten_tts marker is present (via the model_file name) but the ONNX2 contract makes
+        // inspect() fail closed rather than claim-then-crash (issue #110).
+        val v08Config =
+            """{"name":"Kitten TTS Nano","version":"0.8","type":"ONNX2",""" +
+                """"model_file":"kitten_tts_nano_v0_8.onnx"}"""
+        val bundle =
+            ModelBundle(
+                id = "kitten-v0.8",
+                fileNames =
+                    setOf(
+                        "onnx/model.onnx",
+                        KittenEngine.CONFIG_FILE,
+                        KittenEngine.KITTEN_CONFIG_FILE,
+                        KittenEngine.VOICES_FILE,
+                    ),
+                sideFiles =
+                    mapOf(
+                        KittenEngine.CONFIG_FILE to """{"model_type":"style_text_to_speech_2"}""",
+                        KittenEngine.KITTEN_CONFIG_FILE to v08Config,
+                    ),
+            )
+
+        assertInspectRejects(engine, bundle)
+    }
+
+    @Test
     fun `genuine KittenTTS bundle is claimed and produces a complete descriptor`() {
         val bundle =
             ModelBundle(

@@ -114,6 +114,14 @@ internal class KokoroEngine(
 
         val voiceIds = voiceIdsIn(bundle)
         if (voiceIds.isEmpty()) return null
+        // The generic StyleTTS2 marker (`style_text_to_speech_2`) is not enough on its own: a
+        // KittenTTS export wears the EXACT same marker + tokenizer.json + voices/<name>.bin layout
+        // (onnx-community/kitten-tts-nano-0.1-ONNX). The one thing separating them is the voice set
+        // -- a genuine Kokoro table never uses KittenTTS's `expr-voice-*` names. So when the marker
+        // is the generic one (not an explicit "kokoro"), fail closed on a voice set that is entirely
+        // that foreign signature, letting KittenTTS own it (issue #111). An explicit "family":
+        // "kokoro" is a strong enough signal to trust as-is.
+        if (config.family != EXPLICIT_KOKORO_FAMILY && voiceIds.all { it.startsWith(FOREIGN_VOICE_PREFIX) }) return null
 
         return Manifest(config, voiceIds)
     }
@@ -323,7 +331,14 @@ internal class KokoroEngine(
 
         // Either our own curated "family": "kokoro" or the real onnx-community export's
         // "model_type": "style_text_to_speech_2" (StyleTTS2) identifies a Kokoro bundle.
-        private val FAMILY_MARKERS = setOf("kokoro", "style_text_to_speech_2")
+        private const val EXPLICIT_KOKORO_FAMILY = "kokoro"
+        private val FAMILY_MARKERS = setOf(EXPLICIT_KOKORO_FAMILY, "style_text_to_speech_2")
+
+        // KittenTTS's voice-id signature (`expr-voice-2-m`, ...). A Kokoro voice table never uses
+        // it; a StyleTTS2 bundle whose WHOLE voice set is this prefix is a KittenTTS export wearing
+        // the generic marker, which KittenTTS -- not Kokoro -- owns (issue #111). Not a reference to
+        // the KittenTTS engine (rule 5): just a foreign naming scheme this engine refuses.
+        private const val FOREIGN_VOICE_PREFIX = "expr-voice-"
 
         // VALIDATED (scripts/model-verify/run_kokoro.py): the real per-voice files live under this
         // directory, one `<name>.bin` per voice -- not a single `voices.json`/`voices.npz` table.

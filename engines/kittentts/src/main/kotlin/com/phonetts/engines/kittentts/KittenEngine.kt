@@ -20,6 +20,7 @@ import com.phonetts.engines.common.floatsOrError
 import com.phonetts.engines.common.joinAssetPath
 import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
+import com.phonetts.engines.common.sideFileContainsAnyMarker
 import com.phonetts.engines.common.sideFileContainsMarker
 import java.io.File
 
@@ -30,29 +31,28 @@ import java.io.File
  * per-voice weight file; the 8 built-in voices are 256-dim style embedding rows in `voices.npz`,
  * selected by name at synthesis time exactly like [com.phonetts.engines.kokoro.KokoroEngine].
  *
- * Companion-file fingerprint used by [inspect] (spec §6.2 / §9.1 -- fail closed):
- *  - a `.onnx` weights file,
- *  - a config side file whose contents mention [CONFIG_MARKER] -- checked in
- *    [CONFIG_FILE_CANDIDATES] order, [KITTEN_CONFIG_FILE] first. The genuine ONNX conversions
- *    (`onnx-community/KittenTTS-{Nano,Mini,Micro}-v0.8-ONNX`) put the marker in a sibling
- *    `kitten_config.json` and leave `config.json` as a generic `{"model_type":
- *    "style_text_to_speech_2"}`, while other bundles put it directly in [CONFIG_FILE]; whichever
- *    file actually carries the marker is the one recorded under [CONFIG_ASSET_KEY] so [doLoad]
- *    reads the right bytes back,
- *  - a [VOICES_FILE] (`voices.npz`) file present by name. [ModelBundle] only carries small
- *    *text* side files for fingerprinting (`DirectoryBundleReader` explicitly excludes `.npz` as
- *    a weight-shaped binary format), so `inspect()`/`forcedMatch()` can only confirm this file
- *    exists -- they cannot read its embeddings. That is enough to fail closed on a bare `.onnx`
- *    or a foreign bundle; the real per-voice rows are decoded later by [KittenVoiceTable] once
- *    [load] has actual bytes to read.
+ * [inspect] recognizes TWO real companion layouts (spec §6.2 / §9.1 -- fail closed), both keyed on
+ * a `.onnx` weights file:
+ *  - **`voices.npz` layout** (KittenML `kitten-tts-nano-0.1/0.2`, and the onnx-community v0.8
+ *    conversions): a config side file mentioning [CONFIG_MARKER] -- checked in
+ *    [CONFIG_FILE_CANDIDATES] order, [KITTEN_CONFIG_FILE] first, since the onnx-community exports
+ *    put it in a sibling `kitten_config.json` and leave `config.json` generic -- plus a
+ *    [VOICES_FILE] (`voices.npz`) present by name. Whichever file carries the marker is recorded
+ *    under [CONFIG_ASSET_KEY] so [doLoad] reads the right bytes.
+ *  - **`voices/<name>.bin` layout** (`onnx-community/kitten-tts-nano-0.1-ONNX`, issue #111): the
+ *    SAME `style_text_to_speech_2` config + tokenizer + `voices/<name>.bin` files Kokoro ships,
+ *    distinguished ONLY by the KittenTTS `expr-voice-*` voice-name signature ([KITTEN_VOICE_PREFIX]).
+ *    Without that discriminator Kokoro would claim it and mislabel it "Kokoro".
  *
- * **int8 caveat (Mini/Micro):** the `onnx-community` Mini and Micro variants ship int8-quantized
- * weights. Companion-file fingerprinting here is dtype-agnostic -- it only looks at file names and
- * config text, never at the graph's tensor dtypes -- so a quantized bundle is claimed exactly like
- * the fp32 Nano one. Whether the quantized graph's numerics behave identically once real weights
- * are loaded (rounding/precision effects on `style`/`speed` inputs, output loudness, etc.) is not
- * verified by this fingerprint and is pending on-device load-time verification; if that ever needs
- * gating, it belongs in [doLoad]/[KittenVoiceTable], not in this fail-closed identification step.
+ * [ModelBundle] only carries small *text* side files for fingerprinting (`DirectoryBundleReader`
+ * excludes `.npz`/`.bin` weight-shaped binaries), so `inspect()` confirms the voice files exist by
+ * name only; the real per-voice rows are decoded later by [KittenVoiceTable] (npz) or
+ * [KittenVoiceBinReader] (bin) once [load] has bytes.
+ *
+ * **v0.8 fail-closed (issue #110):** the onnx-community v0.8 exports declare `"type": "ONNX2"` in
+ * `kitten_config.json` -- a graph contract that differs from the verified v0.1 signature
+ * [synthesizeSentence] hard-codes. Claiming it would only crash at `run()`, so both [inspect] and
+ * [doLoad] fail closed on the [UNSUPPORTED_CONTRACT_MARKER] rather than claim-then-crash.
  */
 internal class KittenEngine(
     context: EngineContext,
@@ -75,10 +75,46 @@ internal class KittenEngine(
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         val modelFile = bundle.fileNames.firstOrNull { it.endsWith(MODEL_SUFFIX) } ?: return null
-        val configFile = markedConfigFile(bundle) ?: return null
-        if (!bundle.hasFile(VOICES_FILE)) return null
+        return inspectNpzLayout(bundle, modelFile) ?: inspectBinLayout(bundle, modelFile)
+    }
 
-        return EngineMatch(id, buildDescriptor(bundle, modelFile, configFile, VOICE_NAMES, Origin.BUILT_IN))
+    /**
+     * The `voices.npz` layout (KittenML `kitten-tts-nano-0.1/0.2`, `onnx-community` v0.8): a
+     * `kitten_tts`-marked config side file plus a `voices.npz`. Fails closed on the v0.8 `ONNX2`
+     * graph contract (issue #110): that graph differs from the verified v0.1 signature this
+     * engine's [synthesizeSentence] hard-codes, so claiming it would only crash at `run()`.
+     */
+    private fun inspectNpzLayout(
+        bundle: ModelBundle,
+        modelFile: String,
+    ): EngineMatch? {
+        val configFile = markedConfigFile(bundle, KITTEN_MARKERS) ?: return null
+        if (!bundle.hasFile(VOICES_FILE)) return null
+        if (bundle.sideFileContainsMarker(configFile, UNSUPPORTED_CONTRACT_MARKER)) return null
+
+        val voicesAsset = VOICES_ASSET_KEY to joinAssetPath(bundle, VOICES_FILE)
+        return EngineMatch(
+            id,
+            buildDescriptor(bundle, modelFile, configFile, VOICE_NAMES, Origin.BUILT_IN, voicesAsset),
+        )
+    }
+
+    /**
+     * The `voices/<name>.bin` layout (`onnx-community/kitten-tts-nano-0.1-ONNX`, issue #111): the
+     * same StyleTTS2 marker + `voices/<name>.bin` layout Kokoro uses, distinguished ONLY by its
+     * KittenTTS `expr-voice-*` voice-name signature. That signature is what makes this KittenTTS's
+     * and not Kokoro's; a bundle whose `voices/<name>.bin` files are not entirely the kitten set is
+     * refused (fail closed, spec §9.1 rule 4).
+     */
+    private fun inspectBinLayout(
+        bundle: ModelBundle,
+        modelFile: String,
+    ): EngineMatch? {
+        val configFile = markedConfigFile(bundle, STYLE_MARKERS) ?: return null
+        val voiceIds = kittenBinVoiceIds(bundle) ?: return null
+
+        val voicesAsset = VOICES_DIR_ASSET to joinAssetPath(bundle, VOICES_DIR)
+        return EngineMatch(id, buildDescriptor(bundle, modelFile, configFile, voiceIds, Origin.BUILT_IN, voicesAsset))
     }
 
     override fun forcedMatch(bundle: ModelBundle): EngineMatch {
@@ -87,36 +123,103 @@ internal class KittenEngine(
         // hence require/IllegalArgumentException, consistent with the other engines' forcedMatch.
         requireNotNull(modelFile) { "bundle '${bundle.id}' has no $MODEL_SUFFIX weights file; KittenTTS cannot run it" }
 
-        // User-assigned bundle: honor the real 8-voice table by name when voices.npz is present,
-        // otherwise supply the family default of a single generic voice so the dropdowns have
-        // something to render (spec §6.2 -- "the chosen engine supplies its family defaults").
-        val voiceNames = if (bundle.hasFile(VOICES_FILE)) VOICE_NAMES else DEFAULT_FAMILY_VOICES
         // The user's manual assignment is authoritative and never refuses -- but still prefer
-        // whichever config file actually carries the marker (same fingerprint as inspect()) so
-        // doLoad() reads the right side file; fall back to CONFIG_FILE when neither is present.
-        val configFile = markedConfigFile(bundle) ?: CONFIG_FILE
-
-        return EngineMatch(id, buildDescriptor(bundle, modelFile, configFile, voiceNames, Origin.SIDELOADED))
+        // whichever config file actually carries a marker (same fingerprint as inspect()) so
+        // doLoad() reads the right side file; fall back to CONFIG_FILE when none is present.
+        val configFile = markedConfigFile(bundle, STYLE_MARKERS) ?: CONFIG_FILE
+        val binVoiceIds = kittenBinVoiceIds(bundle)
+        return when {
+            // voices.npz present: honor the real 8-voice table by name (spec §6.2 family defaults).
+            bundle.hasFile(VOICES_FILE) ->
+                EngineMatch(
+                    id,
+                    buildDescriptor(
+                        bundle,
+                        modelFile,
+                        configFile,
+                        VOICE_NAMES,
+                        Origin.SIDELOADED,
+                        VOICES_ASSET_KEY to joinAssetPath(bundle, VOICES_FILE),
+                    ),
+                )
+            // voices/<name>.bin present: honor the discovered per-file voices (v0.1 onnx-community).
+            binVoiceIds != null ->
+                EngineMatch(
+                    id,
+                    buildDescriptor(
+                        bundle,
+                        modelFile,
+                        configFile,
+                        binVoiceIds,
+                        Origin.SIDELOADED,
+                        VOICES_DIR_ASSET to joinAssetPath(bundle, VOICES_DIR),
+                    ),
+                )
+            // No voice table at all: supply a single generic voice so the dropdowns render.
+            else ->
+                EngineMatch(
+                    id,
+                    buildDescriptor(bundle, modelFile, configFile, DEFAULT_FAMILY_VOICES, Origin.SIDELOADED),
+                )
+        }
     }
 
     /**
-     * Returns whichever of [CONFIG_FILE_CANDIDATES] carries [CONFIG_MARKER] in [bundle], checking
-     * [KITTEN_CONFIG_FILE] first since the genuine `onnx-community` ONNX conversions put the marker
-     * there and leave [CONFIG_FILE] generic. `null` means neither side file mentions the marker --
+     * Returns whichever of [CONFIG_FILE_CANDIDATES] carries any of [markers] in [bundle], checking
+     * [KITTEN_CONFIG_FILE] first since the genuine `onnx-community` ONNX conversions put their
+     * marker there and leave [CONFIG_FILE] generic. `null` means no side file mentions a marker --
      * fail closed, never guess (spec §9.1 rule 4).
      */
-    private fun markedConfigFile(bundle: ModelBundle): String? =
-        CONFIG_FILE_CANDIDATES.firstOrNull { candidate -> bundle.sideFileContainsMarker(candidate, CONFIG_MARKER) }
+    private fun markedConfigFile(
+        bundle: ModelBundle,
+        markers: Collection<String>,
+    ): String? =
+        CONFIG_FILE_CANDIDATES.firstOrNull {
+                candidate ->
+            bundle.sideFileContainsAnyMarker(candidate, markers)
+        }
+
+    /**
+     * The KittenTTS `expr-voice-*` voice ids discovered from `voices/<name>.bin` files, or null
+     * when there are none OR when any `voices/<name>.bin` is NOT that kitten signature (so a Kokoro
+     * `voices/af_*.bin` table is never mistaken for KittenTTS's).
+     */
+    private fun kittenBinVoiceIds(bundle: ModelBundle): List<String>? {
+        val ids =
+            bundle.fileNames
+                .filter { it.startsWith(VOICES_DIR_PREFIX) && it.endsWith(KittenVoiceBinReader.BIN_SUFFIX) }
+                .map { it.removePrefix(VOICES_DIR_PREFIX).removeSuffix(KittenVoiceBinReader.BIN_SUFFIX) }
+                .sorted()
+        if (ids.isEmpty() || ids.any { !it.startsWith(KITTEN_VOICE_PREFIX) }) return null
+        return ids
+    }
 
     override fun isRuntimeAvailable(): Boolean = requireRuntime(context, RUNTIME_ID, engineLabel).isAvailable()
 
     override suspend fun doLoad(descriptor: ModelDescriptor) {
         val runtime = requireRuntime(context, RUNTIME_ID, engineLabel)
         val modelPath = requireAssetPath(descriptor, MODEL_ASSET_KEY, engineLabel)
+        requireSupportedContract(descriptor)
 
         session?.close()
         session = runtime.createSession(modelPath)
         loadVoiceTable(descriptor)
+    }
+
+    /**
+     * Load-time backstop for the v0.8 crash (issue #110): auto-detection already refuses an `ONNX2`
+     * bundle, but a user who force-assigns KittenTTS to one bypasses [inspect]. Re-check the config
+     * bytes here and fail with a clear message rather than letting the mismatched graph crash at
+     * `run()`. Unreadable config (e.g. a bare sideloaded `.onnx`) is skipped -- nothing to gate on.
+     */
+    private fun requireSupportedContract(descriptor: ModelDescriptor) {
+        val configPath = descriptor.assetPaths[CONFIG_ASSET_KEY] ?: return
+        val text = runCatching { String(fileReader(configPath), Charsets.UTF_8) }.getOrNull() ?: return
+        if (!text.contains(UNSUPPORTED_CONTRACT_MARKER, ignoreCase = true)) return
+        error(
+            "$engineLabel cannot run this variant: its config declares the '$UNSUPPORTED_CONTRACT_MARKER' " +
+                "graph contract, which differs from the verified v0.1 graph this engine implements",
+        )
     }
 
     override fun unload() {
@@ -168,8 +271,7 @@ internal class KittenEngine(
     }
 
     private fun loadVoiceTable(descriptor: ModelDescriptor) {
-        val tablePath = descriptor.assetPaths[VOICES_ASSET_KEY]
-        val entries = tablePath?.let { KittenVoiceTable.parse(fileReader(it)) }.orEmpty()
+        val entries = readVoiceEntries(descriptor)
 
         if (entries.isEmpty()) {
             // Sideloaded/forced-match bundle with no real voices.npz on disk: fall back to a
@@ -185,12 +287,26 @@ internal class KittenEngine(
         loadedVoices = entries.map { it.voice }
     }
 
+    /**
+     * Reads voice embeddings from whichever layout the descriptor recorded: the zipped `voices.npz`
+     * ([VOICES_ASSET_KEY]) or the per-file `voices/<name>.bin` directory ([VOICES_DIR_ASSET]).
+     * Empty when neither is present (a forced-match bare `.onnx`), which drives the fallback above.
+     */
+    private fun readVoiceEntries(descriptor: ModelDescriptor): List<KittenVoiceTable.Entry> {
+        descriptor.assetPaths[VOICES_ASSET_KEY]?.let { return KittenVoiceTable.parse(fileReader(it)) }
+        descriptor.assetPaths[VOICES_DIR_ASSET]?.let {
+            return KittenVoiceBinReader.readVoices(it, descriptor.voices, fileReader)
+        }
+        return emptyList()
+    }
+
     private fun buildDescriptor(
         bundle: ModelBundle,
         modelFile: String,
         configFile: String,
         voiceNames: List<String>,
         origin: Origin,
+        voicesAsset: Pair<String, String>? = null,
     ): ModelDescriptor {
         val voices = voiceNames.map { name -> Voice(id = name, name = name, language = LANGUAGE) }
         return ModelDescriptor(
@@ -211,12 +327,14 @@ internal class KittenEngine(
             // voices can be linearly interpolated into an in-between one (issue #42). A descriptor
             // fact the "mix voices" UI derives from — never a model-name special case (rule 5).
             supportsVoiceBlend = true,
+            // The voices asset key varies by layout (voices.npz vs a voices/ dir), so it is passed
+            // in by whichever fingerprint matched rather than hardcoded to one file here.
             assetPaths =
-                mapOf(
-                    MODEL_ASSET_KEY to joinAssetPath(bundle, modelFile),
-                    CONFIG_ASSET_KEY to joinAssetPath(bundle, configFile),
-                    VOICES_ASSET_KEY to joinAssetPath(bundle, VOICES_FILE),
-                ),
+                buildMap {
+                    put(MODEL_ASSET_KEY, joinAssetPath(bundle, modelFile))
+                    put(CONFIG_ASSET_KEY, joinAssetPath(bundle, configFile))
+                    voicesAsset?.let { (key, path) -> put(key, path) }
+                },
             // Approximate peak-RAM estimate (issue #38): KittenTTS is the tiny ~15M-param model, the
             // lightest engine here. A-priori only — refined by observed peak RAM.
             resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
@@ -259,11 +377,33 @@ internal class KittenEngine(
         // VALIDATED (docs/research/onnx-io.md): the real voice table is a `voices.npz` binary
         // archive, not a `voices.json` name array.
         const val VOICES_FILE = "voices.npz"
+
+        // The OTHER real layout: `onnx-community/kitten-tts-nano-0.1-ONNX` ships per-voice
+        // `voices/<name>.bin` files instead of a single voices.npz (issue #111).
+        const val VOICES_DIR = "voices"
+        private const val VOICES_DIR_PREFIX = "$VOICES_DIR/"
+
+        // KittenTTS's own marker; the generic StyleTTS2 marker the onnx-community exports share with
+        // Kokoro. The bin layout is distinguished from Kokoro's identical file layout by the kitten
+        // voice-name signature ([KITTEN_VOICE_PREFIX]), not by these markers alone.
         private const val CONFIG_MARKER = "kitten_tts"
+        private const val STYLE_TEXT_TO_SPEECH_MARKER = "style_text_to_speech_2"
+        private val KITTEN_MARKERS = listOf(CONFIG_MARKER)
+        private val STYLE_MARKERS = listOf(CONFIG_MARKER, STYLE_TEXT_TO_SPEECH_MARKER)
+
+        // The v0.8 conversions' `kitten_config.json` declares `"type": "ONNX2"` -- a graph contract
+        // that differs from the verified v0.1 signature [synthesizeSentence] implements. Its presence
+        // makes inspect()/load() fail closed rather than claim-then-crash (issue #110).
+        private const val UNSUPPORTED_CONTRACT_MARKER = "ONNX2"
+
+        // The prefix every KittenTTS voice id shares (`expr-voice-2-m`, ...). A Kokoro voice table
+        // never uses it, so it is the one signal separating the two identical StyleTTS2 bin layouts.
+        private const val KITTEN_VOICE_PREFIX = "expr-voice-"
 
         const val MODEL_ASSET_KEY = "model"
         const val CONFIG_ASSET_KEY = "config"
         const val VOICES_ASSET_KEY = "voices"
+        const val VOICES_DIR_ASSET = "voicesDir"
 
         // VALIDATED (docs/research/onnx-io.md) ONNX graph tensor names (KittenML/kitten-tts-nano-0.1).
         const val INPUT_IDS_KEY = "input_ids"
