@@ -85,6 +85,17 @@ data class HfResultFilters(
     val sizeFilter: HfSizeParamFilter = HfSizeParamFilter(),
     val language: String? = null,
     val rtfEstimates: Map<String, Double> = emptyMap(),
+    // Advanced filters (issue #107) — every one defaults to "no filter" so existing tag-only callers
+    // keep compiling and behaving identically. [compatibility]/[formats] are fetched per repo (same
+    // file-tree fetch the size estimate uses); [engineLabels] is derived from the summary alone (see
+    // HfEngineClassifier); [minRealtimeMultiple] is the RTF slider's size-derived estimate bound.
+    val compatibility: Map<String, RunCompatibility> = emptyMap(),
+    val supportedFilter: HfSupportedFilter = HfSupportedFilter.ALL,
+    val formats: Map<String, Set<HfFileFormat>> = emptyMap(),
+    val formatFilter: HfFileFormat? = null,
+    val minRealtimeMultiple: Double? = null,
+    val engineLabels: Map<String, String> = emptyMap(),
+    val engineFilter: String? = null,
 )
 
 /**
@@ -287,7 +298,8 @@ object HfResultsView {
         val sizeFilter = filters.sizeFilter
         val sized = filterBySize(tagged, filters.sizeEstimates, sizeFilter.minBytes, sizeFilter.maxBytes)
         val paramed = filterByParamCount(sized, filters.sizeEstimates, sizeFilter.minParams, sizeFilter.maxParams)
-        return sort(paramed, option, filters.sizeEstimates, filters.rtfEstimates)
+        val advanced = HfBrowseFilters.applyAdvanced(paramed, filters)
+        return sort(advanced, option, filters.sizeEstimates, filters.rtfEstimates)
     }
 
     // A tag menu longer than this is more scroll than signal on a phone; the most common tags are
