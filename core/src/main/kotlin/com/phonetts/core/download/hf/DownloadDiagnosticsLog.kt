@@ -7,17 +7,17 @@ import java.io.File
 
 /** What kind of thing one [DiagnosticsEntry] records. */
 enum class DiagnosticsKind {
-    /** A real network/IO download failure — the bytes never landed. */
+    /** A real network/IO download failure - the bytes never landed. */
     FAILURE,
 
     /** The bytes landed and were imported, but no registered engine could identify the bundle
-     * (spec rule 4 — a fail-closed `null`, not a guess). Not a failure: the model is on disk and
+     * (spec rule 4 - a fail-closed `null`, not a guess). Not a failure: the model is on disk and
      * usable once a matching engine is registered. */
     NO_ENGINE_YET,
 }
 
 /**
- * One row in the persistent Browse download diagnostics log. [atMs] is supplied by the caller —
+ * One row in the persistent Browse download diagnostics log. [atMs] is supplied by the caller -
  * this class does not read the wall clock itself, so it stays trivially testable with a fake time
  * source, matching every other :core seam.
  */
@@ -30,14 +30,14 @@ data class DiagnosticsEntry(
 )
 
 /**
- * A small **persistent** (survives process death / app restart — unlike a session-only error
+ * A small **persistent** (survives process death / app restart - unlike a session-only error
  * banner) log of Hugging Face download/import outcomes worth tracking over time: real failures
- * (naming the file + reason — never a bare URL) and "downloaded, but no engine claims it yet"
+ * (naming the file + reason - never a bare URL) and "downloaded, but no engine claims it yet"
  * imports, so the user can see which engine is worth adding next.
  *
  * Backed by one small JSON file, bounded to [MAX_ENTRIES] rows. Lives in `:core` (not `:app`) even
  * though only `:app`'s `HfDownloader`/Browse screen use it today, because it needs nothing beyond a
- * plain [File] — no Android `Context` — and this module already carries the `kotlinx.serialization`
+ * plain [File] - no Android `Context` - and this module already carries the `kotlinx.serialization`
  * compiler plugin `:app` does not. Every method does its own (small, bounded) file I/O and is meant
  * to be called from a background dispatcher, same as the download work itself.
  */

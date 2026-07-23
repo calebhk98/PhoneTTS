@@ -19,7 +19,7 @@ flow-matching → HiFT vocoder). On a 4 GB no-NPU phone the realistic experience
 
 ---
 
-## Q1 — Does any project run CosyVoice2 on a phone/edge device today?
+## Q1 - Does any project run CosyVoice2 on a phone/edge device today?
 
 ### The only real on-device path: llama.cpp / ggml (CrispASR + GGUF weights)
 
@@ -41,16 +41,16 @@ approach transfers directly to CosyVoice2.
 
 `[VERIFIED]` from the CrispASR repo (`cosyvoice3-tts` backend):
 - Runs as a "fully native C++ ggml implementation," no Python.
-- Platform coverage is *"all platforms where ggml compiles — CPU (x86, ARM), GPU (CUDA,
+- Platform coverage is *"all platforms where ggml compiles - CPU (x86, ARM), GPU (CUDA,
   Metal, Vulkan), and WebAssembly (4.3 MB)."* **ARM/mobile is explicitly in scope** via the
   single C++ binary.
 - It is **file-export-oriented** (`--tts-output out.wav`) but also plumbs into an HTTP
   server for streamed audio.
 - A `COSYVOICE3_FLOW_STEPS=5` env var halves the flow ODE steps (10→5) for faster synthesis
-  — a direct latency lever.
+  - a direct latency lever.
 - Source: <https://github.com/CrispStrobe/CrispASR> (and `COMPARISON.md` in the same repo).
 - The same author ships **CrisperWeaver**, an on-device Flutter speech app built on CrispASR
-  ggml — evidence the ggml runtime reaches phones — though that app is ASR-focused today:
+  ggml - evidence the ggml runtime reaches phones - though that app is ASR-focused today:
   <https://github.com/CrispStrobe/CrisperWeaver>
 
 `[VERIFIED]` upstream also gained a llama.cpp path: FunAudioLLM/CosyVoice **PR #1872** adds a
@@ -60,26 +60,26 @@ approach transfers directly to CosyVoice2.
 the PyTorch LLM weights to save memory. Status: **open PR** at time of research.
 - <https://github.com/FunAudioLLM/CosyVoice/pull/1872>
 
-### Alibaba MNN — NOT a CosyVoice path (despite being first-party-adjacent)
+### Alibaba MNN - NOT a CosyVoice path (despite being first-party-adjacent)
 
 MNN was the most plausible first-party mobile route (CosyVoice and MNN are both Alibaba /
 FunAudioLLM-adjacent), but I found **no CosyVoice example in MNN**:
 - `[VERIFIED]` MNN's `transformers/README.md` (LLM/`llmexport` docs) mentions **no TTS or
-  audio-generation model at all** — only *audio input* for multimodal LLMs
+  audio-generation model at all** - only *audio input* for multimodal LLMs
   (`-DLLM_SUPPORT_AUDIO=true`). No CosyVoice, no CosyVoice2.
   <https://github.com/alibaba/MNN/blob/master/transformers/README.md>
 - `[CLAIMED]` MNN's on-device TTS work is with **BertVITS2** and **Supertonic**
   (`supertonic-tts-mnn`), and its **TaoAvatar** offline avatar bundles an (unnamed,
   non-CosyVoice) TTS. These are non-autoregressive TTS, not the CosyVoice LLM path.
 - `[VERIFIED]` MNN *does* provide `llmexport`, which exports LLMs to ONNX then to MNN
-  format — so in principle the Qwen2-0.5B CosyVoice LM could be pushed through it, but
+  format - so in principle the Qwen2-0.5B CosyVoice LM could be pushed through it, but
   **nobody has published that**, and it would not handle the custom speech-token head,
   flow, or vocoder. Source: MNN transformers README (above).
 
 **Conclusion:** MNN is a capable mobile LLM engine but there is **no existing CosyVoice/
 CosyVoice2 MNN example**. Using MNN would mean doing the port yourself, with no reference.
 
-### sherpa-onnx — explicitly out of scope for autoregressive LLM-TTS
+### sherpa-onnx - explicitly out of scope for autoregressive LLM-TTS
 
 - `[VERIFIED]` sherpa-onnx (k2-fsa) supports **only non-autoregressive TTS**: VITS, Piper,
   Matcha(-TTS), Kokoro. Its TTS model list confirms this:
@@ -87,7 +87,7 @@ CosyVoice2 MNN example**. Using MNN would mean doing the port yourself, with no 
 - `[VERIFIED]` CosyVoice support is an **open feature request, not implemented**: issue
   **#3568** "[FEATURE] Add support for FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
   (<https://github.com/k2-fsa/sherpa-onnx/issues/3568>). CosyVoice's autoregressive Qwen2 LM
-  does not fit sherpa-onnx's fixed non-AR TTS graph model — an AR token loop with KV-cache
+  does not fit sherpa-onnx's fixed non-AR TTS graph model - an AR token loop with KV-cache
   is a different execution shape than what sherpa-onnx's TTS API assumes.
 
 **Conclusion:** sherpa-onnx will not run CosyVoice2, and there is no signal it's coming.
@@ -97,16 +97,16 @@ It is, however, the reference implementation for the *alternative* models (Q4).
 
 - **vLLM / TensorRT-LLM:** server-side only. CosyVoice2/3 has vLLM support (issue
   `vllm-project/vllm-omni#1552`) and TensorRT-LLM gives ~4x over HF transformers `[CLAIMED]`
-  — irrelevant to a phone but confirms the LLM is a standard-enough Qwen2 to run on
+  - irrelevant to a phone but confirms the LLM is a standard-enough Qwen2 to run on
   mainstream LLM engines.
 - **executorch / MLC-LLM / ncnn:** no CosyVoice2 port found for any of these.
 
 ---
 
-## Q2 — How is the autoregressive 0.5B LLM run on-device?
+## Q2 - How is the autoregressive 0.5B LLM run on-device?
 
 The practitioner answer is **GGUF + llama.cpp/ggml**, and the speech-token head *is*
-handled — this is the part people worried would break, and it was solved by adding
+handled - this is the part people worried would break, and it was solved by adding
 CosyVoice-specific tensors alongside the standard llama.cpp ones.
 
 `[VERIFIED]` tensor layout from the GGUF model card:
@@ -137,7 +137,7 @@ CosyVoice-specific tensors alongside the standard llama.cpp ones.
 - **Smallest viable synthesis combo (baked voice):** `llm-q4_k + flow-q8_0 + hift-f16 +
   voices` = **745 MB on disk**. F16 reference = 1.96 GB.
 - If you drop runtime WAV-cloning (ship only baked voices), you **do not need** the 462 MB
-  s3tokenizer or the 13 MB campplus at all — they are cloning-time front-end only.
+  s3tokenizer or the 13 MB campplus at all - they are cloning-time front-end only.
 
 `[VERIFIED]` quality vs quantization (the model card's own ASR-roundtrip WER test,
 `parakeet` transcribing the TTS output):
@@ -155,7 +155,7 @@ drift). Q8_0 flow is called perceptually identical to F16. So int4 LLM / int8 fl
 
 **ONNX-with-KV-cache path:** the flow, vocoder, campplus, and speech_tokenizer are already
 ONNX (as established), and the LLM *could* be exported to ONNX with a KV-cache decode loop,
-but **nobody has published a CosyVoice2 LLM ONNX** — CosyVoice issue #192 ("How to export
+but **nobody has published a CosyVoice2 LLM ONNX** - CosyVoice issue #192 ("How to export
 llm.pt to onnx?") reflects that this is unresolved upstream
 (<https://github.com/FunAudioLLM/CosyVoice/issues/192>). The community solved the LLM on
 GGUF instead precisely because llama.cpp already handles the AR decode loop + KV-cache +
@@ -163,37 +163,37 @@ ARM-optimized int4 kernels that you'd otherwise have to build yourself in ONNX R
 
 ---
 
-## Q3 — Real performance numbers on phones / budget ARM CPUs
+## Q3 - Real performance numbers on phones / budget ARM CPUs
 
 **Honest finding: there are NO published CosyVoice2/3 real-time-factor numbers on a
 budget ARM phone.** The only hard numbers are GPU/desktop. What we can do is bound it.
 
 `[VERIFIED]` published numbers (all non-phone):
 - CosyVoice3 llama-cpp-python F16 GGUF on an **NVIDIA T4 GPU**: ~**0.45 RTF** vs ~1.17 RTF
-  for PyTorch fp16 — *"~2.6x faster"* (PR #1872). GPU, not CPU.
+  for PyTorch fp16 - *"~2.6x faster"* (PR #1872). GPU, not CPU.
 - The GGUF card's WER tests are correctness, not timing.
 
 `[VERIFIED]` the arithmetic that matters:
-- CosyVoice2's speech tokenizer runs at **25 Hz — 25 speech tokens per second of audio**
+- CosyVoice2's speech tokenizer runs at **25 Hz - 25 speech tokens per second of audio**
   (CosyVoice2 paper, <https://arxiv.org/html/2412.10117v2>). So to synthesize 1 s of audio
   the **LLM must decode ≥25 tokens**. Real-time on the LLM stage requires **≥25 tok/s**
   decode of the 0.5B model.
-- `[CLAIMED]` llama.cpp reference point: an **8B** Q4 model does ~15–25 tok/s on a
+- `[CLAIMED]` llama.cpp reference point: an **8B** Q4 model does ~15-25 tok/s on a
   Snapdragon X Elite; Q4_0 has hand-written ARM GEMV kernels. A **0.5B** model is ~16x
   smaller, so on a strong ARM core it should do **well over 100 tok/s**. Even a budget
-  Helio G99 (A16) core should comfortably clear 25 tok/s for a 0.5B Q4 — **the LLM stage
-  alone is plausibly real-time on the A16.** (Extrapolated, not measured — treat as an
+  Helio G99 (A16) core should comfortably clear 25 tok/s for a 0.5B Q4 - **the LLM stage
+  alone is plausibly real-time on the A16.** (Extrapolated, not measured - treat as an
   estimate.)
 - **The real cost is the flow + vocoder, not the LLM.** The DiT flow-matching decoder runs a
   **10-step Euler ODE** (each step a full DiT forward) and the HiFT vocoder does NSF+iSTFT
-  synthesis — these are dense conv/attention compute with **no llama.cpp-style ARM kernel
+  synthesis - these are dense conv/attention compute with **no llama.cpp-style ARM kernel
   tuning**, and no published ARM timings exist. The `COSYVOICE3_FLOW_STEPS=5` fast-mode knob
   exists precisely because flow steps dominate latency.
 
 **Memory:** the 745 MB smallest combo loads into RAM during synthesis. On a 4 GB phone
-(with ~2–2.5 GB usable to an app after OS/other apps) this **fits but is tight**, especially
+(with ~2-2.5 GB usable to an app after OS/other apps) this **fits but is tight**, especially
 alongside PhoneTTS's own working buffers. This is well within PhoneTTS's "one engine loaded
-at a time / call unload() first" rule (SPEC rule 6) — you could not co-resident this with
+at a time / call unload() first" rule (SPEC rule 6) - you could not co-resident this with
 another engine.
 
 **Verdict on mode:** plan for **file-export / near-real-time**, not guaranteed streaming.
@@ -203,16 +203,16 @@ sentence's audio starts while later sentences generate.
 
 ---
 
-## Q4 — What practitioners actually pick for on-device TTS instead
+## Q4 - What practitioners actually pick for on-device TTS instead
 
 **Practitioner consensus: for on-device mobile TTS, people use non-autoregressive models
 (Piper / Kokoro / Matcha / VITS), not CosyVoice.** The mature, battle-tested mobile TTS
 stack is sherpa-onnx, and it deliberately supports only those:
 - `[VERIFIED]` sherpa-onnx ships Android/iOS/HarmonyOS/embedded builds and pretrained
-  **Piper, VITS, Matcha, Kokoro** — all single-pass, deterministic, no AR token loop, easily
+  **Piper, VITS, Matcha, Kokoro** - all single-pass, deterministic, no AR token loop, easily
   real-time on CPU. <https://github.com/k2-fsa/sherpa-onnx>
 - `[CLAIMED]` **Supertonic** (`supertonic-tts-mnn`, ONNX/MNN, fp32/fp16/int8) is a newer
-  "lightning-fast on-device multilingual TTS" that people run natively on phones — again
+  "lightning-fast on-device multilingual TTS" that people run natively on phones - again
   non-autoregressive. <https://github.com/supertone-inc/supertonic>
 - These map exactly onto PhoneTTS's other planned engines (Piper, Kokoro, Melo, Kitten),
   which are all non-AR and are the "safe" real-time-on-CPU choices.
@@ -222,7 +222,7 @@ needs an **autoregressive LLM decode loop**, which is a fundamentally different 
 heavier, and less deterministic) runtime than a single ONNX forward pass. That's exactly why
 it can't ride the sherpa-onnx/ONNX-Runtime rail the others use.
 
-**So: is CosyVoice2 "the right choice for mobile"?** For raw practicality, **no** — Kokoro/
+**So: is CosyVoice2 "the right choice for mobile"?** For raw practicality, **no** - Kokoro/
 Melo/Piper give real-time CPU TTS with a single ONNX graph and no sampler tuning. CosyVoice2
 earns its place only for its distinctive capability: **zero-shot voice cloning + expressive/
 instruct control** that the non-AR models don't offer. If that capability is the point, the
@@ -231,14 +231,14 @@ GGUF/llama.cpp path is the way; if it isn't, the non-AR engines are strictly eas
 
 ---
 
-## Q5 — The speaker/voice problem on-device
+## Q5 - The speaker/voice problem on-device
 
 **Finding: the standard on-device approach is to ship a fixed bank of pre-computed speaker
 voices, so no reference WAV is needed at runtime.** Runtime WAV cloning is *supported* but
 optional and heavier.
 
 `[VERIFIED]` from the GGUF model card:
-- Ships **`cosyvoice3-voices.gguf`** — a **665 KB bank of 8 baked voices** (a zero-shot
+- Ships **`cosyvoice3-voices.gguf`** - a **665 KB bank of 8 baked voices** (a zero-shot
   Mandarin default + en/de/zh/ja/fr/es/ko from Google FLEURS, CC BY 4.0). You synthesize
   with `--voice zero_shot` / `--voice fleurs-en` etc. **No reference recording required.**
 - Baking a voice = precomputing the speaker representation (CAMPPlus 192-D embedding +
@@ -275,7 +275,7 @@ Rationale:
 3. The speaker problem is solved by a **pre-baked voice bank** (KB-scale), so no reference
    recording UX and no 475 MB of extra front-end models for v1.
 
-**Cost to PhoneTTS's architecture:** this violates the app's "ONNX for most" default — it
+**Cost to PhoneTTS's architecture:** this violates the app's "ONNX for most" default - it
 introduces a **second, non-ONNX `Runtime`** (a ggml/llama.cpp JNI backend). SPEC already
 anticipates exactly this ("a second, LLM-style [runtime] for CosyVoice2… behind an interface
 so adding one touches nothing else"), so it's *designed-for*, but it's still real work:
@@ -283,15 +283,15 @@ building/bundling a llama.cpp+ggml native lib for arm64, JNI bindings, the CosyV
 speech-token sampler, and wiring the flow/HiFT ggml stages. Everything downstream
 (`synthesize() → Flow<FloatArray>`, WAV export, speed via native param) is unaffected.
 
-**Effort: Large (L).** Not because the algorithm is unknown — it's fully worked out
-upstream — but because it's a whole native runtime + JNI + build-system addition distinct
+**Effort: Large (L).** Not because the algorithm is unknown - it's fully worked out
+upstream - but because it's a whole native runtime + JNI + build-system addition distinct
 from the ONNX path the other four models share.
 
 **Expected on-device experience on the A16 (4 GB, no NPU):**
 - **File-export: yes**, this will work (sentence-chunked).
 - **Real-time streaming: not guaranteed.** The 0.5B LLM decode is likely fast enough
   (≥25 tok/s needed; a 0.5B Q4 should clear that on the G99), but the 10-step DiT flow +
-  HiFT vocoder have no ARM-optimized kernels and no published budget-phone timings — expect
+  HiFT vocoder have no ARM-optimized kernels and no published budget-phone timings - expect
   RTF around or above 1.0 until tuned (use `FLOW_STEPS=5` and chunking to claw it back).
 - **Memory: tight but feasible** at 745 MB, only as the single loaded engine.
 
@@ -309,7 +309,7 @@ not promise streaming real-time on the A16 until measured on-device.
 ## Sources
 
 Primary (read directly):
-- CosyVoice3 GGUF weights + quant/WER/voice-bank details — `cstr/cosyvoice3-0.5b-2512-GGUF`: <https://huggingface.co/cstr/cosyvoice3-0.5b-2512-GGUF>
+- CosyVoice3 GGUF weights + quant/WER/voice-bank details - `cstr/cosyvoice3-0.5b-2512-GGUF`: <https://huggingface.co/cstr/cosyvoice3-0.5b-2512-GGUF>
 - CrispASR ggml runtime (`cosyvoice3-tts` backend): <https://github.com/CrispStrobe/CrispASR>
 - CrisperWeaver on-device Flutter/ggml app: <https://github.com/CrispStrobe/CrisperWeaver>
 - FunAudioLLM/CosyVoice PR #1872 (llama-cpp-python backend, T4 RTF numbers): <https://github.com/FunAudioLLM/CosyVoice/pull/1872>

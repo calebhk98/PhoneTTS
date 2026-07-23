@@ -40,7 +40,7 @@ class PiperEngineSynthesisTest {
     private fun buildLoadedEngine(fakeSession: FakeSession): Pair<PiperEngine, FakeRuntime> {
         val fakeRuntime = onnxRuntime(fakeSession)
         // sidecarReader injected so load() doesn't need a real file on disk (spec §9 keeps the
-        // seam plain-JVM testable) — see PiperEngine's KDoc.
+        // seam plain-JVM testable) - see PiperEngine's KDoc.
         val engine = PiperEngine(engineContext(fakeRuntime), sidecarReader = { sidecarJson })
         return engine to fakeRuntime
     }

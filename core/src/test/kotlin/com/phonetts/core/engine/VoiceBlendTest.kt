@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/** Seam tests for the pure voice-mixing math (issue #42) — weighted-average correctness + bounds. */
+/** Seam tests for the pure voice-mixing math (issue #42) - weighted-average correctness + bounds. */
 class VoiceBlendTest {
     @Test
     fun `weight 0 reproduces voice A exactly`() {

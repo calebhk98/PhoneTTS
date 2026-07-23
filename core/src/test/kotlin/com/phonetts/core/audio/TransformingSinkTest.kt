@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 
 private const val RATE = 24_000
 
-// A transform that doubles every sample's amplitude — an easy-to-verify stand-in for asserting the
+// A transform that doubles every sample's amplitude - an easy-to-verify stand-in for asserting the
 // decorator actually routes chunks through the transform before the downstream sink sees them.
 private class GainTransform(
     private val gain: Float,
@@ -90,7 +90,7 @@ class TransformingSinkTest {
         sink.onChunk(tone)
         sink.onEnd()
 
-        // The playback sink emitted a ~half-length, finite, bounded chunk — generation never saw it.
+        // The playback sink emitted a ~half-length, finite, bounded chunk - generation never saw it.
         val out = downstream.recorded
         assertTrue(out.size < tone.size, "2x tempo should shorten the played audio")
         assertTrue(out.all { it.isFinite() && kotlin.math.abs(it) <= 1.5f }, "finite and bounded")

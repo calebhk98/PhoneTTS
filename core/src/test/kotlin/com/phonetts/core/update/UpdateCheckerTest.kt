@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
  * The in-app update check (offer, never force). Pure JVM over a fake [HttpClient] + fixture JSON:
  * it flags a newer release only when one exists AND ships an installable `.apk`, picks the highest
  * semver (not merely the first listed), includes prereleases (our auto-published builds are
- * prereleases), and fails CLOSED — any hiccup yields "up to date" rather than a bogus prompt.
+ * prereleases), and fails CLOSED - any hiccup yields "up to date" rather than a bogus prompt.
  */
 class UpdateCheckerTest {
     private val owner = "calebhk98"

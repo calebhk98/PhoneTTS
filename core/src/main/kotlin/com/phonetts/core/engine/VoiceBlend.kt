@@ -3,14 +3,14 @@ package com.phonetts.core.engine
 /**
  * The pure, model-agnostic math behind voice mixing (issue #42): a weighted average of two
  * equal-length speaker/style embedding vectors. It knows nothing about any engine, ONNX graph, or
- * file format — it is just linear interpolation over two `FloatArray`s, which is exactly what
+ * file format - it is just linear interpolation over two `FloatArray`s, which is exactly what
  * blending two continuous speaker vectors is. An engine whose graph accepts such a vector
  * (Kokoro/KittenTTS, [com.phonetts.core.model.ModelDescriptor.supportsVoiceBlend]) hands its two
  * source vectors here to produce the in-between voice; models that select a voice by a discrete id
  * never reach this code.
  */
 object VoiceBlend {
-    /** The lowest / highest blend weight — a fraction toward voice B, so 0 = pure A, 1 = pure B. */
+    /** The lowest / highest blend weight - a fraction toward voice B, so 0 = pure A, 1 = pure B. */
     const val MIN_WEIGHT: Float = 0f
     const val MAX_WEIGHT: Float = 1f
 

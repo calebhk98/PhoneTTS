@@ -52,14 +52,14 @@ import java.io.OutputStream
 
 /**
  * Drives the main TTS screen. Everything the UI shows is derived from the catalog and the
- * selected [ModelDescriptor] (models, voices, speed range) — no model fact is hardcoded here.
+ * selected [ModelDescriptor] (models, voices, speed range) - no model fact is hardcoded here.
  *
  * Playback and export are consumers of the one `synthesize()` flow (spec §6.1). [loadModel],
- * [generateAudio] and [play] split that one flow into three optional steps — load the engine,
- * generate into a buffer, play the buffer — each usable on its own, so [play] alone (its default
+ * [generateAudio] and [play] split that one flow into three optional steps - load the engine,
+ * generate into a buffer, play the buffer - each usable on its own, so [play] alone (its default
  * behavior) still generates-and-streams in one tap. Playback runs the flow into a [GeneratedAudio]
  * buffer as fast as the model can generate (ahead of playback), while a [BufferedPlayback]
- * consumes it — so playback can pause while generation keeps running, and resume already-generated
+ * consumes it - so playback can pause while generation keeps running, and resume already-generated
  * audio without re-synthesizing. Live [GenerationStats] come from [trackGeneration] for every
  * generation path (Play, Generate, and the voice-sample button's [RtfEstimator] run).
  */
@@ -90,7 +90,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val trimSilence: Boolean = false,
         val normalizeVolume: Boolean = false,
         val crossfadeJoins: Boolean = false,
-        // EQ-flavored clarity presets (issue #40) — biquad transforms on the same non-destructive
+        // EQ-flavored clarity presets (issue #40) - biquad transforms on the same non-destructive
         // export chain as the toggles above; timbre only, native Speed untouched (rule 2).
         val bassCut: Boolean = false,
         val presenceBoost: Boolean = false,
@@ -106,13 +106,13 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val longDocumentMode: Boolean = false,
         val stats: GenerationStats? = null,
         // The modelId currently loaded into EngineManager (or null if none). Compared against
-        // `selected?.modelId` by the UI to show "loaded" vs "load model" — set by loadModel() and
+        // `selected?.modelId` by the UI to show "loaded" vs "load model" - set by loadModel() and
         // also picked up as a side effect of generate()/sampleVoice()/export() loading it anyway.
         val loadedModelId: String? = null,
         // Chosen export encoder (WAV/AAC/Opus); the list is derived from AppGraph.exportFormats.
         val exportFormat: AudioEncoder,
         // Favorited voice ids (spec §5.7). Sourced from graph.favoriteVoices, never invented here;
-        // the voice picker reads this to star/sort — the voices themselves still come from
+        // the voice picker reads this to star/sort - the voices themselves still come from
         // descriptor.voices (SSOT).
         val favoriteVoiceIds: Set<String> = emptySet(),
         // Cross-model favorite voices (issue #119): (modelId, voiceId) pairs from the shared
@@ -129,7 +129,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // there's nothing to resume. Non-null drives the "Resume from where it stopped" action.
         val resumeSentenceIndex: Int? = null,
         // Font scale for the reading/editing text field (issue #29, the A− / A+ control). A display
-        // preference only — persisted via ReadingTextPreferences; scales no model fact.
+        // preference only - persisted via ReadingTextPreferences; scales no model fact.
         val readingScale: Float = ReadingTextPreferences.DEFAULT_SCALE,
         // The absolute sentence index (TextChunker.intoSentences' indexing) currently being heard,
         // for karaoke-style highlighting and per-sentence skip (issue #19-3). Non-null only while a
@@ -153,7 +153,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
         /**
          * Whether the currently selected model+voice is starred as a cross-model favorite (issue
-         * #119) — drives the "Favorite this voice" toggle. False when no model/voice is selected.
+         * #119) - drives the "Favorite this voice" toggle. False when no model/voice is selected.
          */
         val currentVoiceIsFavorite: Boolean
             get() {
@@ -177,7 +177,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
         /**
          * Estimated time to *listen* to the current text at the current speed (issue #23), from a real
-         * [WordCounter] count — not a measurement of the engine (that's [GenerationStats]). Recomputes
+         * [WordCounter] count - not a measurement of the engine (that's [GenerationStats]). Recomputes
          * for free whenever the text or speed changes, so the UI updates without any synthesis. Zero
          * for empty text; the UI shows nothing in that case.
          */
@@ -197,7 +197,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     /**
      * The control surface the background [com.phonetts.app.playback.PlaybackService] drives from
-     * its notification / lock-screen controls — the SAME pause/resume/stop as the in-app buttons,
+     * its notification / lock-screen controls - the SAME pause/resume/stop as the in-app buttons,
      * so there is no second control path.
      */
     val playbackController =
@@ -230,20 +230,20 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     // Set by the Activity while it is bound to the playback service (null when unbound). Every in-app
     // barge-in ([stop]) invokes it so the service knows the resulting stop was user-initiated and does
-    // NOT fire the end-of-document cue (issue #32). Natural completion never calls [stop] — the play
-    // coroutine just finishes — so the cue still fires only on a genuine end of document.
+    // NOT fire the end-of-document cue (issue #32). Natural completion never calls [stop] - the play
+    // coroutine just finishes - so the cue still fires only on a genuine end of document.
     var onUserStopRequested: (() -> Unit)? = null
 
     private val sink = AudioTrackSink()
 
-    // Live "Generating sentence X of Y" system notification (spec: generation progress) — a
+    // Live "Generating sentence X of Y" system notification (spec: generation progress) - a
     // generation over more than a couple sentences easily outlasts the user staying on this screen.
-    // NOTE: this reads `graph.appContext`, which AppGraph currently declares `private` — that one
+    // NOTE: this reads `graph.appContext`, which AppGraph currently declares `private` - that one
     // field needs to become non-private (or gain a public accessor) for this to compile; not changed
     // here because AppGraph.kt is outside this session's owned files (see task scope).
     private val generationNotifier = GenerationNotifier(graph.appContext)
 
-    // A fresh BufferedPlayback per play session — see play(): the class is documented/tested
+    // A fresh BufferedPlayback per play session - see play(): the class is documented/tested
     // (core BufferedAudioTest) as single-use, since stop() latches its internal "stopped" flag
     // with no reset. Reusing one instance across sessions would make every play() after the first
     // stop() silently do nothing (stop() is called at the top of every play()/generateAudio() to
@@ -264,7 +264,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private var sentenceProgressJob: Job? = null
 
     // The most recently generated buffer, kept so a Play tap that exactly matches what was last
-    // generated (same model/voice/text/params) replays instantly instead of re-synthesizing —
+    // generated (same model/voice/text/params) replays instantly instead of re-synthesizing -
     // still the ONE generation path (spec §6.1), just not re-run when nothing changed.
     private var cachedAudio: GeneratedAudio? = null
     private var cachedKey: GenKey? = null
@@ -288,7 +288,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     // Ask GitHub Releases (off the main thread) whether a newer APK exists. Only ever surfaces a
-    // dismissible banner — never downloads or installs on its own (offer, don't force). Fail-closed:
+    // dismissible banner - never downloads or installs on its own (offer, don't force). Fail-closed:
     // any error leaves [UiState.update] null, so a network hiccup is silent.
     //
     // announce=false (launch): stay silent unless an update exists. announce=true (the manual
@@ -302,7 +302,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 }.getOrNull()
             mutableState.update {
                 when {
-                    status == null -> if (announce) it.copy(updateCheckStatus = "Couldn't check — no connection?") else it
+                    status == null -> if (announce) it.copy(updateCheckStatus = "Couldn't check - no connection?") else it
                     status.updateAvailable -> it.copy(update = status, updateCheckStatus = null)
                     announce -> it.copy(updateCheckStatus = "Up to date (v${status.currentVersion})")
                     else -> it
@@ -347,7 +347,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 favoriteVoiceRefs = graph.favoritesStore.favoriteVoices(),
             )
         }
-        // If the selected model is the loaded one, re-surface its saved mixes — this is what makes a
+        // If the selected model is the loaded one, re-surface its saved mixes - this is what makes a
         // mix saved on the Mix page appear in the dropdown on return (that page applied it to the
         // loaded engine already). A no-op before any engine is loaded (issue #42).
         mutableState.value.selected
@@ -371,7 +371,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     // Re-apply any saved voice mixes for [descriptor] to the just-loaded engine and expose the
     // resulting blended voices, so the main voice dropdown lists them alongside the built-ins
-    // (issue #42). Gated on the descriptor's own supportsVoiceBlend fact (SSOT) — a non-blendable
+    // (issue #42). Gated on the descriptor's own supportsVoiceBlend fact (SSOT) - a non-blendable
     // model attempts nothing; specs whose source voices are missing are skipped by the applier
     // (fail-soft). Reads currentEngine, so call it after a successful switchTo/load.
     private fun refreshBlendedVoices(descriptor: ModelDescriptor) {
@@ -400,7 +400,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         saveLastUsedSelection()
     }
 
-    // Each declared parameter's default value, keyed by id — the starting point for the controls.
+    // Each declared parameter's default value, keyed by id - the starting point for the controls.
     // [preferredSpeed] optionally overrides just the speed knob (issue #19-1's restored selection);
     // it only takes effect if the model actually declares a speed parameter (SSOT: never invents a
     // paramValues entry for a knob the descriptor didn't declare).
@@ -449,7 +449,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /**
      * Jump to a favorite voice (issue #119) that may live in ANY model: switch the active model (only
      * when it differs) then the voice, in one tap, without hunting through each model's list. Fails
-     * closed — a ref whose model/voice is no longer in the catalog is ignored (the quick-pick resolves
+     * closed - a ref whose model/voice is no longer in the catalog is ignored (the quick-pick resolves
      * against the same catalog, so it never offers one anyway). Reuses the existing barge-in/save
      * discipline of [selectModel]/[setVoice].
      */
@@ -463,7 +463,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         setVoice(voiceId)
     }
 
-    // Prefer the saved per-language default among THIS descriptor's own voices (SSOT — never a
+    // Prefer the saved per-language default among THIS descriptor's own voices (SSOT - never a
     // voice the descriptor didn't offer), falling back to the descriptor's own default voice id.
     private fun defaultVoiceIdFor(descriptor: ModelDescriptor): String {
         val fallbackId = descriptor.defaultVoiceId
@@ -472,7 +472,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         return saved?.id ?: fallbackId
     }
 
-    /** Set the value of one declared parameter (e.g. "speed") by id — the UI's generic control hook. */
+    /** Set the value of one declared parameter (e.g. "speed") by id - the UI's generic control hook. */
     fun setParam(
         id: String,
         value: Float,
@@ -483,7 +483,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         if (id == ModelParameter.SPEED_ID) saveLastUsedSelection()
     }
 
-    // Persist the user's current model+voice+speed globally (issue #19-1) — restored as the initial
+    // Persist the user's current model+voice+speed globally (issue #19-1) - restored as the initial
     // selection on next launch by refreshModels()/restoredSelection() above. Deliberately NOT keyed
     // to a document: LastUsedSelection is one shared "where I left off", separate from DocumentMemory's
     // per-document resume position. A no-op before a model/voice is actually selected.
@@ -496,7 +496,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     // Guards Play/Generate against empty text (issue #15): rather than a silent no-op that still
     // pays the switchTo()/engine.load() cost for nothing, surface clear feedback and return before
-    // touching the engine at all — no model load for text that can't produce any sentences anyway.
+    // touching the engine at all - no model load for text that can't produce any sentences anyway.
     private fun requireNonBlankText(text: String): Boolean {
         if (text.isNotBlank()) return true
         mutableState.update { it.copy(status = "Enter some text to speak") }
@@ -506,7 +506,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     fun setText(text: String) =
         mutableState.update { it.copy(text = text, resumeSentenceIndex = resumeIndexFor(text)) }
 
-    // The saved resume point for this text, if any (issue #28) — surfaced only when it's past the
+    // The saved resume point for this text, if any (issue #28) - surfaced only when it's past the
     // start (index 0 would just be "press Play"). Reads the per-document memory keyed by text content.
     private fun resumeIndexFor(text: String): Int? {
         if (text.isBlank()) return null
@@ -540,7 +540,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /** Toggle the opt-in, playback-only beyond-native tempo boost (issue #43). Off by default. */
     fun setTempoBoost(on: Boolean) = mutableState.update { it.copy(tempoBoost = on) }
 
-    /** Set the beyond-native tempo factor (clamped to [TempoStretch]'s advertised 0.1x–10x range). */
+    /** Set the beyond-native tempo factor (clamped to [TempoStretch]'s advertised 0.1x-10x range). */
     fun setTempoFactor(factor: Float) =
         mutableState.update {
             it.copy(tempoFactor = factor.coerceIn(TempoStretch.MIN_FACTOR, TempoStretch.MAX_FACTOR))
@@ -558,14 +558,14 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /**
      * Load the selected model's engine ahead of time, so Generate/Play's first tap isn't also
      * paying the weight-load cost (EngineManager.switchTo is a no-op if this exact model is
-     * already loaded — see core EngineManagerTest — so this genuinely saves the next call
+     * already loaded - see core EngineManagerTest - so this genuinely saves the next call
      * something, it doesn't just move the cost around).
      */
     fun loadModel() {
         val descriptor = mutableState.value.selected ?: return
         mutableState.update { it.copy(busy = true, status = "Loading model…") }
         viewModelScope.launch {
-            // switchTo()/engine.load() runs synchronous ONNX/native weight loading (issue #18-4b) —
+            // switchTo()/engine.load() runs synchronous ONNX/native weight loading (issue #18-4b) -
             // off Main so the UI stays responsive while a model loads.
             runCatching {
                 withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
@@ -581,7 +581,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /**
-     * Generate audio for the current text/voice/params WITHOUT playing it — lets you see the
+     * Generate audio for the current text/voice/params WITHOUT playing it - lets you see the
      * stats (real-time factor, timing) before committing to playback. Same one generation path as
      * Play/Export (spec §6.1); this just stops short of consuming the flow into playback. A
      * matching Play tap afterward replays this buffer instantly instead of regenerating it.
@@ -627,7 +627,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         cachedKey = key
     }
 
-    /** Play from the top — the primary Play button (a method reference, so kept parameterless). */
+    /** Play from the top - the primary Play button (a method reference, so kept parameterless). */
     fun play() = startPlaybackFrom(0)
 
     /**
@@ -650,17 +650,17 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         if (!requireNonBlankText(s.text)) return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
         // Slice the sentence list at [startSentenceIndex] and feed only that onward through the SAME
-        // one generation path (spec §6.1) — no second synthesis path. Index 0 keeps the full text.
+        // one generation path (spec §6.1) - no second synthesis path. Index 0 keeps the full text.
         val effectiveText = sentencesFrom(s.text, startSentenceIndex)
         val documentId = documentIdFor(s.text)
         val key = GenKey(descriptor.modelId, voiceId, effectiveText, s.paramValues)
         stop()
-        // A fresh instance per session (see the field doc above) — stop() above just latched the
+        // A fresh instance per session (see the field doc above) - stop() above just latched the
         // previous one's "stopped" flag for good.
         playback = BufferedPlayback()
         // Beyond-native tempo (#43) lives on the PLAYBACK sink only: if the user opted in, wrap the
         // real sink so each chunk is WSOLA-stretched on its way out. Generation and export never see
-        // this — they use `sink`/the export chain directly, so the native Speed knob is untouched.
+        // this - they use `sink`/the export chain directly, so the native Speed knob is untouched.
         val playSink = playbackSink(s)
         // Track position for the lock-screen scrubber and anchor paragraph skips to this start (#26).
         currentStartSentenceIndex = startSentenceIndex
@@ -669,12 +669,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val cached = cachedAudio?.takeIf { cachedKey == key }
         if (cached != null) {
             // Exact match for what's already generated (e.g. right after Generate, or replaying
-            // the last Play) — play it straight from the buffer, no re-synthesis, no delay.
+            // the last Play) - play it straight from the buffer, no re-synthesis, no delay.
             mutableState.update { it.copy(playing = true, paused = false, status = null) }
             playJob =
                 viewModelScope.launch {
                     // BufferedPlayback.play drives AudioTrack.write(..., WRITE_BLOCKING) via the sink
-                    // (issue #18-4b) — offload it off Main so scrolling/navigating stays responsive
+                    // (issue #18-4b) - offload it off Main so scrolling/navigating stays responsive
                     // during playback. Core's BufferedPlayback/AudioTrackSink threading is untouched;
                     // only this call site moves.
                     runCatching {
@@ -687,7 +687,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         }
 
         // Play IS generate-and-stream (spec §6.1: one generation path, no separate "Generate"
-        // button) — this status is the only feedback during the gap between tapping Play and the
+        // button) - this status is the only feedback during the gap between tapping Play and the
         // first audio chunk landing (switching/loading the model can take a few seconds on a
         // budget phone). Cleared the moment the first chunk arrives, in generate() below.
         mutableState.update { it.copy(playing = true, paused = false, status = "Loading voice…", stats = null) }
@@ -703,7 +703,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             }
         playJob =
             viewModelScope.launch {
-                // Same offload as the cached-replay branch above (issue #18-4b) — the blocking
+                // Same offload as the cached-replay branch above (issue #18-4b) - the blocking
                 // AudioTrack write must not run on Main.
                 runCatching { withContext(Dispatchers.IO) { playback.play(audio, descriptor.sampleRate, playSink) } }
                     .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
@@ -722,7 +722,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /**
      * Per-sentence "next" (issue #19-3): the same restart-the-one-generation-flow-from-an-index
      * mechanism [skipForwardParagraph] uses, just one sentence forward instead of a whole paragraph.
-     * Clamped to the last sentence — a forward skip at the end is a harmless no-op, not a run past
+     * Clamped to the last sentence - a forward skip at the end is a harmless no-op, not a run past
      * the text. A no-op on blank text (nothing to skip).
      */
     fun skipForwardSentence() {
@@ -791,7 +791,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     // The sink playback drains into: the raw AudioTrack sink, wrapped with the opt-in beyond-native
-    // tempo transform when enabled. PLAYBACK ONLY — export/generation never call this (issue #43).
+    // tempo transform when enabled. PLAYBACK ONLY - export/generation never call this (issue #43).
     private fun playbackSink(s: UiState): AudioSink {
         if (!s.tempoBoost) return sink
         return TransformingSink(sink, TempoStretch(s.tempoFactor))
@@ -815,7 +815,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         generationNotifier.start(totalChunks)
         val result =
             runCatching {
-                // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) — off
+                // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) - off
                 // Main so generation (Play/Generate/export all route through here) never freezes the UI.
                 withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
                 val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
@@ -839,13 +839,13 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 recordStop(descriptor, voiceId, params, documentId, startSentenceIndex + chunksDone, e)
             }
         audio.markComplete()
-        generationNotifier.clear() // dismiss on completion or failure alike — nothing left in flight
+        generationNotifier.clear() // dismiss on completion or failure alike - nothing left in flight
         if (result.isSuccess) clearResume(documentId)
         return result.isSuccess
     }
 
     // Persist the resume point and surface a "Resume from where it stopped" offer instead of a
-    // dead-end error (issue #28). Only advertises a resume past the start — index 0 is just "Play".
+    // dead-end error (issue #28). Only advertises a resume past the start - index 0 is just "Play".
     private fun recordStop(
         descriptor: ModelDescriptor,
         voiceId: String,
@@ -865,7 +865,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    // A clean, fully-generated document has no resume point — forget any saved one and clear the offer.
+    // A clean, fully-generated document has no resume point - forget any saved one and clear the offer.
     private fun clearResume(documentId: String) {
         graph.documentMemory.forget(documentId)
         mutableState.update { it.copy(resumeSentenceIndex = null) }
@@ -884,10 +884,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /**
-     * The single barge-in path for stop / skip / switch-voice (issue #45) — a proper three-step
+     * The single barge-in path for stop / skip / switch-voice (issue #45) - a proper three-step
      * cancel, not just a UI-state reset:
      *   1. cancel the synthesis coroutine ([genJob]) so no further audio is generated;
-     *   2. drop any buffered-but-unplayed chunks — [BufferedPlayback.stop] stops draining the
+     *   2. drop any buffered-but-unplayed chunks - [BufferedPlayback.stop] stops draining the
      *      [GeneratedAudio] buffer, and [AudioTrackSink.stop]'s flush discards PCM already queued
      *      in the AudioTrack but not yet heard;
      *   3. stop the AudioTrack ([sink] pause/flush/stop/release).
@@ -907,7 +907,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         progressJob = null
         sentenceProgressJob = null
         sink.stop() // steps 2b + 3: flush queued PCM and stop the AudioTrack
-        // A cancelled genJob's post-runCatching cleanup (see generate()) may never run — dismiss the
+        // A cancelled genJob's post-runCatching cleanup (see generate()) may never run - dismiss the
         // progress notification explicitly here too so a barge-in never leaves it claiming generation
         // is still going.
         generationNotifier.clear()
@@ -924,7 +924,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     /**
      * Measure this engine+voice's real render speed on a short phrase (never a guessed RTF) and
-     * report it. Uses the same `synthesize()` path — no second generation path (spec §6.1).
+     * report it. Uses the same `synthesize()` path - no second generation path (spec §6.1).
      */
     fun sampleVoice() {
         val s = mutableState.value
@@ -952,7 +952,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /**
      * Generate a short spoken sample of EVERY downloaded model and save each to its own file, so
      * you can audition them back-to-back. Loops the catalog loading one engine at a time
-     * ([EngineManager.switchTo] unloads the previous — one engine in memory, spec §6.2), synthesizing
+     * ([EngineManager.switchTo] unloads the previous - one engine in memory, spec §6.2), synthesizing
      * the shared [VOICE_SAMPLE_PHRASE] with each model's default voice/params through the SAME one
      * generation path (spec §6.1), and encoding it with the current export format. Best-effort per
      * model: one that fails to load or generate is skipped and named in the summary, never fatal to
@@ -1005,7 +1005,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             }
         }.isSuccess
 
-    // A file-safe base name (no extension — the file sink appends the format's) from the display name.
+    // A file-safe base name (no extension - the file sink appends the format's) from the display name.
     private fun sampleBaseName(descriptor: ModelDescriptor): String =
         descriptor.displayName.replace(FILE_UNSAFE, "_").trim().ifEmpty { descriptor.modelId }
 
@@ -1015,7 +1015,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         failures: List<String>,
     ): String {
         if (failures.isEmpty()) return "Saved $saved sample${if (saved == 1) "" else "s"}"
-        return "Saved $saved of $total — skipped: ${failures.joinToString()}"
+        return "Saved $saved of $total - skipped: ${failures.joinToString()}"
     }
 
     /** Export the current text to a WAV [output], applying the enabled non-destructive transforms. */
@@ -1023,7 +1023,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val s = mutableState.value
         val descriptor = s.selected
         // The SAF document behind [output] is already created (0 bytes) by the caller before this is
-        // reached, so every early-return path below must still close it — never leave a picked export
+        // reached, so every early-return path below must still close it - never leave a picked export
         // destination dangling open just because there was nothing to export (issue #15/#17-adjacent).
         if (!requireNonBlankText(s.text) || descriptor == null) {
             runCatching { output.close() }
@@ -1037,18 +1037,18 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         viewModelScope.launch {
             runCatching {
                 // output.use wraps the WHOLE export body, not just the final encode() call, so the
-                // destination stream/fd is finalized on EVERY path — including a switchTo()/engine-load
+                // destination stream/fd is finalized on EVERY path - including a switchTo()/engine-load
                 // failure before any audio is even generated. Previously only the encode() call was
                 // inside output.use, so a load failure left the SAF document's stream unclosed: a
                 // half-open 0-byte file the OS's own previewer then can't play ("fd://... can not be
                 // played") because it was never finalized, not because export produced no bytes.
                 output.use {
-                    // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) —
+                    // switchTo()/engine.load() blocks on synchronous weight loading (issue #18-4b) -
                     // off Main so this never freezes the UI.
                     withContext(Dispatchers.IO) { graph.engineManager.switchTo(descriptor.engineId, descriptor) }
                     val engine = graph.engineManager.currentEngine ?: error("engine failed to load")
                     // onEach counts fully-emitted sentences (one chunk == one sentence) without altering
-                    // the flow the encoder consumes — the same resume-point tracking generate() does.
+                    // the flow the encoder consumes - the same resume-point tracking generate() does.
                     val tracked = engine.synthesize(s.text, voiceId, s.params).onEach { chunksDone++ }
                     withContext(Dispatchers.IO) {
                         s.exportFormat.encode(tracked, descriptor.sampleRate, it, transforms)
@@ -1098,7 +1098,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 }
                 .onFailure { e ->
                     // A failed auto-detection carries the DetectionFailureExplainer's narration
-                    // (issue #19-2) — surface it (with a Copy action, TtsScreen) instead of just the
+                    // (issue #19-2) - surface it (with a Copy action, TtsScreen) instead of just the
                     // bare "could not identify" message.
                     val explanation = (e as? UserPickRequiredException)?.explanation
                     mutableState.update {
@@ -1128,7 +1128,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
      * Save the current text into the reading library (issue #19-5), reachable right from the main
      * screen (the library screen itself also offers this for the same text). Uses the SAME
      * content-derived id [documentIdFor] uses for [graph.documentMemory], so a document saved here
-     * and later reopened from the library immediately lines up with any resume point (issue #28) —
+     * and later reopened from the library immediately lines up with any resume point (issue #28) -
      * no separate plumbing needed. A no-op on blank text.
      */
     fun saveToLibrary() {
@@ -1146,7 +1146,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private companion object {
         const val VOICE_SAMPLE_PHRASE = "The quick brown fox jumps over the lazy dog."
 
-        // Default beyond-native tempo factor when the (off-by-default) boost is first enabled — a
+        // Default beyond-native tempo factor when the (off-by-default) boost is first enabled - a
         // mild speed-up the user then adjusts. Not a native model parameter; see UiState.tempoFactor.
         const val DEFAULT_TEMPO_FACTOR = 1.5f
 
@@ -1168,7 +1168,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
 /**
  * Creates one output file per model for [TtsViewModel.sampleAllModels], named [fileName] (no
- * extension — the sink adds the export format's). Returning null skips that model without aborting
+ * extension - the sink adds the export format's). Returning null skips that model without aborting
  * the batch. Kept as a tiny functional interface so the ViewModel never touches SAF/DocumentFile
  * directly, exactly as [TtsViewModel.export] takes a plain OutputStream.
  */

@@ -13,7 +13,7 @@ import kotlin.test.assertNotNull
  * §9.1 fail-closed coverage for [PiperEngine.inspect]: a Piper bundle is only ever a `*.onnx`
  * WITH its `*.onnx.json` sidecar carrying Piper's own fields (phoneme_id_map, audio.sample_rate).
  * A bare `.onnx`, a foreign bundle, or an onnx+json pair whose json is not a Piper sidecar must
- * all come back null so the resolver falls through to the user-pick fallback — never a guess.
+ * all come back null so the resolver falls through to the user-pick fallback - never a guess.
  */
 class PiperEngineInspectTest {
     private val engine = PiperEngine(engineContext())
@@ -147,7 +147,7 @@ class PiperEngineInspectTest {
     }
 
     // ayousanz/piper-plus-* also ships a Piper-shaped config.json but needs extra
-    // language_id/prosody inputs this engine does not feed — out of scope for issue #95, but this
+    // language_id/prosody inputs this engine does not feed - out of scope for issue #95, but this
     // pins the SAME rejection a foreign config.json gets, since [PiperVoiceConfig.parse] can't tell
     // the two apart from the sidecar alone. Named separately so a future piper-plus fix updates the
     // right expectation, not this one.
@@ -225,7 +225,7 @@ class PiperEngineInspectTest {
         assertInspectRejects(engine, bundle)
     }
 
-    // Only the prosody input marker present (no phoneme_type/num_languages) still fails closed —
+    // Only the prosody input marker present (no phoneme_type/num_languages) still fails closed -
     // proves the rejection is an OR over the piper-plus markers, not a single phoneme_type check.
     @Test
     fun `returns null when a sidecar declares only a prosody id map`() {
@@ -249,7 +249,7 @@ class PiperEngineInspectTest {
     }
 
     // issue #110: an fp16 export names its precision in the file name; this engine always feeds
-    // float32 scales + int64 ids, so an fp16 graph is a guaranteed dtype mismatch — reject at inspect
+    // float32 scales + int64 ids, so an fp16 graph is a guaranteed dtype mismatch - reject at inspect
     // even though the sidecar itself is a perfectly valid Piper sidecar.
     @Test
     fun `returns null for an fp16 export even with a valid piper sidecar`() {
@@ -265,7 +265,7 @@ class PiperEngineInspectTest {
 
     // Guard against over-rejecting: a STANDARD multi-speaker Piper graph (num_speakers > 1 +
     // speaker_id_map, no multilingual/prosody markers) feeds only sid on top of the base contract,
-    // which this engine already handles — so it must still be claimed.
+    // which this engine already handles - so it must still be claimed.
     @Test
     fun `still claims a standard multi-speaker voice with no piper-plus markers`() {
         val multiSpeakerSidecar =

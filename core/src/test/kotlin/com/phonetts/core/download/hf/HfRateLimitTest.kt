@@ -39,7 +39,7 @@ class HfRateLimitTest {
 
     @Test
     fun capsAServerHintLongerThanTheMaxBackoff() {
-        // HF windows can be ~300s; we never sleep that long silently — the cap bounds it.
+        // HF windows can be ~300s; we never sleep that long silently - the cap bounds it.
         val delay = HfRateLimitBackoff.nextDelayMs(1, serverHintMs = 274_000L, random = { 0.5 })
         assertEquals(HfRateLimitBackoff.MAX_BACKOFF_MS, delay)
     }

@@ -35,7 +35,7 @@ class RosterDedupTest {
     @Test
     fun keepsTheFirstOccurrencesPayloadWhenIdsDiffButKeysCollide() {
         // Two distinct objects that key-collide (e.g. two roster entries with different generated
-        // ids but the same model+voice) — the earlier one wins, later ones are dropped.
+        // ids but the same model+voice) - the earlier one wins, later ones are dropped.
         data class Entry(val id: String, val modelId: String, val voiceId: String)
         val entryKey: (Entry) -> Pair<String, String> = { it.modelId to it.voiceId }
         val existing = listOf(Entry("entry-0", "a", "v1"))

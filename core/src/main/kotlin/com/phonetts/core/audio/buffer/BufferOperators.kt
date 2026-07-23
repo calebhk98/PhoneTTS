@@ -16,7 +16,7 @@ fun Flow<FloatArray>.bufferAhead(): Flow<FloatArray> = buffer(capacity = Channel
 
 /**
  * Drain this generation flow into [audio] as fast as it emits (each append is non-blocking, so
- * generation runs at full speed regardless of playback), then mark generation complete — even if
+ * generation runs at full speed regardless of playback), then mark generation complete - even if
  * the flow fails or is cancelled, so any consumer waiting at the live edge is released.
  */
 suspend fun Flow<FloatArray>.collectInto(audio: GeneratedAudio) {

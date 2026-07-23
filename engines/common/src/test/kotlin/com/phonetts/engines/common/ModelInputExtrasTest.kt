@@ -10,9 +10,9 @@ import kotlin.test.assertTrue
 
 /**
  * 9.2-style seam test (issue #18 item 2): a single generic accessor over [ModelInput.extras] must
- * type-safely retrieve THREE genuinely different shapes of extra data — a [LongArray] of tone ids
+ * type-safely retrieve THREE genuinely different shapes of extra data - a [LongArray] of tone ids
  * (MeloTTS), a scalar [Int] (e.g. a speaker/style index a future engine adds), and a [FloatArray]
- * embedding/style vector (Kokoro/KittenTTS-shaped) — with no per-type helper code: every case below
+ * embedding/style vector (Kokoro/KittenTTS-shaped) - with no per-type helper code: every case below
  * goes through the SAME [ModelInput.extra]/[ModelInput.requireExtra] functions, parameterized only
  * by an [ExtraKey]. That is the proof that adding a fourth extra type needs zero changes here, only
  * a new key.

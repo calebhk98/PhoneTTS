@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 
 /**
  * The payoff test. All five engine modules are on this module's classpath, and NOTHING here
- * names any of them — yet ServiceLoader discovers all five and seeds the registry. This is the
+ * names any of them - yet ServiceLoader discovers all five and seeds the registry. This is the
  * single-source-of-truth guarantee proven end-to-end: adding a model is adding a module,
  * removing one is deleting a module, and shared code never changes.
  */

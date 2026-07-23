@@ -23,7 +23,7 @@ private const val FOREIGN_CONFIG = """{"family": "piper", "sample_rate": 22050}"
 // voice list without reading any bytes.
 private val VOICE_FILE_NAMES = setOf("voices/af_heart.bin", "voices/bf_emma.bin")
 
-// tokenizer.json (the phoneme vocabulary) is now a required fingerprint signal — every real Kokoro
+// tokenizer.json (the phoneme vocabulary) is now a required fingerprint signal - every real Kokoro
 // bundle ships it, and without it the frontend can't turn IPA into token ids.
 private const val TOKENIZER_FILE = "tokenizer.json"
 

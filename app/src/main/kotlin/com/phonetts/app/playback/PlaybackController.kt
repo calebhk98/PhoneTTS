@@ -17,13 +17,13 @@ data class PlaybackProgress(
  * `pausePlayback()` / `resumePlayback()` / `stop()` over its own `BufferedPlayback`) implements
  * this with those same methods and hands it to the service via
  * [PlaybackService.LocalBinder.attachController]. That is the whole integration surface: a tap
- * on the notification's Play/Pause/Stop action — or a lock-screen control, or the sleep timer
- * expiring — reaches exactly the same pause/resume/stop semantics as the in-app buttons. No
+ * on the notification's Play/Pause/Stop action - or a lock-screen control, or the sleep timer
+ * expiring - reaches exactly the same pause/resume/stop semantics as the in-app buttons. No
  * second control path.
  *
  * The paragraph-skip and [progress] members are added for the richer lock-screen surface
  * (issue #26). They are **default no-op / unknown** so a controller that can't yet honour them
- * (e.g. one that hasn't wired position tracking) still satisfies the interface unchanged — the
+ * (e.g. one that hasn't wired position tracking) still satisfies the interface unchanged - the
  * lock screen simply omits the scrubber / the skip actions become inert, never a compile break.
  */
 interface PlaybackController {

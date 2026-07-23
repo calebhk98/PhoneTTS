@@ -24,7 +24,7 @@ import kotlin.coroutines.coroutineContext
 
 /**
  * Downloads a Hugging Face repo's files into app-private storage, then hands the folder to the
- * tested core [ModelImporter] — which reads it, resolves it (auto-detect that fails closed, else
+ * tested core [ModelImporter] - which reads it, resolves it (auto-detect that fails closed, else
  * the user pick), and catalogs it. So a browsed model becomes usable with NO engine-specific code.
  *
  * Weights are streamed to disk (never held in memory) and downloads are **resumable**: each file
@@ -32,7 +32,7 @@ import kotlin.coroutines.coroutineContext
  * process being reclaimed mid-download continues from where it left off next time (HTTP `Range`),
  * and an already-complete file is skipped. The resume policy is the tested [HfResume] seam in
  * `:core`; this class only supplies the on-disk size and acts on the verdict. Cancellation is
- * cooperative — the caller cancels the coroutine and the partial file is left on disk so a later
+ * cooperative - the caller cancels the coroutine and the partial file is left on disk so a later
  * retry resumes rather than restarts.
  *
  * HF ETags are not stable content hashes, so there is no manifest hash to check against for an
@@ -43,9 +43,9 @@ import kotlin.coroutines.coroutineContext
  * A dropped connection mid-file ("Software caused connection abort", "unexpected end of stream",
  * a socket reset, a premature EOF) is common on flaky mobile networks and is NOT treated as a hard
  * failure: each file fetch is retried with exponential backoff (the resume logic above means a
- * retry continues from the partial file, not from scratch — see the private `fetch` function).
+ * retry continues from the partial file, not from scratch - see the private `fetch` function).
  * Only after the retries are exhausted, or for an obviously permanent error (HTTP 404/403, the
- * byte-cap guard), does this surface a failure — always naming the file and the reason, never a
+ * byte-cap guard), does this surface a failure - always naming the file and the reason, never a
  * bare URL (the previous behavior for e.g. sesame/csm-1b, whose surfaced "error" was literally a
  * `resolve/main/...` URL).
  */
@@ -54,7 +54,7 @@ class HfDownloader(
     private val importer: ModelImporter,
     private val userAgent: Map<String, String> = HfCatalog.USER_AGENT,
     private val timeoutMs: Int = DEFAULT_TIMEOUT_MS,
-    // The per-file guard is free-storage-based, not a fixed ceiling — a large model (a multi-GB
+    // The per-file guard is free-storage-based, not a fixed ceiling - a large model (a multi-GB
     // weights file) must download whenever it actually fits, only failing when it genuinely won't.
     // Injectable so the guard stays deterministic in tests.
     private val freeBytes: () -> Long = { StatFs(filesDir.path).availableBytes },
@@ -66,7 +66,7 @@ class HfDownloader(
 ) {
     /**
      * @param onBytesProgress cumulative bytes written across ALL of [items] so far, plus the
-     * plan's total size in bytes — or `null` for the total when any item's size wasn't advertised
+     * plan's total size in bytes - or `null` for the total when any item's size wasn't advertised
      * by the repo tree (spec: never present a fabricated total). Reported at most every
      * [BYTES_PROGRESS_STEP] bytes so a large weight file doesn't flood the caller's state updates.
      */
@@ -93,7 +93,7 @@ class HfDownloader(
             importer.import(destination.absolutePath)
         }
 
-    // Null (rather than a partial sum) the moment any item's size is unknown — a partial total
+    // Null (rather than a partial sum) the moment any item's size is unknown - a partial total
     // would silently under-report how much there is left to fetch.
     private fun totalBytesOrNull(items: List<HfDownloadItem>): Long? {
         val sizes = items.map { it.sizeBytes }
@@ -102,7 +102,7 @@ class HfDownloader(
     }
 
     // Once a file is done, its contribution to the running total is its advertised size if known,
-    // else whatever actually landed on disk (still exact — just not knowable in advance).
+    // else whatever actually landed on disk (still exact - just not knowable in advance).
     private fun finalSizeOf(
         item: HfDownloadItem,
         target: File,
@@ -110,7 +110,7 @@ class HfDownloader(
 
     // Resume-aware, retrying fetch of one file: skip if already complete, else (re)try a download
     // that resumes from whatever is currently on disk, backing off between attempts. The
-    // resume/skip/restart decision is the tested core policy — re-consulted before EVERY attempt
+    // resume/skip/restart decision is the tested core policy - re-consulted before EVERY attempt
     // (including retries), since a dropped connection can leave more bytes on disk than the
     // previous attempt started with.
     private suspend fun fetch(
@@ -137,7 +137,7 @@ class HfDownloader(
         }
     }
 
-    // Fail fast (before spending bandwidth) when a file's advertised size can't fit free storage —
+    // Fail fast (before spending bandwidth) when a file's advertised size can't fit free storage -
     // an upfront, clearer version of copyCapped's streaming guard. Unknown sizes fall through to it.
     private fun requireFitsStorage(item: HfDownloadItem) {
         if (!DownloadStorageCap.exceedsFreeStorage(item.sizeBytes, freeBytes())) return
@@ -148,7 +148,7 @@ class HfDownloader(
         )
     }
 
-    // Runs one download attempt and returns the [IOException] it failed with, or null on success —
+    // Runs one download attempt and returns the [IOException] it failed with, or null on success -
     // a return value rather than a caught-and-rethrown exception so [fetch]'s retry loop stays a
     // flat while-loop instead of nesting a try/catch inside it (never-nesting).
     private suspend fun attemptDownload(
@@ -178,7 +178,7 @@ class HfDownloader(
                 throw HttpStatusException(responseCode, connection.responseMessage)
             }
             // If we asked to resume but the server sent a full body (200, not 206 Partial Content),
-            // it ignored the Range header — so overwrite from the start rather than append onto a
+            // it ignored the Range header - so overwrite from the start rather than append onto a
             // prefix that would then be duplicated.
             val serverResumed = resumeFrom > 0L && responseCode == HttpURLConnection.HTTP_PARTIAL
             val startOffset = if (serverResumed) resumeFrom else 0L
@@ -193,7 +193,7 @@ class HfDownloader(
     }
 
     // A permanent client error (404 the file doesn't exist, 403 access denied) is never worth
-    // retrying — nothing about waiting and asking again will change the answer. Everything else
+    // retrying - nothing about waiting and asking again will change the answer. Everything else
     // (a 5xx from an overloaded/flaky edge, or a connection-level IOException such as "Software
     // caused connection abort" / "unexpected end of stream" / a socket reset / a premature EOF) is
     // treated as transient. [DownloadCapExceededException] is likewise permanent: retrying a file
@@ -205,7 +205,7 @@ class HfDownloader(
             else -> true
         }
 
-    // Always names the FILE and the REASON — never a bare URL (the sesame/csm-1b bug this fixes:
+    // Always names the FILE and the REASON - never a bare URL (the sesame/csm-1b bug this fixes:
     // its surfaced "error" used to be exactly a `resolve/main/...` URL with no context).
     private fun describedFailure(
         item: HfDownloadItem,
@@ -214,7 +214,7 @@ class HfDownloader(
     ): IOException {
         val raw = cause.message?.takeIf { it.isNotBlank() } ?: cause::class.simpleName ?: "unknown error"
         // A DNS/no-route failure (e.g. "Unable to resolve host …") reads as a plain "No internet
-        // connection" line rather than the raw resolver text — a user drops off Wi-Fi far more often
+        // connection" line rather than the raw resolver text - a user drops off Wi-Fi far more often
         // than a repo file genuinely vanishes. A specific server/file error is left untouched.
         val reason = OfflineErrorHint.humanize(raw)
         val attemptsNote = if (attempts > 1) " (gave up after $attempts attempts)" else ""
@@ -276,7 +276,7 @@ class HfDownloader(
         private val RETRY_BACKOFF_MS = longArrayOf(1_000L, 2_000L, 4_000L)
         private val HTTP_SUCCESS_RANGE = HttpURLConnection.HTTP_OK..HttpURLConnection.HTTP_PARTIAL
 
-        // 404 the file genuinely doesn't exist, 403 access is denied — waiting and retrying changes
+        // 404 the file genuinely doesn't exist, 403 access is denied - waiting and retrying changes
         // neither answer. Any other status (a 5xx from an overloaded/flaky edge, 429 rate limiting,
         // ...) is treated as transient and retried.
         private val NON_RETRYABLE_HTTP_CODES = setOf(HttpURLConnection.HTTP_NOT_FOUND, HttpURLConnection.HTTP_FORBIDDEN)
@@ -284,10 +284,10 @@ class HfDownloader(
 }
 
 /** A non-2xx HTTP response for a repo file fetch. [code] drives the retry decision (404/403 are
- * permanent — see [HfDownloader.isRetryable] — anything else, e.g. a 5xx, is treated as transient). */
+ * permanent - see [HfDownloader.isRetryable] - anything else, e.g. a 5xx, is treated as transient). */
 private class HttpStatusException(val code: Int, statusMessage: String?) :
     IOException("HTTP $code${statusMessage?.let { " $it" } ?: ""}")
 
 /** The download can't fit in free storage. Distinct from a generic [IOException] so it is never
- * retried — the file won't fit no matter how many times it's fetched. */
+ * retried - the file won't fit no matter how many times it's fetched. */
 private class DownloadCapExceededException(message: String) : IOException(message)

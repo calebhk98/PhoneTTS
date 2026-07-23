@@ -22,7 +22,7 @@ object DeviceInfo {
     /**
      * This device's TOTAL RAM in bytes (`ActivityManager.MemoryInfo.totalMem`), not what's free
      * right now; 0 if it can't be read. This is the figure that decides whether a model can
-     * physically fit at all ([com.phonetts.core.model.DeviceRamFit]) — free RAM churns with
+     * physically fit at all ([com.phonetts.core.model.DeviceRamFit]) - free RAM churns with
      * whatever else happens to be running and is the wrong number to warn against.
      */
     fun totalRamBytes(context: Context): Long {
@@ -36,7 +36,7 @@ object DeviceInfo {
     val name: String = Build.MODEL ?: Build.DEVICE ?: "unknown-device"
 
     /**
-     * Total PSS of this process right now, in bytes — an observed footprint we record after a model
+     * Total PSS of this process right now, in bytes - an observed footprint we record after a model
      * has loaded + generated so [com.phonetts.core.prefs.ResourceUsageStore] can refine the a-priori
      * estimate from real previous loads (issue #38). One engine loads at a time, so process PSS while
      * a model is loaded is a fair "RAM used by this model" reading; 0 if it can't be sampled.

@@ -49,12 +49,12 @@ import kotlinx.coroutines.launch
 
 /**
  * Raised when no engine can identify a bundle and no manual pick is wired yet (see resolver).
- * [explanation] is [com.phonetts.core.resolver.DetectionFailureExplainer]'s narration of WHY —
- * which engines were asked, which (if any) companion files the bundle has — so the UI can surface
+ * [explanation] is [com.phonetts.core.resolver.DetectionFailureExplainer]'s narration of WHY -
+ * which engines were asked, which (if any) companion files the bundle has - so the UI can surface
  * it to the user instead of a bare "could not identify" (issue #19-2).
  */
 class UserPickRequiredException(bundleId: String, val explanation: String) :
-    Exception("could not identify model '$bundleId' — a manual engine pick is required")
+    Exception("could not identify model '$bundleId' - a manual engine pick is required")
 
 /**
  * :app's [PlatformServices] implementation: the one Android-shaped fact ([appContext]) that a
@@ -80,7 +80,7 @@ class AppGraph(context: Context) {
     // Both pluggable backends live in one registry (spec §5.3): the ONNX Runtime the Tier-A/B
     // engines use, and the non-ONNX ggml NativeTtsRuntime that runs CosyVoice3's whole text→audio
     // pipeline. The latter reports isAvailable()=false unless the app was built with
-    // -PwithCosyVoice=true, in which case CosyVoice simply isn't offered — registration itself is
+    // -PwithCosyVoice=true, in which case CosyVoice simply isn't offered - registration itself is
     // harmless and unconditional.
     val runtimeRegistry =
         RuntimeRegistry().apply {
@@ -88,7 +88,7 @@ class AppGraph(context: Context) {
             register(NativeCosyVoiceRuntime())
             // Registered UNCONDITIONALLY (never hidden behind a flag): ExecuTorch ships in the APK
             // via its Maven AAR, and the ggml bridge is present too. Both report isAvailable()=false
-            // gracefully — no crash — when their native piece isn't built/loaded on this build, so a
+            // gracefully - no crash - when their native piece isn't built/loaded on this build, so a
             // model that needs them surfaces a clear error rather than silently disappearing.
             register(ExecuTorchRuntime())
             register(NativeGgmlTtsRuntime())
@@ -101,13 +101,13 @@ class AppGraph(context: Context) {
 
     // The [EngineContext] every discovered [com.phonetts.core.engine.EngineProvider] is built
     // from. [platform] is :app's own [PlatformServices] impl, exposing the application Context
-    // to whichever provider's engine needs one — e.g. an engine wrapping an installed OS service
+    // to whichever provider's engine needs one - e.g. an engine wrapping an installed OS service
     // rather than loading weights of its own (`SystemTtsEngineProvider`). :core never sees the
     // concrete type, only the neutral marker (rule: :core stays Android-free).
     private val engineContext = EngineContext(runtimeRegistry, phonemizer, platform = AppPlatformServices(appContext))
 
     // Discovered once and reused both to seed the registry (below) and to pull each provider's
-    // always-available descriptors in [registerBuiltInDescriptors] — the SAME ServiceLoader path
+    // always-available descriptors in [registerBuiltInDescriptors] - the SAME ServiceLoader path
     // every engine (built-in or sideloadable) goes through. No engine is named here (rule 5):
     // adding/removing one is adding/removing a module + its META-INF/services entry, nothing else.
     private val discoveredProviders = EngineLoader.discoverProviders()
@@ -122,7 +122,7 @@ class AppGraph(context: Context) {
     // delivers TextToSpeech's init callback back through this process's main-thread Looper no
     // matter which thread constructed it, so blocking any thread on a latch waiting for that
     // callback risks starving the very Looper that would deliver it. Launching a coroutine instead
-    // never blocks a thread — the catalog picks up the discovered engines within about a second of
+    // never blocks a thread - the catalog picks up the discovered engines within about a second of
     // startup, via the same catalog.list() re-reads the UI already does on every model-list refresh.
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -139,7 +139,7 @@ class AppGraph(context: Context) {
         }
 
     // Backs every preferences-derived feature below, including where models are stored (issue
-    // #4/#5) — declared early because [modelsBaseDir] (and anything built from it) needs it ready.
+    // #4/#5) - declared early because [modelsBaseDir] (and anything built from it) needs it ready.
     private val preferenceStore = PrefsPreferenceStore(appContext)
 
     // App-private storage by default; a user-picked folder (internal or SD card) once one is
@@ -158,20 +158,20 @@ class AppGraph(context: Context) {
     val hfCatalog = HfCatalog(HttpUrlConnectionClient())
 
     // A `var`, not a `val`: HfDownloader captures its base dir at construction (its own File field
-    // is fixed — that class is owned elsewhere and deliberately untouched here), so relocating
+    // is fixed - that class is owned elsewhere and deliberately untouched here), so relocating
     // storage (issue #4/#5) rebuilds it via [relocateStorage] rather than mutating it in place.
     var hfDownloader: HfDownloader = HfDownloader(modelsBaseDir(), importer)
         private set
 
     // Checks GitHub Releases for a newer APK than the running build (BuildConfig.VERSION_NAME) and
-    // only ever OFFERS it — never force-updates (the UI shows a dismissible banner). Fail-closed.
+    // only ever OFFERS it - never force-updates (the UI shows a dismissible banner). Fail-closed.
     val updateChecker = UpdateChecker(HttpUrlConnectionClient())
 
     // Manage (list sizes / delete) downloaded models. File I/O is injected so :core stays pure;
     // deleting the loaded model unloads it first and forgets its saved override (PrefsOverrideStore
     // is clearable), keeping the catalog, memory, and override store consistent. Also owns the
     // storage-location switch (issue #4/#5): [relocateStorage] MIGRATES already-downloaded models
-    // from the old base dir to the new one (the data-loss bug this fixes — see its own kdoc),
+    // from the old base dir to the new one (the data-loss bug this fixes - see its own kdoc),
     // rebuilds [hfDownloader], and re-scans the newly chosen folder.
     val modelManager =
         ModelManager(
@@ -186,12 +186,12 @@ class AppGraph(context: Context) {
             assignEngineAction = { bundleId, engineId -> assignEngineToBundle(bundleId, engineId) },
         )
 
-    // The manual "pick an engine" fallback's app-shaped half (issue: bug #1 — the picker described
+    // The manual "pick an engine" fallback's app-shaped half (issue: bug #1 - the picker described
     // in ModelManager/Resolver had nothing on the Android side that could actually re-read a bundle
     // off disk and hand it to a chosen engine). A downloaded/sideloaded bundle's folder name IS its
     // [com.phonetts.core.model.ModelBundle.id] ([hydrate] imports it the same way, via
     // `folder.absolutePath`), so the on-disk location a bundleId maps to is reconstructible from
-    // [modelsBaseDir] alone — no separate bundleId→path table is needed.
+    // [modelsBaseDir] alone - no separate bundleId→path table is needed.
     private fun assignEngineToBundle(
         bundleId: String,
         engineId: String,
@@ -200,15 +200,15 @@ class AppGraph(context: Context) {
     // Runs when the user picks a new storage location or resets to the default (issue #4/#5,
     // data-loss bug fix). [oldPath]/[newPath] are the raw custom-base-path values from BEFORE and
     // AFTER [ModelManager.changeStorageLocation] just persisted the change (null means "app-private
-    // default" on either side) — passed explicitly rather than re-read, because by the time this
+    // default" on either side) - passed explicitly rather than re-read, because by the time this
     // runs the preference already holds the NEW value only.
     //
     // Order matters: migrate the physical model folders from old → new FIRST (never lose a
-    // downloaded model), THEN unload/clear/rescan — otherwise the old catalog is dropped and the
+    // downloaded model), THEN unload/clear/rescan - otherwise the old catalog is dropped and the
     // new one built from a location the files were never moved to, which is exactly how models
     // used to go missing (and worse, stayed reported as "installed" while being neither usable nor
     // deletable). Re-picking the SAME folder (rule 2) resolves as [ModelStorageMigrator.sameLocation]
-    // and returns immediately, touching nothing — no unload, no clear, no rescan.
+    // and returns immediately, touching nothing - no unload, no clear, no rescan.
     private fun relocateStorage(
         oldPath: String?,
         newPath: String?,
@@ -227,7 +227,7 @@ class AppGraph(context: Context) {
         engineManager.unloadCurrent()
         hfDownloader = HfDownloader(modelsBaseDir(), importer)
         // The old catalog may name models that no longer resolve at the new location (or, thanks to
-        // the migration above, now genuinely do) — cleared and immediately re-scanned rather than
+        // the migration above, now genuinely do) - cleared and immediately re-scanned rather than
         // trusting stale entries, exactly [hydrate]'s own job, just triggered mid-session.
         catalog.clear()
         hydrate()
@@ -240,14 +240,14 @@ class AppGraph(context: Context) {
     // know some models are still sitting at the OLD location instead of the one they just picked.
     private fun relocationMessage(outcome: ModelStorageMigrator.Outcome): String? =
         (outcome as? ModelStorageMigrator.Outcome.PartialFailure)?.let {
-            "Couldn't move ${it.failedNames.joinToString(", ")} to the new folder — " +
+            "Couldn't move ${it.failedNames.joinToString(", ")} to the new folder - " +
                 "left in place at the old location so nothing was lost."
         }
 
     // Preferences-backed features: favorite voices + per-language default, per-document resume,
-    // and the GLOBAL last-used model/voice/speed (issue #19-1 — one shared "where I left off",
+    // and the GLOBAL last-used model/voice/speed (issue #19-1 - one shared "where I left off",
     // deliberately not per-document; see LastUsedSelection's kdoc). All model facts still come
-    // from descriptor.voices / the registry — these only persist the user's choices.
+    // from descriptor.voices / the registry - these only persist the user's choices.
     val favoriteVoices = FavoriteVoices(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
@@ -268,7 +268,7 @@ class AppGraph(context: Context) {
 
     // UI-preference seams over the same store: the chosen color theme (reading/OLED schemes) and
     // the one-shot "has the first-run walkthrough been seen?" flag. Both hold only the user's
-    // choice — the theme's concrete colors live in the theme layer, the walkthrough copy in its UI.
+    // choice - the theme's concrete colors live in the theme layer, the walkthrough copy in its UI.
     val appThemePreference = AppThemePreference(preferenceStore)
     val onboardingState = OnboardingState(preferenceStore)
 
@@ -306,22 +306,22 @@ class AppGraph(context: Context) {
      */
     fun newSpillFile(): java.io.File = java.io.File.createTempFile("phonetts_spill_", ".pcm", appContext.cacheDir)
 
-    /** Device free RAM right now, in bytes — the reference point the resource-cost hints display against. */
+    /** Device free RAM right now, in bytes - the reference point the resource-cost hints display against. */
     fun availableRamBytes(): Long = DeviceInfo.availableRamBytes(appContext)
 
-    /** This process's current footprint, in bytes — recorded after a load to refine RAM estimates. */
+    /** This process's current footprint, in bytes - recorded after a load to refine RAM estimates. */
     fun processMemoryBytes(): Long = DeviceInfo.processMemoryBytes()
 
     /** A stable name for this device, used to compare benchmark history like-for-like (issue #39). */
     val deviceName: String get() = DeviceInfo.name
 
     // The export-format registry (WAV always; AAC always; Opus on API 29+). The picker reads
-    // display names/extensions/MIME from here — no format string is hardcoded in the UI (SSOT).
+    // display names/extensions/MIME from here - no format string is hardcoded in the UI (SSOT).
     val exportFormats = ExportFormats.available(appContext)
 
     /**
      * Re-import previously downloaded/sideloaded model folders so the catalog is repopulated on
-     * every launch (a saved override makes each re-resolve fast). Best-effort per folder — a
+     * every launch (a saved override makes each re-resolve fast). Best-effort per folder - a
      * folder the resolver can no longer identify is skipped, not fatal (though it IS recorded as an
      * [com.phonetts.core.registry.UnresolvedModel] by [importer], issue #8).
      *
@@ -335,7 +335,7 @@ class AppGraph(context: Context) {
         registerBuiltInDescriptors()
     }
 
-    // Generic across EVERY discovered provider (rule 5 — no engine named in shared wiring): most
+    // Generic across EVERY discovered provider (rule 5 - no engine named in shared wiring): most
     // providers' [EngineProvider.builtInDescriptors] default to emptyList() and are effectively a
     // no-op here; a provider like `SystemTtsEngineProvider` that wraps an already-installed OS
     // service (issue #77) uses this hook to surface its "models" straight into [catalog], since

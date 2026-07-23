@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 /**
  * `F5DurationPlanner` is F5's native duration/speed route (CLAUDE.md rule 2, README-io.md): it
  * computes `max_duration`, a real declared input of `F5_Preprocess.onnx`, and never touches a
- * sample rate — these tests pin the formula and its "never resamples" property.
+ * sample rate - these tests pin the formula and its "never resamples" property.
  */
 class F5DurationPlannerTest {
     @Test

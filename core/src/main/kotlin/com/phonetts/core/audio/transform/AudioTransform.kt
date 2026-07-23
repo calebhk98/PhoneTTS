@@ -9,11 +9,11 @@ interface AudioTransform {
     /** Stable id used to toggle this transform on/off in a [TransformChain] and in the UI. */
     val id: String
 
-    /** Human-facing name (the UI reads this — no transform name is hardcoded in the UI). */
+    /** Human-facing name (the UI reads this - no transform name is hardcoded in the UI). */
     val displayName: String
 
     /**
-     * Return processed segments. MUST NOT mutate [segments] or the arrays inside it — return new
+     * Return processed segments. MUST NOT mutate [segments] or the arrays inside it - return new
      * arrays so the caller's raw audio is preserved for re-listening with the transform disabled.
      */
     fun apply(

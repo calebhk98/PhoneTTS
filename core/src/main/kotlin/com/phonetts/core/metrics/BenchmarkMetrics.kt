@@ -2,10 +2,10 @@ package com.phonetts.core.metrics
 
 /**
  * The full set of measured figures for one benchmark run (issue #14): everything [RtfEstimator]
- * already measures from draining a real `synthesize()` call — audio produced, wall-clock elapsed,
- * time to first audio — plus the model-load cost that happens *before* synthesis and the device's
+ * already measures from draining a real `synthesize()` call - audio produced, wall-clock elapsed,
+ * time to first audio - plus the model-load cost that happens *before* synthesis and the device's
  * RAM footprint at that moment. Every field here is either a genuine measurement or `null`
- * ("unknown/unavailable") — never a fabricated number (CLAUDE.md: label unknown rather than guess).
+ * ("unknown/unavailable") - never a fabricated number (CLAUDE.md: label unknown rather than guess).
  *
  * [modelLoadSeconds], [processMemoryBytes], and [availableRamBytes] are measured by the caller
  * (the app's [BenchmarkViewModel][com.phonetts.app.benchmark.BenchmarkViewModel], which has the
@@ -28,7 +28,7 @@ data class BenchmarkMetrics(
     }
 
     /**
-     * Actual synthesis wall-clock time once the model is already loaded — distinct from [RtfResult
+     * Actual synthesis wall-clock time once the model is already loaded - distinct from [RtfResult
      * .realTimeFactor], which is a *ratio* (wall/audio), not a duration.
      */
     val generationSeconds: Double get() = rtf.wallClockElapsedSeconds
@@ -37,7 +37,7 @@ data class BenchmarkMetrics(
     val timeToFirstAudioSeconds: Double? get() = rtf.timeToFirstAudioSeconds
 
     /**
-     * Load time plus generation time, end to end. `null` when load time wasn't measured — reporting
+     * Load time plus generation time, end to end. `null` when load time wasn't measured - reporting
      * a partial total as if it were the whole thing would be dishonest, so this abstains instead.
      */
     val totalWallSeconds: Double?
@@ -45,7 +45,7 @@ data class BenchmarkMetrics(
 
     /**
      * This process's memory footprint as a fraction of the device's available RAM at run time,
-     * clamped to `[0, 1]` — a process footprint and a device-available reading are sampled at
+     * clamped to `[0, 1]` - a process footprint and a device-available reading are sampled at
      * slightly different instants, so a naive ratio can exceed 1.0. `null` when either figure is
      * unknown, or when [availableRamBytes] is zero (nothing to divide by).
      */

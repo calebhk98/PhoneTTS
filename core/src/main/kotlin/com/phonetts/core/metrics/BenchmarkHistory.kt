@@ -19,10 +19,10 @@ data class BenchmarkRecord(
 
 /**
  * Persists [RtfEstimator] measurements over time (issue #39), keyed by engine+device, via an
- * injected [PreferenceStore] — mirrors [com.phonetts.core.prefs.DocumentMemory]. It does NOT change
+ * injected [PreferenceStore] - mirrors [com.phonetts.core.prefs.DocumentMemory]. It does NOT change
  * how [RtfEstimator] measures; it only stores the number the estimator already produced, so a later
  * run can be compared against earlier ones ([ThermalRegressionDetector]) to spot "this engine is now
- * much slower than last time" — the tell-tale of thermal throttling on a no-NPU phone.
+ * much slower than last time" - the tell-tale of thermal throttling on a no-NPU phone.
  *
  * This whole feature is opt-in / power-user (kept OFF by default in the UI): storing history is
  * pointless unless the user turned the view on, and always-on history would confuse casual users

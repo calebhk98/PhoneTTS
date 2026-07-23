@@ -3,7 +3,7 @@ package com.phonetts.core.audio.transform
 // Composes the enabled transforms into one streaming pipeline for bounded-memory export. A segment
 // pushed in flows through every stage in order and out to [sink] (the encoder's writer); each
 // stage releases settled output as it goes, so at most one stage's bounded working set is resident
-// at a time. This is the streaming sibling of [TransformChain.apply] — same order, same result,
+// at a time. This is the streaming sibling of [TransformChain.apply] - same order, same result,
 // but never materializing the whole utterance.
 class TransformPipeline internal constructor(
     private val stages: List<TransformStage>,
@@ -34,7 +34,7 @@ class TransformPipeline internal constructor(
 
 // Fallback stage for a transform that has no streaming form: it buffers every segment and applies
 // the batch transform at the end. This reintroduces full-buffer memory use for THAT transform only
-// (SilenceTrim today), and only when the user has enabled it — the common no-transform and
+// (SilenceTrim today), and only when the user has enabled it - the common no-transform and
 // streaming-transform paths stay bounded.
 internal class BufferingStage(
     private val transform: AudioTransform,

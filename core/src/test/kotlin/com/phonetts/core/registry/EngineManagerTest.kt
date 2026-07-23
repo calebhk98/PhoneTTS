@@ -27,7 +27,7 @@ class EngineManagerTest {
 
             assertFailsWith<IllegalStateException> { manager.switchTo("b", testDescriptor("m", "b")) }
 
-            // The old engine was unloaded and the failed one didn't load — no stale "ready" engine.
+            // The old engine was unloaded and the failed one didn't load - no stale "ready" engine.
             assertNull(manager.currentEngine)
             assertNull(manager.currentDescriptor)
             assertEquals(1, engineA.unloadCount)

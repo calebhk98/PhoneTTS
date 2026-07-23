@@ -19,7 +19,7 @@ import java.io.Closeable
 // synthesis. Pass a [ChunkSpill] to opt in: older chunks are transparently evicted to a scratch
 // FILE once the retained-in-RAM sample count crosses the spill's ceiling, and [chunkAt]/[snapshot]
 // read them back below the live window. The spill is byte-lossless (raw float32), so replay-from-0
-// still returns exactly what was generated — from disk or RAM, indistinguishable to consumers. With
+// still returns exactly what was generated - from disk or RAM, indistinguishable to consumers. With
 // no spill (the default) behaviour is unchanged: everything stays in the heap.
 //
 // [count] and [complete] are observable so a consumer waiting at the live edge wakes the moment

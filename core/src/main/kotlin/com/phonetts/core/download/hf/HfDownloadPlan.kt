@@ -15,8 +15,8 @@ data class HfDownloadItem(
  * (`DirectoryBundleReader → resolve → inspect()`), so no engine-specific knowledge is needed here.
  */
 object HfDownloadPlan {
-    // A DENYLIST, not an allowlist: the user wants every model weight format kept — including
-    // PyTorch `.safetensors`/`.bin`/`.pt` — so a future engine can be pointed at an already-
+    // A DENYLIST, not an allowlist: the user wants every model weight format kept - including
+    // PyTorch `.safetensors`/`.bin`/`.pt` - so a future engine can be pointed at an already-
     // downloaded repo. Only files that are NEVER part of any runnable model payload are skipped:
     // VCS/repo-metadata (this is what fixed the sesame/csm-1b failure, whose surfaced error was
     // literally `.../resolve/main/.gitattributes`), plus docs/source/media/training bookkeeping
@@ -79,7 +79,7 @@ object HfDownloadPlan {
         return name in VCS_METADATA_EXACT || name.startsWith(VCS_METADATA_PREFIX)
     }
 
-    // A file that no engine (current or future Kotlin/native — this app never re-executes a repo's
+    // A file that no engine (current or future Kotlin/native - this app never re-executes a repo's
     // own Python/JS) could read as part of running the model. Name/extension based so it matches at
     // any depth in the tree.
     private fun isNonPayload(path: String): Boolean {

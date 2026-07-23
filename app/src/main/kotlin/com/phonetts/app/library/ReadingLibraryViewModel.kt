@@ -14,14 +14,14 @@ import kotlinx.coroutines.launch
 /**
  * Drives the reading library screen (issue #19-5): list every saved document, open one back into
  * the main reader, rename/delete, and save the main screen's current text as a new entry. All the
- * actual persistence is [AppGraph.documentLibrary]'s job (`:core`, pure/testable) — this class only
+ * actual persistence is [AppGraph.documentLibrary]'s job (`:core`, pure/testable) - this class only
  * holds UI state and reads the loaded-once [initialText] snapshot to save (mirrors
  * [com.phonetts.app.ui.MixVoicesViewModel] taking a snapshot [com.phonetts.core.model.ModelDescriptor]
  * rather than a live reference).
  *
  * "Offer to resume" (the task's ask) is NOT a separate mechanism here: opening a document just hands
  * its text to [com.phonetts.app.ui.TtsViewModel.setText], which already looks up
- * [AppGraph.documentMemory] by the SAME content-derived id ([DocumentId]) this library saves under —
+ * [AppGraph.documentMemory] by the SAME content-derived id ([DocumentId]) this library saves under -
  * so [Row.hasResumePoint] simply reports whether that existing lookup would find something, letting
  * the screen ask "resume, or start over?" before opening.
  */
@@ -50,7 +50,7 @@ class ReadingLibraryViewModel(
         refresh()
     }
 
-    /** Re-read the saved documents — call after a save/rename/delete, or when the screen shows. */
+    /** Re-read the saved documents - call after a save/rename/delete, or when the screen shows. */
     fun refresh() {
         val rows =
             graph.documentLibrary.list().map { document ->
@@ -61,7 +61,7 @@ class ReadingLibraryViewModel(
 
     /**
      * Save the main screen's current text as a new library entry (or update it in place, if it was
-     * already saved — [DocumentId] is content-derived, so re-saving unchanged text is idempotent).
+     * already saved - [DocumentId] is content-derived, so re-saving unchanged text is idempotent).
      * A no-op when there was no text to save.
      */
     fun saveCurrentDocument() {

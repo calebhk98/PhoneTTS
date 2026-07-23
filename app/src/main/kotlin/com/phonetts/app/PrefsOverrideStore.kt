@@ -4,7 +4,7 @@ import android.content.Context
 import com.phonetts.core.registry.ClearableOverrideStore
 
 /**
- * SharedPreferences-backed override store — the durable, on-device version of the resolver's
+ * SharedPreferences-backed override store - the durable, on-device version of the resolver's
  * bundle→engine decisions the doc comment on `OverrideStore` promised. Survives restarts, so a
  * sideloaded/downloaded model's engine assignment (auto-detected or user-picked) is remembered.
  * Implements [ClearableOverrideStore] so deleting a model also forgets its saved engine decision.

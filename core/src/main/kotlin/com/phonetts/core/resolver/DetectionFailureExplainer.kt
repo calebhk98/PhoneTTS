@@ -63,12 +63,12 @@ private enum class WeightFormatIssue(
  * Human-readable explanation of why no engine's [VoiceEngine.inspect] claimed a [ModelBundle]
  * (spec §6.2: `inspect()` fails closed rather than guessing, so an unclaimed bundle drops to the
  * user-pick fallback). Read-only and inert on its own: [explain] calls the same [VoiceEngine.inspect]
- * probe [com.phonetts.core.resolver.Resolver] already uses — a query method by the interface's own
- * contract — and never calls `load`, `forcedMatch`, or anything else that could change state. It
+ * probe [com.phonetts.core.resolver.Resolver] already uses - a query method by the interface's own
+ * contract - and never calls `load`, `forcedMatch`, or anything else that could change state. It
  * makes no [Resolver] calls and persists nothing.
  *
  * What it can and cannot know: no individual engine exposes *why* its `inspect()` declined a
- * bundle — that fingerprinting logic is private to each engine family (spec §5.1). So this class
+ * bundle - that fingerprinting logic is private to each engine family (spec §5.1). So this class
  * reports only what is externally observable: which registered engines were asked and declined,
  * and which of the standard companion-file categories spec §6.2 lists (config.json, tokenizer,
  * phoneme map, voice/speaker table) are present or missing on the bundle itself.
@@ -147,7 +147,7 @@ class DetectionFailureExplainer {
                 "yourself below."
         }
         return "None of the ${checkedEngineIds.size} available engine(s) recognized '${bundle.id}'. " +
-            "It's missing these usual files: ${findings.missingCategories.joinToString()} — without " +
+            "It's missing these usual files: ${findings.missingCategories.joinToString()} - without " +
             "them the app can't tell which model this is with confidence. Try a download that " +
             "includes those files, or pick an engine for it yourself below."
     }
@@ -222,7 +222,7 @@ private fun ModelBundle.hasNativeGgufStack(): Boolean =
         fileNames.any { extensionOf(it) == GGUF_EXTENSION && it.lowercase().contains(stage) }
     }
 
-/** The result of [DetectionFailureExplainer.explain] — a narration, not a new detection decision. */
+/** The result of [DetectionFailureExplainer.explain] - a narration, not a new detection decision. */
 data class DetectionFailureReport(
     val bundleId: String,
     val checkedEngineIds: List<String>,

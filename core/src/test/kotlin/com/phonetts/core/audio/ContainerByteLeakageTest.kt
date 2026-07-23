@@ -23,7 +23,7 @@ import kotlin.test.assertFalse
  * playback consumers ([StreamingConsumer] and [BufferedPlayback]) only ever see raw PCM samples,
  * because both drain the SAME `synthesize()` flow (spec §6.1) and that flow carries floats, never
  * encoded bytes. These tests pin that invariant so a future refactor can't quietly route encoded
- * bytes into the playback path. It is already correct today — the value here is the guard.
+ * bytes into the playback path. It is already correct today - the value here is the guard.
  */
 class ContainerByteLeakageTest {
     private val engine =

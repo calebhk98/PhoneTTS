@@ -25,14 +25,14 @@ private val PLAYBACK_ACTIONS =
 /**
  * Foreground service that keeps TTS playback alive with the screen off, and gives the OS a
  * notification + lock-screen media session to control it from (spec: background playback,
- * issue #19). It owns no audio or generation logic of its own — [PlaybackController] (attached by
+ * issue #19). It owns no audio or generation logic of its own - [PlaybackController] (attached by
  * whoever is actually playing, currently `TtsViewModel`) is where a Play/Pause/Stop tap actually
  * routes to, so this class's job is only to turn those taps into calls on that interface and keep
  * the notification ([PlaybackNotificationFactory]) / [MediaSessionCompat] / audio focus
  * ([PlaybackAudioFocus]) in sync with the reported state.
  *
  * Sleep timer: [startSleepTimer] arms a [SleepTimerRunner] (the `:app`-side clock for `:core`'s
- * [com.phonetts.core.playback.SleepTimer]) whose expiry stops the attached controller — "stop
+ * [com.phonetts.core.playback.SleepTimer]) whose expiry stops the attached controller - "stop
  * after N minutes" is just another route into the same `stop()` call a Stop tap uses.
  *
  * It also publishes a [PlaybackStateStore] snapshot + refreshes the home-screen widget on every
@@ -51,7 +51,7 @@ class PlaybackService : Service() {
     private val cuePreferences by lazy { PlaybackCuePreferences(PrefsPreferenceStore(this)) }
 
     // Distinguishes a natural end-of-document (chime) from a user Stop (no chime): every Stop the
-    // service itself routes — notification/lock-screen Stop, session onStop, sleep-timer expiry —
+    // service itself routes - notification/lock-screen Stop, session onStop, sleep-timer expiry -
     // sets [userStopRequested] before calling stop(). A transition out of "playing" that was NOT
     // one of those is treated as the flow completing on its own. [wasPlaying] gates the cue to a
     // real playing→stopped edge, so a spurious "not playing" (e.g. the initial bound state) is silent.

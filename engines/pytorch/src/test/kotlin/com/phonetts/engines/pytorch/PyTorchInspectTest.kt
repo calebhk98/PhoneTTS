@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 
 /**
  * Proves the verdict recorded in [PyTorchEngine]'s kdoc and `engines/pytorch/INTEGRATION.md`:
- * `inspect()` fails closed **unconditionally** — there is no on-device PyTorch runtime, so even a
+ * `inspect()` fails closed **unconditionally** - there is no on-device PyTorch runtime, so even a
  * bundle that is unmistakably a raw PyTorch TTS checkpoint (weights + a TTS-shaped `config.json`)
  * must never be claimed (CLAUDE.md rule 4). `forcedMatch()` also always throws, which is itself the
  * honest behavior here (every other engine's `forcedMatch` never refuses; this one always does,
@@ -26,7 +26,7 @@ class PyTorchInspectTest {
 
     @Test
     fun `inspect rejects a bundle that looks exactly like a real raw PyTorch TTS checkpoint`() {
-        // Modeled on the real myshell-ai/MeloTTS-English shape (checkpoint.pth + config.json) —
+        // Modeled on the real myshell-ai/MeloTTS-English shape (checkpoint.pth + config.json) -
         // even this unmistakable case must return null (see class kdoc: recognizing the shape is
         // not the same as being able to run it).
         val bundle =

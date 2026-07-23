@@ -239,7 +239,7 @@ class HfResultsViewTest {
     fun needsEagerSizeFetchIsTrueWhenAnActiveSizeFilterIsSetRegardlessOfSort() {
         // Regression: a max-size filter with a non-size sort must still trigger the eager fetch,
         // otherwise unfetched-size results are excluded by filterBySize and never get a chance to
-        // resolve — see needsEagerSizeFetch's kdoc.
+        // resolve - see needsEagerSizeFetch's kdoc.
         assertTrue(needsEagerSizeFetch(HfSortOption.MOST_DOWNLOADS, HfSizeParamFilter(maxBytes = 1_000L)))
     }
 

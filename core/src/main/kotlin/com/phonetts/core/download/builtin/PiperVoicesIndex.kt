@@ -9,10 +9,10 @@ import kotlin.math.roundToInt
 
 // Parses rhasspy/piper-voices' own published `voices.json` (the piper1-gpl voice family's
 // manifest of every voice it ships) into [BuiltInModel]s at runtime, so the Piper voice list is
-// always current with upstream instead of a hand-maintained snapshot (CLAUDE.md rule 1 — SSOT:
+// always current with upstream instead of a hand-maintained snapshot (CLAUDE.md rule 1 - SSOT:
 // the voice list lives in exactly one place, upstream's own manifest, not duplicated here). The
 // mapping is mechanical: one BuiltInModel per voice key, taking that key's `.onnx`/`.onnx.json`
-// repo paths verbatim — no engine code names any of these voices, and none of this ever runs
+// repo paths verbatim - no engine code names any of these voices, and none of this ever runs
 // hand-picking logic. Pure and Android-free: the caller (:app) fetches the JSON text and hands it
 // here; this file makes no network call of its own, so it's fully unit-testable against a fixture.
 
@@ -29,7 +29,7 @@ data class PiperVoiceLanguage(
     @SerialName("country_english") val countryEnglish: String,
 )
 
-/** One file's metadata inside a voice's `files` map — keyed by its repo path (see
+/** One file's metadata inside a voice's `files` map - keyed by its repo path (see
  * [PiperVoiceEntry.files]). Only [sizeBytes] is used; the digest isn't needed to build the
  * catalog entry. */
 @Serializable
@@ -50,19 +50,19 @@ data class PiperVoiceEntry(
 
 /**
  * Parses upstream's `voices.json` into the [BuiltInModel]s the Piper browse section renders.
- * Replaces the old hand-generated `PiperVoiceCatalog` — the exact same output shape, computed at
+ * Replaces the old hand-generated `PiperVoiceCatalog` - the exact same output shape, computed at
  * runtime from the SAME upstream manifest instead of a checked-in snapshot of it.
  */
 object PiperVoicesIndex {
     /** The single repo every Piper voice (including [BuiltInCatalog.PIPER_LESSAC]) is published
-     * from — the one place this literal lives (SSOT), reused wherever a Piper voice's repo id is
+     * from - the one place this literal lives (SSOT), reused wherever a Piper voice's repo id is
      * needed instead of being re-typed. */
     const val REPO_ID = "rhasspy/piper-voices"
 
     private val json = Json { ignoreUnknownKeys = true }
     private val entrySerializer = MapSerializer(String.serializer(), PiperVoiceEntry.serializer())
 
-    /** True if [modelId] names a voice from this index (its ids are always `piper-<voice-key>`) —
+    /** True if [modelId] names a voice from this index (its ids are always `piper-<voice-key>`) -
      * lets a caller that only has an id (no [BuiltInModel] in hand, e.g. an already-downloaded
      * model) recognize it as a Piper voice without re-fetching or guessing. */
     fun isPiperVoiceId(modelId: String): Boolean = modelId.startsWith(PIPER_VOICE_ID_PREFIX)
@@ -70,8 +70,8 @@ object PiperVoicesIndex {
     /**
      * @param voicesJson the raw text of upstream's `voices.json` (an object keyed by voice id).
      * @throws kotlinx.serialization.SerializationException if [voicesJson] isn't valid JSON in the
-     * expected shape — the caller (:app) is responsible for catching this and failing closed (an
-     * error state, never a guessed/stale list — CLAUDE.md rule 4's spirit applied to data, not
+     * expected shape - the caller (:app) is responsible for catching this and failing closed (an
+     * error state, never a guessed/stale list - CLAUDE.md rule 4's spirit applied to data, not
      * just model detection).
      */
     fun parse(voicesJson: String): List<BuiltInModel> {
@@ -102,6 +102,6 @@ object PiperVoicesIndex {
     private fun displayName(entry: PiperVoiceEntry): String {
         val name = entry.name.split('_').joinToString(" ") { word -> word.replaceFirstChar(Char::uppercaseChar) }
         val quality = if (entry.quality == EXTRA_LOW_QUALITY) EXTRA_LOW_DISPLAY else entry.quality
-        return "Piper — $name (${entry.language.nameEnglish}, ${entry.language.countryEnglish}, $quality)"
+        return "Piper - $name (${entry.language.nameEnglish}, ${entry.language.countryEnglish}, $quality)"
     }
 }

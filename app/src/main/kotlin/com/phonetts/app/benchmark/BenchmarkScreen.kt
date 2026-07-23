@@ -37,7 +37,7 @@ import androidx.compose.ui.unit.dp
 /**
  * Compare every downloaded model's real generation speed on the same phrase, and copy the numbers
  * out (Markdown) to paste into notes or an issue. Everything is measured by [BenchmarkViewModel] via
- * the metrics seam — no guessed figures.
+ * the metrics seam - no guessed figures.
  */
 @Composable
 fun BenchmarkScreen(viewModel: BenchmarkViewModel) {
@@ -50,7 +50,7 @@ fun BenchmarkScreen(viewModel: BenchmarkViewModel) {
     ) {
         Text(
             "Runs each downloaded model on the same phrase and measures its speed. RTF is wall-clock " +
-                "per second of audio — below 1.0× is faster than real-time.",
+                "per second of audio - below 1.0× is faster than real-time.",
             style = MaterialTheme.typography.bodySmall,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -149,11 +149,11 @@ private fun SpeedTrendSection(rows: List<BenchmarkViewModel.Row>) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             "Speed trend vs your last benchmark on this device. A big slowdown usually means thermal " +
-                "throttling on a phone with no dedicated AI chip — let it cool and try again.",
+                "throttling on a phone with no dedicated AI chip - let it cool and try again.",
             style = MaterialTheme.typography.bodySmall,
         )
         if (notes.isEmpty()) {
-            Text("No regressions — speeds are in line with last time (or this is the first run).")
+            Text("No regressions - speeds are in line with last time (or this is the first run).")
             return@Column
         }
         notes.forEach { (model, note) -> Text("$model: $note", style = MaterialTheme.typography.bodyMedium) }
@@ -184,7 +184,7 @@ private fun ResultsTable(rows: List<BenchmarkViewModel.Row>) {
 @Composable
 private fun TableRow(row: BenchmarkViewModel.Row) {
     if (!row.ok) {
-        TableRow(row.displayName, "failed", "—", "—", "—", "—", ram(row.metrics?.processMemoryBytes), ram(row.peakRamBytes))
+        TableRow(row.displayName, "failed", "-", "-", "-", "-", ram(row.metrics?.processMemoryBytes), ram(row.peakRamBytes))
         return
     }
     TableRow(
@@ -239,9 +239,9 @@ private fun Cell(
 private fun fmt(value: Double): String = "%.2f".format(value)
 
 // Table columns are narrow, so an unmeasured figure (issue #14: TTFA/load time not available on
-// this run) reads as "—" here rather than the fuller "unknown" the Markdown export uses — same
+// this run) reads as "-" here rather than the fuller "unknown" the Markdown export uses - same
 // honesty (never a guessed number), just terser for the fixed-width cell.
-private fun optionalFmt(value: Double?): String = value?.let { fmt(it) } ?: "—"
+private fun optionalFmt(value: Double?): String = value?.let { fmt(it) } ?: "-"
 
 private fun ram(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "?"
 

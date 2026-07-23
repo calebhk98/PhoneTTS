@@ -6,7 +6,7 @@ import kotlin.test.assertTrue
 
 /**
  * [KokoroVocab] reads the `model.vocab` object out of a Kokoro `tokenizer.json` into a char->id
- * map, and fails closed (empty map) on malformed or foreign input — the SSOT source the frontend
+ * map, and fails closed (empty map) on malformed or foreign input - the SSOT source the frontend
  * turns IPA into token ids with, never a hardcoded table.
  */
 class KokoroVocabTest {

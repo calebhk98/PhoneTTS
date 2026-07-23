@@ -2,7 +2,7 @@ package com.phonetts.core.playback
 
 /**
  * A pure countdown timer for "stop playback after N minutes" (spec-style seam: no Android
- * dependencies, so it is unit-testable on a plain JVM). It has no thread or timer of its own —
+ * dependencies, so it is unit-testable on a plain JVM). It has no thread or timer of its own -
  * [start] arms a deadline against the injected [now] clock, [remainingMillis] reports what is
  * left at any instant, and [tick] is the caller's cue to re-check that deadline and fire the
  * armed callback exactly once if it has elapsed. The `:app` foreground service is responsible

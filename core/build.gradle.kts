@@ -21,7 +21,7 @@ dependencies {
 }
 
 // Compile with whatever JDK runs Gradle (JDK 21 here) but emit JVM 17 bytecode, so the
-// Android :app module — which caps at 17 — can depend on :core unchanged.
+// Android :app module - which caps at 17 - can depend on :core unchanged.
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)

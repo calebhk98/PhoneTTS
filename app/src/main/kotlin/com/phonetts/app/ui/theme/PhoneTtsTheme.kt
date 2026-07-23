@@ -34,7 +34,7 @@ private val DarkColors =
         tertiary = Pink80,
     )
 
-// Warm, paper-like palette for long reading — low blue light, low glare. A light-family scheme.
+// Warm, paper-like palette for long reading - low blue light, low glare. A light-family scheme.
 private val SepiaColors =
     lightColorScheme(
         primary = Color(0xFF7A5C2E),
@@ -46,7 +46,7 @@ private val SepiaColors =
         onSurface = Color(0xFF3E3524),
     )
 
-// Pure-black surfaces so OLED pixels switch off — maximum battery saving in a dark room.
+// Pure-black surfaces so OLED pixels switch off - maximum battery saving in a dark room.
 private val TrueBlackColors =
     darkColorScheme(
         primary = Purple80,

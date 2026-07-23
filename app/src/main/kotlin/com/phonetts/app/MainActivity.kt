@@ -61,7 +61,7 @@ import com.phonetts.app.ui.theme.PhoneTtsTheme
 import com.phonetts.core.prefs.AppTheme
 
 // Not private: shared with NavDrawerScaffold (app/ui), which every sub-page uses to list every
-// destination in its own hamburger drawer (issue #1) — the same enum TtsScreen's drawer navigates.
+// destination in its own hamburger drawer (issue #1) - the same enum TtsScreen's drawer navigates.
 enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE }
 
 class MainActivity : ComponentActivity() {
@@ -69,12 +69,12 @@ class MainActivity : ComponentActivity() {
     private val ttsViewModel: TtsViewModel by viewModels {
         viewModelFactory { initializer { TtsViewModel(graph) } }
     }
-    // A Compose State (not a plain var) so AppNav recomposes — and rebuilds the SleepTimerHandle
-    // it hands TtsScreen — the moment the service connects/disconnects.
+    // A Compose State (not a plain var) so AppNav recomposes - and rebuilds the SleepTimerHandle
+    // it hands TtsScreen - the moment the service connects/disconnects.
     private val binderState = mutableStateOf<PlaybackService.LocalBinder?>(null)
 
     // POST_NOTIFICATIONS is declared in the manifest, but Android 13+ (API 33) also requires a
-    // RUNTIME grant — without it the system silently drops EVERY notification, so the download,
+    // RUNTIME grant - without it the system silently drops EVERY notification, so the download,
     // generation, and playback notifications this app already posts never appeared. Registered here
     // (before the activity is started, as the result API requires) and launched once from onCreate.
     private val notificationPermissionLauncher =
@@ -243,10 +243,10 @@ private fun AppNav(
                                     graph.catalog,
                                     isRuntimeAvailable = { id -> graph.runtimeRegistry.get(id)?.isAvailable() == true },
                                     // Turns on the per-download progress notification (#70); null would
-                                    // silently disable it. Uses the app context — no Activity leak.
+                                    // silently disable it. Uses the app context - no Activity leak.
                                     notifier = DownloadNotifier(graph.appContext),
                                     // Feeds the RTF sort/filter (issue: real-time-factor sort) from the
-                                    // SAME persisted history the Benchmarks screen writes to — never a
+                                    // SAME persisted history the Benchmarks screen writes to - never a
                                     // second measurement path.
                                     benchmarkHistory = graph.benchmarkHistory,
                                     // The registered engine ids feed the Browse "Engine type" filter
@@ -282,7 +282,7 @@ private fun AppNav(
                                     modelManager = graph.modelManager,
                                     resourceUsage = graph.resourceUsageStore,
                                     availableRamBytes = graph::availableRamBytes,
-                                    // TOTAL ram, not free — the only figure that decides whether a
+                                    // TOTAL ram, not free - the only figure that decides whether a
                                     // model can physically fit (DeviceRamFit); AppGraph itself is
                                     // off-limits here, so this calls DeviceInfo directly off its
                                     // already-public appContext instead of adding a new AppGraph
@@ -310,7 +310,7 @@ private fun AppNav(
         }
         Screen.MIX -> {
             val ttsState by ttsViewModel.state.collectAsState()
-            // Not keyed to the main screen's selected model (issue #11) — Mix voices picks its own
+            // Not keyed to the main screen's selected model (issue #11) - Mix voices picks its own
             // model from the whole catalog, so it works even before anything is selected on MAIN.
             val mixViewModel: MixVoicesViewModel =
                 viewModel(factory = viewModelFactory { initializer { MixVoicesViewModel(graph, ttsState.selected) } })
@@ -329,7 +329,7 @@ private fun AppNav(
                     onOpen = { document, resume ->
                         // Loads the saved text into the SAME main-screen TtsViewModel the reader
                         // already uses; setText() itself looks up any saved DocumentMemory position
-                        // for this content-derived id, so "resume" just reuses resumeFromSaved() —
+                        // for this content-derived id, so "resume" just reuses resumeFromSaved() -
                         // no second resume mechanism.
                         ttsViewModel.setText(document.text)
                         if (resume) ttsViewModel.resumeFromSaved()

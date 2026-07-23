@@ -8,15 +8,15 @@ import com.phonetts.core.audio.export.WavEncoder
 /**
  * SSOT for which export-format consumers exist. The export-format picker (UI) is meant to
  * enumerate [available] and read `id`/`displayName`/`fileExtension`/`mimeType` off each
- * encoder's `format` — nothing about formats should be hardcoded in the UI layer, same discipline
+ * encoder's `format` - nothing about formats should be hardcoded in the UI layer, same discipline
  * as model facts (spec's SSOT rule). [WavEncoder] is core's reference/always-available encoder;
  * AAC and Opus live here in `:app` because MediaCodec is Android-only (see CLAUDE.md module
- * layout — `:core` has no Android dependency).
+ * layout - `:core` has no Android dependency).
  *
  * Opus is included only when `Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q` (API 29): that is
  * the first OS version whose MediaCodec ships an Opus ENCODER at all (see [OpusAudioEncoder]'s
  * kdoc for the full reasoning). Offering it below API 29 would list a picker option that throws on
- * use, so it is omitted there rather than shipped broken — this mirrors the spec's "fail closed,
+ * use, so it is omitted there rather than shipped broken - this mirrors the spec's "fail closed,
  * never guess" discipline (rule 4) applied to format availability instead of model identification.
  */
 object ExportFormats {
@@ -28,12 +28,12 @@ object ExportFormats {
     fun available(context: Context): List<AudioEncoder> {
         // WavEncoder's scratch PCM spill needs an app-writable directory too (issue: WAV export was
         // constructed with no scratchDir, so its default fell back to `File.createTempFile`'s
-        // platform temp dir — on Android that is NOT app-writable, unlike the JVM environment the
+        // platform temp dir - on Android that is NOT app-writable, unlike the JVM environment the
         // :core tests run in. `openWriter()` then threw before a single byte was written, and the
         // SAF document the caller had already created (0 bytes) was closed as-is by
         // `TtsViewModel.export`'s `output.use{}` on the failure path: a 0-byte / never-finalized file
         // that the OS previewer reports as "fd://... can not be played". AAC/Opus below were already
-        // correctly passed `context.cacheDir` — WAV was the one format missing it.
+        // correctly passed `context.cacheDir` - WAV was the one format missing it.
         val encoders = mutableListOf<AudioEncoder>(WavEncoder(context.cacheDir), AacAudioEncoder(context.cacheDir))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             encoders += OpusAudioEncoder(context.cacheDir)

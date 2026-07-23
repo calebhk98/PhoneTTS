@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
  * every sample finite and bounded. It also proves the actual generalization this module exists
  * for: the discovered CrispASR backend id reaches [com.phonetts.core.runtime.RuntimeOptions.extras]
  * on every `openTtsSession` call, so a single, backend-parameterized runtime (the app-module
- * `NativeGgmlTtsRuntime` this engine is built for — see `engines/ggmltts/INTEGRATION.md`) can serve
+ * `NativeGgmlTtsRuntime` this engine is built for - see `engines/ggmltts/INTEGRATION.md`) can serve
  * any CrispASR backend without this engine, or the runtime, ever branching on which one it is.
  */
 class GgmlTtsSynthesizeInvariantsTest {

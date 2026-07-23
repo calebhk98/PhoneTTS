@@ -4,7 +4,7 @@ import android.content.Context
 import com.phonetts.core.prefs.PreferenceStore
 
 /**
- * SharedPreferences-backed [PreferenceStore] — the durable, on-device store behind
+ * SharedPreferences-backed [PreferenceStore] - the durable, on-device store behind
  * [com.phonetts.core.prefs.FavoriteVoices] and [com.phonetts.core.prefs.DocumentMemory]. Mirrors
  * [PrefsOverrideStore]'s pattern: a thin adapter with no logic of its own, just field mapping.
  */

@@ -2,14 +2,14 @@ package com.phonetts.core.store
 
 /**
  * Minimal named-document persistence seam for durable app state that must survive process death
- * and relaunch (tournament results, benchmark history, error/diagnostics logs, favorites — issue
+ * and relaunch (tournament results, benchmark history, error/diagnostics logs, favorites - issue
  * #114). Mirrors [com.phonetts.core.prefs.PreferenceStore] / [com.phonetts.core.resolver.OverrideStore]:
  * `:core` defines the interface (plus a plain in-memory double for tests) and `:app` supplies a
  * thin `filesDir`-backed implementation.
  *
  * A "document" is one small, self-contained blob of UTF-8 text addressed by [name] (the concrete
  * store maps that to one file). This interface intentionally knows nothing about JSON, bounding, or
- * the shape of the data — those are the job of the pure helpers layered on top ([JsonListStore],
+ * the shape of the data - those are the job of the pure helpers layered on top ([JsonListStore],
  * [FavoritesStore], [DurableErrorLog]), which is what keeps them unit-testable on a plain JVM with
  * an [InMemoryDurableStore] and no Android at all.
  *
@@ -33,7 +33,7 @@ interface DurableStore {
 }
 
 /**
- * A non-persistent [DurableStore] backed by an in-memory map — the plain-JVM test double that lets
+ * A non-persistent [DurableStore] backed by an in-memory map - the plain-JVM test double that lets
  * every store layered on top ([JsonListStore], [FavoritesStore], [DurableErrorLog]) be exercised
  * without touching the filesystem or Android.
  */

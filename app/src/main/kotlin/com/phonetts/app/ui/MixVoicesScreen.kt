@@ -35,7 +35,7 @@ import com.phonetts.core.model.ModelDescriptor
  * model to mix, two of its voices, and how far to blend between them, then preview and save the
  * in-between voice. The model choices themselves are DERIVED from
  * [MixVoicesViewModel.UiState.availableModels] (every registered model whose descriptor sets
- * `supportsVoiceBlend`) — no model name appears here as a literal.
+ * `supportsVoiceBlend`) - no model name appears here as a literal.
  */
 @Composable
 fun MixVoicesScreen(viewModel: MixVoicesViewModel) {

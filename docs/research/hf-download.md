@@ -10,13 +10,13 @@
 
 Adding an in-app HF model browser is **straightforward in principle** because HF's HTTP API is simple and public, and the app already has all the plumbing (manifest parsing, SHA-256 verification, auto-load → `inspect()` → `resolve()` pipeline). The hard part is **mapping arbitrary HF repos to the app's 5 engine families** and handling the cases where a repo is ambiguous or missing critical companion files.
 
-**Recommended first step:** Start with a **curated in-app list** (20–50 popular HF TTS models, pre-mapped to engines) backed by HF HTTP calls. This gives users immediate value, requires minimal mapping logic, and avoids the "did I identify this model correctly?" problem. Phased rollout to full browsing comes later.
+**Recommended first step:** Start with a **curated in-app list** (20-50 popular HF TTS models, pre-mapped to engines) backed by HF HTTP calls. This gives users immediate value, requires minimal mapping logic, and avoids the "did I identify this model correctly?" problem. Phased rollout to full browsing comes later.
 
 ---
 
-## 1. Hugging Face Hub HTTP API — Listing Models
+## 1. Hugging Face Hub HTTP API - Listing Models
 
-### `/api/models` — Browse by pipeline tag + filters
+### `/api/models` - Browse by pipeline tag + filters
 
 ```
 GET /api/models
@@ -25,7 +25,7 @@ GET /api/models
   &tags=multilingual     # (optional) can chain multiple times
   &sort=downloads        # (optional) downloads, likes, created_at, etc.
   &direction=-1          # -1 = descending
-  &limit=50              # per_page; max is likely 50–100
+  &limit=50              # per_page; max is likely 50-100
   &offset=0              # for pagination
 ```
 
@@ -70,7 +70,7 @@ GET /api/models
 - `sort=downloads` is reliable for popularity; `sort=likes` is more subjective.
 
 **Pagination:**
-- Default `limit=50`; HF usually caps this at 50–100 per page.
+- Default `limit=50`; HF usually caps this at 50-100 per page.
 - Use `offset` to iterate (`offset=0`, `offset=50`, `offset=100`, etc.).
 - `createdAt` allows sorting by age for discovering new models.
 
@@ -78,7 +78,7 @@ GET /api/models
 
 ## 2. File Listing & Download URL Construction
 
-### A. `/api/models/{id}/tree/{revision}` — Browse repo structure
+### A. `/api/models/{id}/tree/{revision}` - Browse repo structure
 
 ```
 GET /api/models/hexgrad/Kokoro-82M/tree/main?recursive=false
@@ -121,7 +121,7 @@ GET /api/models/hexgrad/Kokoro-82M/tree/main?recursive=false
 
 **Recursive listing:** Add `?recursive=true` to recurse into subdirectories (slower, but useful to inventory all voice files).
 
-### B. Individual model info — `/api/models/{id}` (alternative)
+### B. Individual model info - `/api/models/{id}` (alternative)
 
 ```
 GET /api/models/hexgrad/Kokoro-82M
@@ -197,7 +197,7 @@ ETag: "0c0ac263f5ae91312df578d1b6adfb4c6dfda401cc3696ba97042f835619c52f"
 - **Gated models:** Cannot download gated models without auth, even if listed.
 
 ### Authenticated (with `HF_TOKEN`)
-- **Limit:** Higher and model-specific; documented at https://huggingface.co/docs/hub/security-tokens (typically 30k–50k calls per hour for pro users).
+- **Limit:** Higher and model-specific; documented at https://huggingface.co/docs/hub/security-tokens (typically 30k-50k calls per hour for pro users).
 - **Works for:** Gated models, after the user accepts any required agreements.
 - **How to provide:** Pass header `Authorization: Bearer {HF_TOKEN}` with each request.
 
@@ -238,7 +238,7 @@ The app's 5 built-in models set expectations for each engine:
 ### Phased approach to mapping
 
 **Phase 1 (MVP: Curated List)**
-- Hardcode ~20–50 well-known HF models (Kokoro, Piper variants, popular MeloTTS forks, etc.).
+- Hardcode ~20-50 well-known HF models (Kokoro, Piper variants, popular MeloTTS forks, etc.).
 - Map each repo `id` → engine `id` in the manifest.
 - The manifest acts like:
   ```json
@@ -280,35 +280,35 @@ The app's 5 built-in models set expectations for each engine:
 - Will work well for the 5 "official" families (they have stable fingerprints).
 - Will work for **close derivatives** of those families (a Piper fork with the same config structure).
 - Will fail for isolated experiments, niche models, and mixed-architecture repos.
-- **User-pick fallback is essential** — the app never guesses; it asks.
+- **User-pick fallback is essential** - the app never guesses; it asks.
 
 ---
 
 ## 5. Effort Estimate & Phased Plan
 
-### Phase 1: Curated in-app list (1–2 weeks)
+### Phase 1: Curated in-app list (1-2 weeks)
 
-**Goal:** 20–50 popular HF TTS models discoverable via tap, download, auto-load.
+**Goal:** 20-50 popular HF TTS models discoverable via tap, download, auto-load.
 
 **Tasks:**
 1. **Curate the list.** Identify ~40 popular/stable repos (Kokoro variants, Piper forks, MeloTTS fine-tunes, etc.).
    - Spot-check each one: download, unzip, verify `config.json` and model files exist.
    - Document engine family and file sizes.
-   - ~2–3 days of research + spot checks.
+   - ~2-3 days of research + spot checks.
 
 2. **Build the manifest offline.** Compute SHA-256 for each file (or extract from HF if available; see caveat in §2.D).
    - Write a Python script to crawl the curated list and generate a manifest JSON.
    - Store in `app/src/main/assets/models_curated.json` or similar.
-   - ~2–3 hours.
+   - ~2-3 hours.
 
 3. **Add a "Browse Curated Models" screen** (Compose UI).
    - Fetch the manifest at app startup or on-demand.
    - Display a list: model name, engine family, file size, download button.
    - Reuse existing download + SHA-256 + auto-load pipeline.
-   - ~3–4 days (UI + download state management).
+   - ~3-4 days (UI + download state management).
 
 4. **Test end-to-end.** Download a Kokoro variant, MeloTTS fork, and Piper variant; confirm they auto-load.
-   - ~1–2 days.
+   - ~1-2 days.
 
 **Result:** Users can tap a curated list and download trusted models. No guessing; engine is pre-mapped. Minimal risk.
 
@@ -316,7 +316,7 @@ The app's 5 built-in models set expectations for each engine:
 
 ---
 
-### Phase 2: Live search on allow-list (2–3 weeks)
+### Phase 2: Live search on allow-list (2-3 weeks)
 
 **Goal:** Browse a fixed whitelist of HF repos, filtered by HF's API.
 
@@ -325,22 +325,22 @@ The app's 5 built-in models set expectations for each engine:
    - Use tags (`"onnx"`, `"multilingual"`, etc.) to find good candidates.
    - Organize into a lookup table: `repo_id` → `engine_id`.
    - Store in `:core/src/main/assets/` or a downloaded gist.
-   - ~3–5 days.
+   - ~3-5 days.
 
 2. **Add a "Search" screen** (Compose).
    - Search bar: user types (e.g., "japanese piper").
    - Backend: filter the allow-list by repo name and tags; query HF's API for metadata (downloads, likes, description snippet).
    - Display results with engine, file size estimate, and download button.
-   - ~4–5 days (UI + filtering logic).
+   - ~4-5 days (UI + filtering logic).
 
 3. **Dynamic manifest generation.** When the user picks a model:
    - Query `/api/models/{id}` to get the `siblings` list.
    - Query `/api/models/{id}/tree/main` to get file sizes.
    - Construct manifest entries on the fly (or generate and cache).
-   - ~2–3 days.
+   - ~2-3 days.
 
 4. **Test.** Download models across different engine families; verify SHA-256 and auto-load.
-   - ~1–2 days.
+   - ~1-2 days.
 
 **Result:** Users can search a large, curated subset of HF. Fast, safe, and familiar.
 
@@ -348,7 +348,7 @@ The app's 5 built-in models set expectations for each engine:
 
 ---
 
-### Phase 3: Full browsing (4–6 weeks)
+### Phase 3: Full browsing (4-6 weeks)
 
 **Goal:** Browse all HF TTS models; auto-detect engine family.
 
@@ -357,26 +357,26 @@ The app's 5 built-in models set expectations for each engine:
    - Each engine's `inspect()` must confidently fingerprint its family (e.g., Kokoro recognizes specific config keys, Piper recognizes ONNX + espeak structure).
    - Ensure every engine fails closed: return `null` on ambiguity.
    - Add comprehensive tests for each `inspect()` (e.g., "Kokoro identifies its own files; rejects ONNX-only; rejects MeloTTS configs").
-   - ~2–3 weeks (per engine; Kokoro, Piper, KittenTTS, MeloTTS, CosyVoice2).
+   - ~2-3 weeks (per engine; Kokoro, Piper, KittenTTS, MeloTTS, CosyVoice2).
 
 2. **Add a "Browse All" screen.**
    - Query `/api/models?pipeline_tag=text-to-speech&sort=downloads&limit=50` (paginated).
    - For each result, fetch `/api/models/{id}/tree/main` to get file structure.
    - Show user a preview: engine (if detected), file size, language tags, downloads count.
    - Download button: runs inspection in background; shows result or fallback user-pick.
-   - ~5–7 days (UI + inspection loop).
+   - ~5-7 days (UI + inspection loop).
 
 3. **Handle ambiguous cases.**
    - If `inspect()` fails, offer the user-pick dialog: "Which engine handles this model?"
    - Save the choice (as the app already does).
    - Acknowledge that some niche repos won't auto-detect, and **that's okay** (fail-closed is the goal).
-   - ~2–3 days.
+   - ~2-3 days.
 
 4. **Comprehensive testing & edge cases.**
    - Test with models from each family and their variants.
    - Test with ambiguous/broken repos (missing files, unusual structures).
    - Verify user-pick fallback works smoothly.
-   - ~2–3 weeks.
+   - ~2-3 weeks.
 
 **Result:** Full HF TTS browsing with automatic family detection. Powerful but requires strong `inspect()` implementations.
 
@@ -390,7 +390,7 @@ The app's 5 built-in models set expectations for each engine:
 
 **Current state:** Likely the `:app` module has a downloader (not fully visible in `:core`). Assume it's synchronous or coroutine-based.
 
-**For large model files (100MB–500MB+):**
+**For large model files (100MB-500MB+):**
 - Use **WorkManager** (Android's recommended way to schedule and resume long-running work across app restarts).
 - Queue a download: user taps "Download," WorkManager task is enqueued.
 - Task runs in background; UI shows progress (or just a notification).
@@ -426,7 +426,7 @@ class ModelDownloadWorker : CoroutineWorker(...) {
 
 **Path:** `context.getExternalFilesDir(null)` (app-private storage, no permissions needed on API 30+) or `context.cacheDir` (temporary).
 
-**Caveat:** On some devices, `getExternalFilesDir()` points to internal storage (if no SD card). Budget accordingly (4GB phone has ~1–2GB free).
+**Caveat:** On some devices, `getExternalFilesDir()` points to internal storage (if no SD card). Budget accordingly (4GB phone has ~1-2GB free).
 
 **Cleanup:** Delete old/unused models manually via settings (or auto-delete if storage is low).
 
@@ -513,18 +513,18 @@ curl "https://huggingface.co/api/models/hexgrad/Kokoro-82M" | jq '{id, gated, di
 
 6. **Model validity.** Just because a file downloads and matches SHA-256 doesn't mean it's a valid model for the engine. `inspect()` + trial load is the real verification.
 
-7. **Bandwidth & data plan.** Some models are 500MB–1GB. The app should warn users; consider metered connection checks (Android's ConnectivityManager).
+7. **Bandwidth & data plan.** Some models are 500MB-1GB. The app should warn users; consider metered connection checks (Android's ConnectivityManager).
 
 ---
 
 ## 9. Recommended First Step
 
-### Start with Phase 1: Curated list (1–2 weeks)
+### Start with Phase 1: Curated list (1-2 weeks)
 
 1. **Manually identify ~40 high-quality HF repos** across the 5 engine families.
    - Examples:
      - **Kokoro:** `hexgrad/Kokoro-82M`, community fine-tunes.
-     - **Piper:** Official voice collection, maybe 2–3 community variants.
+     - **Piper:** Official voice collection, maybe 2-3 community variants.
      - **KittenTTS:** Official repo + popular variants.
      - **MeloTTS:** Official + fine-tunes for other languages.
      - **CosyVoice2:** Official + community variants.
@@ -571,7 +571,7 @@ All endpoints return JSON or redirect to S3/CDN.
 **An in-app HF model browser is achievable.** The API is stable, well-documented, and public. The app already has all the download, verification, and auto-load plumbing. The main unknowns are around mapping arbitrary repos to your 5 engine families and handling ambiguous cases.
 
 **Recommended approach:**
-1. **Start small:** Curated list of 40–50 vetted repos (Phase 1, 1–2 weeks).
+1. **Start small:** Curated list of 40-50 vetted repos (Phase 1, 1-2 weeks).
 2. **Validate the pipeline:** Confirm downloads, SHA-256, and auto-load work end-to-end on real HF models.
 3. **Iterate:** Expand to search (Phase 2) and full browsing (Phase 3) as confidence grows and `inspect()` implementations strengthen.
 

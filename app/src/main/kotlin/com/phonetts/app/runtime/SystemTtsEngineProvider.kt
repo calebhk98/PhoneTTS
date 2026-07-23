@@ -15,8 +15,8 @@ import com.phonetts.core.model.ModelDescriptor
  *
  * The one thing that makes this engine different from an engine in the `engines/` modules is it wraps an
  * Android OS service rather than loading weights of its own, so it needs an application
- * `Context`. That comes through [EngineContext.platform] — cast to this app's concrete
- * [AppPlatformServices] — rather than :core growing an Android dependency. [builtInDescriptors]
+ * `Context`. That comes through [EngineContext.platform] - cast to this app's concrete
+ * [AppPlatformServices] - rather than :core growing an Android dependency. [builtInDescriptors]
  * is this provider's other non-default hook: unlike a downloaded-bundle engine, "its" models are
  * discovered directly from the OS (see [SystemTtsDiscovery]), never resolved from a bundle on
  * disk, so they are surfaced here instead of through the normal sideload/import pipeline.

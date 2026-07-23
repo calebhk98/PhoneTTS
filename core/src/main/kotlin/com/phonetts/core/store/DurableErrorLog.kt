@@ -19,7 +19,7 @@ data class ErrorLogEntry(
  * issue #88: an app-wide, bounded, newest-first error log that survives process death, unlike the
  * in-memory `HfBrowseUiState.errorLog` that dies with the process today. A later change can route the
  * Browse search/size errors (and any other subsystem's errors) into this store by calling [record]
- * with a `source` tag — this foundation deliberately does NOT touch the Browse ViewModel; it only
+ * with a `source` tag - this foundation deliberately does NOT touch the Browse ViewModel; it only
  * provides the durable sink for a consumer to adopt.
  *
  * Pure `:core` over an injected [DurableStore] (storage in `:app`), fail-closed like every other

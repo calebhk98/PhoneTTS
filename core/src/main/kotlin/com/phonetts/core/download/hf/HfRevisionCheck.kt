@@ -5,7 +5,7 @@ import kotlinx.serialization.json.Json
 /**
  * Result of comparing an installed model's stored revision against the Hub's current one.
  * [currentRevision] is `null` when the Hub didn't report a sha for the repo; that fails closed to
- * "no update available" rather than guessing (spec rule 4 — never guess on missing signal).
+ * "no update available" rather than guessing (spec rule 4 - never guess on missing signal).
  */
 data class HfUpdateStatus(
     val modelId: String,
@@ -31,7 +31,7 @@ data class HfUpdateStatus(
 
 /**
  * Checks whether a model's stored commit is stale against the Hugging Face Hub. Where the stored
- * commit itself is persisted (SharedPreferences, a manifest sidecar, ...) is an `:app` concern —
+ * commit itself is persisted (SharedPreferences, a manifest sidecar, ...) is an `:app` concern -
  * this is the pure fetch-current-commit + compare half of that flow, testable via the injected
  * [HttpClient] and fixture JSON with no network involved.
  */

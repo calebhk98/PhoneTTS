@@ -24,7 +24,7 @@ private const val CHANNEL_NAME = "Playback"
 private const val PENDING_INTENT_REQUEST_CODE = 0
 
 // The app has no @string/app_name resource (AndroidManifest's android:label is a plain literal
-// today) — this is only the notification's fallback title when the caller passes none, not a
+// today) - this is only the notification's fallback title when the caller passes none, not a
 // model fact, so a local constant is the right home for it rather than adding a resource.
 private const val DEFAULT_NOTIFICATION_TITLE = "PhoneTTS"
 
@@ -36,7 +36,7 @@ private val COMPACT_ACTION_INDICES = intArrayOf(0, 1, 2)
  * Builds [PlaybackService]'s ongoing notification: prev-paragraph / Play-Pause / next-paragraph /
  * Stop actions, styled as a [MediaStyle] notification tied to the session so it also renders
  * lock-screen controls with a progress scrubber (issue #26). Split out of [PlaybackService] itself
- * so that class's job stays "reconcile playback state", not "assemble notification UI" — keeping
+ * so that class's job stays "reconcile playback state", not "assemble notification UI" - keeping
  * both comfortably under the never-nesting/function-count limits (spec §8/CLAUDE.md).
  */
 class PlaybackNotificationFactory(private val context: Context) {

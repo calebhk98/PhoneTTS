@@ -8,10 +8,10 @@ import com.phonetts.engines.common.json.asStringOrNull
 
 /**
  * The subset of a `Xenova/mms-tts-*` bundle's `config.json` this engine needs (the model's own
- * self-description, spec §5.7's per-engine equivalent — never the other way round).
+ * self-description, spec §5.7's per-engine equivalent - never the other way round).
  *
  * VALIDATED against the real `Xenova/mms-tts-eng` and `Xenova/mms-tts-ara` repos on Hugging Face
- * (2026-07-22): both ship an identical shape —
+ * (2026-07-22): both ship an identical shape -
  * ```json
  * {
  *   "_name_or_path": "facebook/mms-tts-eng",
@@ -22,17 +22,17 @@ import com.phonetts.engines.common.json.asStringOrNull
  *   ...
  * }
  * ```
- *  - `model_type` — required, must be exactly `"vits"` (case-insensitive): MMS is a VITS export,
+ *  - `model_type` - required, must be exactly `"vits"` (case-insensitive): MMS is a VITS export,
  *    but plenty of OTHER VITS exports exist (Piper among them) that are NOT MMS, so this alone is
  *    never enough to claim a bundle (see [markerPresent]).
- *  - `_name_or_path` — the base HF model id the ONNX weights were exported from. Every real MMS
+ *  - `_name_or_path` - the base HF model id the ONNX weights were exported from. Every real MMS
  *    export we found preserves `facebook/mms-tts-<lang>` here; combined with `model_type == vits`
- *    this is the fail-closed MMS signature [MmsEngine.inspect] requires (spec §9.1) — a foreign
+ *    this is the fail-closed MMS signature [MmsEngine.inspect] requires (spec §9.1) - a foreign
  *    VITS bundle's `_name_or_path` will not contain "mms-tts".
- *  - `sampling_rate` — required. MMS is 16000 Hz in every repo we checked, but this is READ, never
+ *  - `sampling_rate` - required. MMS is 16000 Hz in every repo we checked, but this is READ, never
  *    hardcoded outside [MmsEngine.forcedMatch]'s best-effort fallback (CLAUDE.md rule 1).
  *  - `speaking_rate` is a Python-side generation-config default baked into the export at convert
- *    time — NOT a runtime graph input (confirmed by loading the real ONNX graph, see
+ *    time - NOT a runtime graph input (confirmed by loading the real ONNX graph, see
  *    [MmsEngine]'s KDoc), so it is deliberately not read here: there is nothing for this engine to
  *    route a speed knob to (CLAUDE.md rule 2).
  */
@@ -52,7 +52,7 @@ internal data class MmsModelConfig(
 
         /**
          * Parses [json], or returns null (never throws) if it is malformed or missing
-         * `model_type`/`sampling_rate` — the fields every real config.json carries.
+         * `model_type`/`sampling_rate` - the fields every real config.json carries.
          */
         fun parse(json: String): MmsModelConfig? {
             val root = MiniJson.parse(json)?.asObjectOrNull() ?: return null
@@ -96,15 +96,15 @@ internal data class MmsModelConfig(
  * intersperse the `pad_token` before every kept character AND once more at the end), which is
  * exactly [MmsFrontend.toModelInput]'s algorithm when `add_blank` is true.
  *
- * LIMITATION (not implemented, documented rather than silently guessed — CLAUDE.md rule 4's
+ * LIMITATION (not implemented, documented rather than silently guessed - CLAUDE.md rule 4's
  * spirit applied to text preprocessing): `is_uroman: true` (some non-Latin-script MMS languages
  * romanize with the external `uroman` tool before tokenizing) and `phonemize: true` are NOT
- * implemented — there is no offline pure-Kotlin uroman/espeak-for-arbitrary-language port
- * available. Both `eng` and `ara` (checked) carry `is_uroman: false`, `phonemize: false` — MMS
+ * implemented - there is no offline pure-Kotlin uroman/espeak-for-arbitrary-language port
+ * available. Both `eng` and `ara` (checked) carry `is_uroman: false`, `phonemize: false` - MMS
  * ships several hundred languages with a DIRECT script vocabulary (Arabic, Cyrillic, Devanagari,
  * etc. all have their own `vocab.json` entries, same as `ara` above), so this is the common case,
  * not a rare corner. A bundle whose `tokenizer_config.json` declares `is_uroman`/`phonemize` true
- * still loads (this is a text-preprocessing gap, not an identification failure — rule 4 is about
+ * still loads (this is a text-preprocessing gap, not an identification failure - rule 4 is about
  * `inspect()`, not runtime text quality); unrecognized characters are simply dropped, the same
  * fail-soft behaviour Piper's and Kokoro's own frontends use for out-of-vocabulary symbols.
  */
@@ -121,7 +121,7 @@ internal data class MmsTokenizerConfig(
         /** Best-effort defaults ([MmsEngine.forcedMatch] when this optional file is absent/unparsable). */
         val FALLBACK = MmsTokenizerConfig(addBlank = true, language = "und", padToken = null)
 
-        /** Parses [json], or null (never throws) if malformed. This file is optional — see [MmsEngine]. */
+        /** Parses [json], or null (never throws) if malformed. This file is optional - see [MmsEngine]. */
         fun parse(json: String): MmsTokenizerConfig? {
             val root = MiniJson.parse(json)?.asObjectOrNull() ?: return null
             return MmsTokenizerConfig(
@@ -134,9 +134,9 @@ internal data class MmsTokenizerConfig(
 }
 
 /**
- * A `vocab.json` grapheme -> token-id table: MMS's OWN character vocabulary (SSOT — read from the
+ * A `vocab.json` grapheme -> token-id table: MMS's OWN character vocabulary (SSOT - read from the
  * bundle, never a hardcoded alphabet table, CLAUDE.md rule 1). Flat `{"<char>": <id>}`, e.g.
- * `{" ": 19, "a": 26, ...}` for `eng`, or the Arabic-script equivalent for `ara` — the same parser
+ * `{" ": 19, "a": 26, ...}` for `eng`, or the Arabic-script equivalent for `ara` - the same parser
  * handles either because it assumes nothing about which characters appear.
  */
 internal object MmsVocab {

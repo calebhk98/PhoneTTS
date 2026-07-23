@@ -9,7 +9,7 @@ import com.phonetts.engines.common.json.asStringOrNull
 /**
  * Parses the `config.json` companion file [ExecuTorchKokoroEngine.inspect] fingerprints a bundle
  * by. VERIFIED (Hugging Face `software-mansion/react-native-executorch-kokoro/config.json`): the
- * real repo's file is exactly `{"modelName": "kokoro"}` — no `family`, no `sample_rate`, no speed
+ * real repo's file is exactly `{"modelName": "kokoro"}` - no `family`, no `sample_rate`, no speed
  * bounds. So, like `:engines:kokoro`'s `KokoroConfig`, this reads `model_name`/`family` as
  * alternate family markers and treats every other field as an optional override for a curated
  * bundle; a bundle shipping only the bare real-repo shape still fingerprints, falling back to this

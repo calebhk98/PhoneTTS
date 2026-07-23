@@ -4,11 +4,11 @@ package com.phonetts.core.automation
  * The parsed, typed form of one automation intent (issue #41): a single object that carries every
  * caller-supplied field so the rest of the pipeline threads THIS around instead of five separate
  * parameters (owner's request on the issue). The Android entry point extracts the raw intent extras
- * once, builds this via [of], and hands it to [AutomationPlanner] — this type stays pure JVM so the
+ * once, builds this via [of], and hands it to [AutomationPlanner] - this type stays pure JVM so the
  * validation/normalization is proven by a `:core` test with no Android SDK.
  *
  * Fields mirror the documented intent extras: [text], [engineId], [voiceId], [speed], [outputUri].
- * Everything but [text] is optional — an absent [engineId]/[voiceId]/[speed] means "use the model's
+ * Everything but [text] is optional - an absent [engineId]/[voiceId]/[speed] means "use the model's
  * default", resolved against the catalog by [AutomationPlanner]. Blank strings are normalized to
  * null in [of] so an empty extra is treated as "unset", never a lookup for the empty id.
  */

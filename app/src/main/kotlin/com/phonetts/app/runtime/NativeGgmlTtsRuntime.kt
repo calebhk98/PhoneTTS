@@ -7,7 +7,7 @@ import com.phonetts.core.runtime.NativeTtsSession
 import com.phonetts.core.runtime.RuntimeOptions
 
 /**
- * The generalized native ggml backend — the SAME [NativeTtsRuntime] seam
+ * The generalized native ggml backend - the SAME [NativeTtsRuntime] seam
  * [NativeCosyVoiceRuntime] proved for CosyVoice3 (spec §5.3), but parameterized by a CrispASR
  * `--backend` id instead of hardcoding `"cosyvoice"`. CrispASR (CrispStrobe/CrispASR, the ggml
  * project the app already vendors, see docs/COSYVOICE2.md) is a 34-backend project; its own docs
@@ -15,7 +15,7 @@ import com.phonetts.core.runtime.RuntimeOptions
  * C ABI shape `NativeTtsRuntime` already models (`docs/research/runtime-feasibility-2026-07.md`
  * §2). This class is the Kotlin half of that generalization: `com.phonetts.engines.ggmltts`'s
  * `GgmlTtsEngine` discovers which backend a downloaded/sideloaded GGUF bundle needs (from its
- * companion manifest — see that module's KDoc) and threads it through here via
+ * companion manifest - see that module's KDoc) and threads it through here via
  * [RuntimeOptions.extras], never a per-backend subclass or a `when(backend)` branch.
  *
  * [defaultBackend] is an optional fallback for a caller that opens a session without setting
@@ -24,9 +24,9 @@ import com.phonetts.core.runtime.RuntimeOptions
  *
  * NATIVE STATUS: this Kotlin side and [GgmlTtsNative]'s JNI declarations COMPILE with no native
  * library present (`isAvailable()` is false, exactly like [NativeCosyVoiceRuntime] before its
- * `.so` is built) — see `engines/ggmltts/INTEGRATION.md` for the CMake/Gradle wiring the PARENT
+ * `.so` is built) - see `engines/ggmltts/INTEGRATION.md` for the CMake/Gradle wiring the PARENT
  * session still needs to add (a `-PwithGgmlTts=true` flag, a `phonetts_ggmltts` CMake target, and
- * — the actual remaining risk, same as CosyVoice — a successful NDK cross-compile, issue #46).
+ * - the actual remaining risk, same as CosyVoice - a successful NDK cross-compile, issue #46).
  */
 class NativeGgmlTtsRuntime(
     override val id: String = RUNTIME_ID,
@@ -39,7 +39,7 @@ class NativeGgmlTtsRuntime(
         options: RuntimeOptions,
     ): NativeTtsSession {
         check(GgmlTtsNative.isLibraryLoaded) {
-            "libphonetts_ggmltts.so is not loaded — build the app with -PwithGgmlTts=true to enable" +
+            "libphonetts_ggmltts.so is not loaded - build the app with -PwithGgmlTts=true to enable" +
                 " the generalized ggml backends (see engines/ggmltts/INTEGRATION.md)"
         }
         val backend = options.extras[BACKEND_OPTION_KEY] ?: defaultBackend
@@ -63,7 +63,7 @@ class NativeGgmlTtsRuntime(
 
         /**
          * The [RuntimeOptions.extras] key this runtime reads the CrispASR backend id from. Must
-         * match `com.phonetts.engines.ggmltts.GgmlTtsEngine.BACKEND_OPTION_KEY` — the same
+         * match `com.phonetts.engines.ggmltts.GgmlTtsEngine.BACKEND_OPTION_KEY` - the same
          * cross-module string-contract pattern [NativeCosyVoiceRuntime]'s `"cosyvoice"` id already
          * uses with `CosyVoice2Engine.NATIVE_RUNTIME_ID` (neither module can see the other's
          * symbols at compile time: `:app` only ever depends on engine modules `runtimeOnly`).
@@ -81,7 +81,7 @@ class NativeGgmlTtsRuntime(
 /**
  * One loaded ggml pipeline for whichever backend it was opened with. [synthesize] runs the entire
  * native text→audio decode for one utterance; [close] frees the native handle. Blocking, like the
- * ONNX [com.phonetts.core.runtime.InferenceSession] — synthesis already runs off the main thread.
+ * ONNX [com.phonetts.core.runtime.InferenceSession] - synthesis already runs off the main thread.
  */
 private class NativeGgmlTtsSession(
     private val handle: Long,

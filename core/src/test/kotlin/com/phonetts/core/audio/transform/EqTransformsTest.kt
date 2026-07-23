@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 private const val RATE = 24_000
 private const val TONE_SAMPLES = 12_000
 
-// RMS of a signal — a level proxy so we can say "this band got quieter/louder".
+// RMS of a signal - a level proxy so we can say "this band got quieter/louder".
 private fun rms(x: FloatArray): Float {
     if (x.isEmpty()) return 0f
     var sum = 0.0

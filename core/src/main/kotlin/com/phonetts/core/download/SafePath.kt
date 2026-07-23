@@ -4,7 +4,7 @@ package com.phonetts.core.download
  * Guards against path traversal when reconstructing a downloaded/sideloaded folder from
  * untrusted file paths (e.g. a Hugging Face repo's file list, or a picked archive). A relative
  * path that is absolute or contains a `..` segment could escape the intended model directory and
- * overwrite other app-private files — so those are refused, fail-closed.
+ * overwrite other app-private files - so those are refused, fail-closed.
  */
 object SafePath {
     /** True if [relativePath] is a safe, within-directory relative path (no absolute, no `..`). */

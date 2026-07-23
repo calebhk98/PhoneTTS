@@ -24,7 +24,7 @@ internal object CosyVoiceNative {
      * Load the four-GGUF CosyVoice3 stack from [modelDir] (the native side discovers
      * `cosyvoice3-{llm,flow,hift,voices}-*.gguf` as siblings, exactly like the CrispASR CLI). Returns
      * an opaque native handle (>0), or 0 on failure. [temperature] must be > 0 to engage the RAS
-     * sampler (greedy falls into CV3's silent-token loop — see docs/COSYVOICE2.md); [seed] makes a
+     * sampler (greedy falls into CV3's silent-token loop - see docs/COSYVOICE2.md); [seed] makes a
      * run reproducible.
      */
     @JvmStatic

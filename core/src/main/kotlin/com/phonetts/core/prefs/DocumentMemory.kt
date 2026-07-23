@@ -2,7 +2,7 @@ package com.phonetts.core.prefs
 
 /**
  * Where the user left off in one document: which engine/voice/speed synthesized it, and how far
- * in (by sentence index — the same unit the spec's sentence-chunked synthesis loop advances by,
+ * in (by sentence index - the same unit the spec's sentence-chunked synthesis loop advances by,
  * spec §8). Purely a value the caller supplies; this file does not chunk or synthesize text.
  */
 data class DocumentPosition(
@@ -16,7 +16,7 @@ data class DocumentPosition(
 /**
  * Per-document engine/voice/speed/position memory, over an injected [PreferenceStore] (mirrors
  * [com.phonetts.core.resolver.OverrideStore]'s pattern). This seam only persists and returns a
- * [DocumentPosition] — deciding whether text still needs re-synthesizing before resuming
+ * [DocumentPosition] - deciding whether text still needs re-synthesizing before resuming
  * playback at that position is the app's concern, not this class's.
  */
 class DocumentMemory(private val store: PreferenceStore) {

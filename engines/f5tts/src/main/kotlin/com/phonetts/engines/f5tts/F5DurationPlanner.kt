@@ -1,7 +1,7 @@
 package com.phonetts.engines.f5tts
 
 /**
- * Computes F5-TTS's `max_duration` (target mel-frame count) — the model's NATIVE duration/speed
+ * Computes F5-TTS's `max_duration` (target mel-frame count) - the model's NATIVE duration/speed
  * control (`README-io.md` "Speed: routes to max_duration, not resampling"). `max_duration` is a
  * declared input of `F5_Preprocess.onnx` (`Export_F5.py`: `input_names=[..., 'max_duration']`)
  * that fixes how many mel frames the whole pipeline generates, so routing speed through it is a
@@ -11,7 +11,7 @@ package com.phonetts.engines.f5tts
  * ```
  * max_duration = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / SPEED)
  * ```
- * where `ref_audio_len` is the reference clip's length in MEL FRAMES, not samples — `ref_samples
+ * where `ref_audio_len` is the reference clip's length in MEL FRAMES, not samples - `ref_samples
  * / HOP_LENGTH` (`HOP_LENGTH = 256`, also quoted from the reference driver).
  *
  * A pure, deterministic function on purpose: it needs no ONNX graph to be exercised and verified.

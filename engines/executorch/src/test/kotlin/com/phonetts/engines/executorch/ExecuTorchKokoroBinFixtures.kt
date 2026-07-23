@@ -4,14 +4,14 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Hand-builds raw little-endian float32 `voices/<name>.bin`-shaped byte layouts for tests — no
+ * Hand-builds raw little-endian float32 `voices/<name>.bin`-shaped byte layouts for tests - no
  * numpy dependency or real fixture file to read from, so tests construct the exact byte layout
  * [ExecuTorchKokoroVoiceBinReader]/[ExecuTorchKokoroVoiceTable] are expected to decode. Mirrors
- * `:engines:kokoro`'s `KokoroBinFixtures` (duplicated, not shared — see
+ * `:engines:kokoro`'s `KokoroBinFixtures` (duplicated, not shared - see
  * [ExecuTorchKokoroVoiceBinReader]'s kdoc for why).
  */
 object ExecuTorchKokoroBinFixtures {
-    /** A full-sized table where every value is [value] — for tests that only care WHICH voice's table was picked. */
+    /** A full-sized table where every value is [value] - for tests that only care WHICH voice's table was picked. */
     fun uniformTable(value: Float): FloatArray =
         FloatArray(ExecuTorchKokoroVoiceBinReader.ROWS * ExecuTorchKokoroVoiceBinReader.COLS) { value }
 

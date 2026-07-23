@@ -21,7 +21,7 @@ import com.phonetts.engines.common.json.asStringOrNull
 import com.phonetts.engines.common.requireRuntime
 
 /**
- * The generalized GGUF/ggml TTS engine — a single, backend-agnostic delegate over CrispStrobe/
+ * The generalized GGUF/ggml TTS engine - a single, backend-agnostic delegate over CrispStrobe/
  * CrispASR's ggml runtime (docs/COSYVOICE2.md), generalized past the CosyVoice3-only bridge
  * (`NativeCosyVoiceRuntime`, id `"cosyvoice"`). CrispASR is a 34-backend project; its own README
  * shows the SAME native library serving `--backend piper`, `--backend kokoro`, `--backend melotts`,
@@ -32,22 +32,22 @@ import com.phonetts.engines.common.requireRuntime
  * file plus a small companion manifest telling us which CrispASR backend it needs."
  *
  * Like [com.phonetts.engines.cosyvoice2.CosyVoice2Engine] (its closest template), this is a thin
- * delegate over the non-ONNX [NativeTtsRuntime] seam (id [NATIVE_RUNTIME_ID], `"ggml"`) — the
+ * delegate over the non-ONNX [NativeTtsRuntime] seam (id [NATIVE_RUNTIME_ID], `"ggml"`) - the
  * native side does the ENTIRE text→audio pipeline in one call, so there is no Kotlin
  * `TextFrontend` here either.
  *
  * FINGERPRINT (fail-closed, spec §9.1): a bundle is claimed only when at least one `<name>.gguf`
  * file has a companion `<name>.gguf.json` sidecar (mirroring Piper's own `<voice>.onnx` +
  * `<voice>.onnx.json` convention) naming a non-blank `"backend"` (the CrispASR `--backend` id) and
- * a positive `"sample_rate"` — both DISCOVERED facts, never fabricated (CLAUDE.md rule 1: sample
- * rate is not this engine's to invent, and it genuinely varies per backend/voice — e.g. Piper
+ * a positive `"sample_rate"` - both DISCOVERED facts, never fabricated (CLAUDE.md rule 1: sample
+ * rate is not this engine's to invent, and it genuinely varies per backend/voice - e.g. Piper
  * voices ship at 16 kHz or 22.05 kHz depending on which one). A bundle whose multiple voice
  * sidecars disagree on `backend`/`sample_rate` is refused by [inspect] (ambiguous which single
  * runtime call would serve every voice) rather than guessed; [forcedMatch] is more permissive,
  * per its contract, and picks the first entry's backend/sample rate instead of refusing.
  *
- * PARAMETERS: intentionally empty. [com.phonetts.core.runtime.NativeTtsRequest] — the one payload
- * every [NativeTtsRuntime] backend accepts — carries no speed field (same honest-closed reasoning
+ * PARAMETERS: intentionally empty. [com.phonetts.core.runtime.NativeTtsRequest] - the one payload
+ * every [NativeTtsRuntime] backend accepts - carries no speed field (same honest-closed reasoning
  * CosyVoice3 uses): routing speed to a *specific* CrispASR backend's native knob (Piper's
  * `length_scale`, say) would need a per-backend argument this shared seam does not yet carry.
  * Advertising a fake speed control here would violate rule 2 (never resample to fake speed); the
@@ -60,7 +60,7 @@ import com.phonetts.engines.common.requireRuntime
  * id is carried the one place a per-model fact CAN ride without a `:core` change: as a `String` in
  * [RuntimeOptions.extras] under [BACKEND_OPTION_KEY], AND (so the id also survives a
  * save/reload of the persisted descriptor) as a non-path entry in `assetPaths` under
- * [BACKEND_ASSET_KEY] — documented clearly here as the one intentional exception to "assetPaths
+ * [BACKEND_ASSET_KEY] - documented clearly here as the one intentional exception to "assetPaths
  * values are always on-device paths."
  */
 internal class GgmlTtsEngine(
@@ -86,7 +86,7 @@ internal class GgmlTtsEngine(
         val entries = voiceEntries(bundle)
         require(entries.isNotEmpty()) {
             "bundle '${bundle.id}' has no <name>.gguf + <name>.gguf.json manifest pair this engine" +
-                " recognizes — a ggml TTS voice needs both its weights and a manifest naming its" +
+                " recognizes - a ggml TTS voice needs both its weights and a manifest naming its" +
                 " CrispASR backend + sample rate"
         }
         val backend = uniformOrNull(entries.map { it.backend }) ?: entries.first().backend
@@ -210,13 +210,13 @@ internal class GgmlTtsEngine(
             sampleRate = sampleRate,
             voices = voices,
             defaultVoiceId = voices.first().id,
-            // No tunable parameters: see class KDoc "PARAMETERS" — honest-closed until a native
+            // No tunable parameters: see class KDoc "PARAMETERS" - honest-closed until a native
             // speed argument is threaded through NativeTtsRequest for a specific backend.
             parameters = emptyList(),
             assetPaths = assetPaths,
             // No a-priori estimate: unlike CosyVoice3 (one fixed model family), this engine's
             // footprint varies arbitrarily by whichever CrispASR backend/voice was downloaded, and
-            // nothing in the manifest declares it — UNKNOWN is the honest answer (rule 1: never
+            // nothing in the manifest declares it - UNKNOWN is the honest answer (rule 1: never
             // fabricate a resource fact either).
             resourceCost = ResourceCost.UNKNOWN,
         )
@@ -239,7 +239,7 @@ internal class GgmlTtsEngine(
         /** The [RuntimeOptions.extras] key carrying the CrispASR `--backend` id for this load. */
         const val BACKEND_OPTION_KEY = "backend"
 
-        /** The [ModelDescriptor.assetPaths] key carrying the backend id (not a path — see KDoc). */
+        /** The [ModelDescriptor.assetPaths] key carrying the backend id (not a path - see KDoc). */
         const val BACKEND_ASSET_KEY = "ggml-backend"
 
         const val GGUF_SUFFIX = ".gguf"

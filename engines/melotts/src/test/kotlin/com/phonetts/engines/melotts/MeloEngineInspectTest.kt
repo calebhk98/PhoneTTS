@@ -9,10 +9,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 9.1 — inspect() must fail closed: null unless the MiaoMint/MeloTTS-ONNX companion files
+ * 9.1 - inspect() must fail closed: null unless the MiaoMint/MeloTTS-ONNX companion files
  * (`model.onnx` + `tokens.txt` + `lexicon.txt` + a `metadata.json` identifying itself as
- * `melo-vits`) are ALL present with confidence, and a confident, fully-populated match — sample
- * rate and voice table read from `metadata.json`, never a hardcoded literal — when they are.
+ * `melo-vits`) are ALL present with confidence, and a confident, fully-populated match - sample
+ * rate and voice table read from `metadata.json`, never a hardcoded literal - when they are.
  */
 class MeloEngineInspectTest {
     private fun engine() = MeloEngine(engineContext())

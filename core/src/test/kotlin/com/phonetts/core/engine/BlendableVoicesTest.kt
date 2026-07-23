@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 
 /**
  * Seam tests for the voice-blend capability (issue #42): the `supportsVoiceBlend` descriptor fact
- * (SSOT — the UI derives the mix control from this, never a model-name check) and the
+ * (SSOT - the UI derives the mix control from this, never a model-name check) and the
  * [BlendableVoices] contract (a blend-capable engine turns two source embeddings into a new
  * selectable voice, and fails closed on an unknown source voice).
  */

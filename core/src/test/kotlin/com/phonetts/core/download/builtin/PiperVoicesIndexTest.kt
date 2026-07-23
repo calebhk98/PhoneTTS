@@ -10,9 +10,9 @@ import kotlin.test.assertTrue
 /**
  * [PiperVoicesIndex] replaces the old hand-generated `PiperVoiceCatalog` snapshot: instead of a
  * checked-in list, it parses upstream rhasspy/piper-voices' own `voices.json` at runtime. These
- * tests inline a small (3-voice) fixture — a verbatim slice of the real upstream manifest,
+ * tests inline a small (3-voice) fixture - a verbatim slice of the real upstream manifest,
  * including the extra fields (`aliases`, `num_speakers`, `speaker_id_map`, a `MODEL_CARD` file
- * entry, non-ASCII `name_native`) the parser must tolerate via `ignoreUnknownKeys` — so no network
+ * entry, non-ASCII `name_native`) the parser must tolerate via `ignoreUnknownKeys` - so no network
  * call happens in a test (CLAUDE.md: :core tests can't use network).
  */
 class PiperVoicesIndexTest {
@@ -22,7 +22,7 @@ class PiperVoicesIndexTest {
         assertEquals(3, voices.size)
 
         val lessac = voices.single { it.id == "piper-en_US-lessac-medium" }
-        assertEquals("Piper — Lessac (English, United States, medium)", lessac.displayName)
+        assertEquals("Piper - Lessac (English, United States, medium)", lessac.displayName)
         assertEquals("rhasspy/piper-voices", lessac.repoId)
         // 63201294 bytes, decimal MB rounded.
         assertEquals(63, lessac.approxSizeMb)
@@ -45,18 +45,18 @@ class PiperVoicesIndexTest {
     fun mapsExtraLowQualityToItsFriendlyDisplayLabel() {
         val voices = PiperVoicesIndex.parse(THREE_VOICE_FIXTURE)
         val ona = voices.single { it.id == "piper-ca_ES-upc_ona-x_low" }
-        assertEquals("Piper — Upc Ona (Catalan, Spain, extra-low)", ona.displayName)
+        assertEquals("Piper - Upc Ona (Catalan, Spain, extra-low)", ona.displayName)
         assertEquals(21, ona.approxSizeMb) // 20628813 bytes -> 20.6 -> rounds to 21
     }
 
     @Test
     fun toleratesUnknownFieldsAndNonAsciiNativeNames() {
         // bn_BD-google-medium's fixture entry carries num_speakers/speaker_id_map (a 16-entry map)
-        // and a non-ASCII language.name_native ("বাংলা") — neither is modeled, both must be
+        // and a non-ASCII language.name_native ("বাংলা") - neither is modeled, both must be
         // ignored rather than failing the whole parse.
         val voices = PiperVoicesIndex.parse(THREE_VOICE_FIXTURE)
         val google = voices.single { it.id == "piper-bn_BD-google-medium" }
-        assertEquals("Piper — Google (Bengali, Bangladesh, medium)", google.displayName)
+        assertEquals("Piper - Google (Bengali, Bangladesh, medium)", google.displayName)
         assertEquals(77, google.approxSizeMb)
     }
 

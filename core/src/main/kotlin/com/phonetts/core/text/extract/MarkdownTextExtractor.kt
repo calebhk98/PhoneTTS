@@ -3,7 +3,7 @@ package com.phonetts.core.text.extract
 /**
  * Reads Markdown (.md/.markdown, `text/markdown`) and strips the formatting syntax so the
  * synthesizer speaks the prose, not the punctuation (e.g. "## Title" → "Title", "**bold**" →
- * "bold", "[text](url)" → "text"). Deliberately lightweight — it cleans the common marks, it is
+ * "bold", "[text](url)" → "text"). Deliberately lightweight - it cleans the common marks, it is
  * not a full CommonMark parser.
  */
 class MarkdownTextExtractor : TextExtractor {

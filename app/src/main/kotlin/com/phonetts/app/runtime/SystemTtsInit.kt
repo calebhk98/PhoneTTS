@@ -16,9 +16,9 @@ import kotlin.coroutines.resume
  * `TextToSpeech` is callback-based (`OnInitListener`, `UtteranceProgressListener`) and those
  * callbacks are delivered back through this process's main-thread `Looper` regardless of which
  * thread constructed the instance. That rules out blocking any thread with a latch while waiting
- * for one — if the blocked thread IS the main thread, the callback that would unblock it can never
+ * for one - if the blocked thread IS the main thread, the callback that would unblock it can never
  * run (self-deadlock); if it's some other thread, blocking it is still pointless extra risk for no
- * benefit. Every wait here is a coroutine suspension instead (rule 8: never block for inference —
+ * benefit. Every wait here is a coroutine suspension instead (rule 8: never block for inference -
  * this is the async-native equivalent for a callback API), bounded by [withTimeoutOrNull] so a
  * wedged engine fails closed instead of hanging forever.
  *
@@ -32,7 +32,7 @@ object SystemTtsInit {
 
     /**
      * Construct + initialize a [TextToSpeech] bound to [enginePackage] (one of the packages
-     * [SystemTtsDiscovery.installedEngines] reports), or null if init fails or times out — fail
+     * [SystemTtsDiscovery.installedEngines] reports), or null if init fails or times out - fail
      * closed rather than handing back a half-initialized instance.
      */
     suspend fun initialize(
@@ -56,10 +56,10 @@ object SystemTtsInit {
         }
 
     /**
-     * Synthesize [text] with [engine]'s CURRENT voice/rate to [file] (a WAV file — Android always
+     * Synthesize [text] with [engine]'s CURRENT voice/rate to [file] (a WAV file - Android always
      * writes `synthesizeToFile` output as WAV) and suspend until the engine reports the utterance
      * done, errored, or the wait times out. Returns false on any of those non-success outcomes
-     * (fail closed — the caller never treats an incomplete file as usable audio).
+     * (fail closed - the caller never treats an incomplete file as usable audio).
      */
     suspend fun synthesizeToFile(
         engine: TextToSpeech,

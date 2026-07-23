@@ -62,7 +62,7 @@ import kotlin.math.pow
  * dropdown).
  *
  * Re-reads the catalog every time this screen is (re)entered, not just once at first creation
- * (issue #10 — the [ModelManagementViewModel] instance otherwise lives for the whole Activity and
+ * (issue #10 - the [ModelManagementViewModel] instance otherwise lives for the whole Activity and
  * would keep showing whatever was downloaded the FIRST time this screen was ever opened).
  *
  * Also lists downloaded-but-unidentified bundles (issue #8) and a storage-location picker so
@@ -93,7 +93,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                 enabled = state.usage.isNotEmpty() || state.unresolved.isNotEmpty(),
             ) { Text("Copy list") }
         }
-        // Both numbers shown so neither reads as the one that decides whether a model "fits" — that
+        // Both numbers shown so neither reads as the one that decides whether a model "fits" - that
         // decision is against total RAM only (see [ramHint]), free RAM is shown purely as context.
         Text(
             "Device RAM: ${formatBytes(state.availableRamBytes)} free of ${formatBytes(state.totalRamBytes)} total",
@@ -233,9 +233,9 @@ private fun ModelUsageRow(
 
 /**
  * The per-downloaded-model info block: an "Open on Hugging Face" link (only when a repo id could
- * be recovered — fail-closed, never a guessed URL), plus RTF and parameter-count lines, each
+ * be recovered - fail-closed, never a guessed URL), plus RTF and parameter-count lines, each
  * labeled "measured" or "estimated" so the user never mistakes a formula guess for a real
- * benchmark. Nothing here is a per-model literal — every value comes from [ManageModelFacts]
+ * benchmark. Nothing here is a per-model literal - every value comes from [ManageModelFacts]
  * ([com.phonetts.core.model.InstalledModelFacts], CLAUDE.md rule 1). Renders nothing extra when
  * [facts] isn't available yet (e.g. mid-refresh).
  */
@@ -264,7 +264,7 @@ private fun realtimeLine(facts: ManageModelFacts): String? {
     return "~${formatRealtimeMultiple(multiple)}x real-time ($label)"
 }
 
-/** A compact "82M"/"1.2B" parameter-count label — mirrors the Browse screen's own formatter
+/** A compact "82M"/"1.2B" parameter-count label - mirrors the Browse screen's own formatter
  * ([com.phonetts.app.hf.HfBrowseScreen]'s `formatParamCount`), duplicated here rather than shared
  * since it is pure display formatting, not a model fact. */
 private fun formatParamCount(count: Long): String {
@@ -279,18 +279,18 @@ private fun formatParamCount(count: Long): String {
 
 private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
 
-// Issue #8/bug #6: a downloaded bundle no engine claimed — shown honestly instead of vanishing as
+// Issue #8/bug #6: a downloaded bundle no engine claimed - shown honestly instead of vanishing as
 // if it were never fetched, and worded to head off the natural (wrong) assumption that a bundle
 // with no engine must mean a failed/incomplete download that needs redoing. It's already fully on
 // disk (that's what [unresolved.sizeBytes] is showing); redownloading the same bytes changes
 // nothing without a matching engine.
 //
-// Bug #1: this used to offer no way to actually pick an engine — the resolver's documented
+// Bug #1: this used to offer no way to actually pick an engine - the resolver's documented
 // fail-closed fallback ("ask the user") had nothing on this screen that could drive it, so a user
 // who saw "pick an engine" had no button to press. [selectableEngines] (the SAME registered set
-// autodetection already checked — SSOT, nothing named here) now backs a real picker: choosing one
+// autodetection already checked - SSOT, nothing named here) now backs a real picker: choosing one
 // runs [onAssignEngine], which hands the bundle to that engine's forcedMatch. This is still not
-// "guessing" (rule 4 stands) — it is the user, not the app, making the call.
+// "guessing" (rule 4 stands) - it is the user, not the app, making the call.
 @Composable
 private fun UnresolvedUsageRow(
     unresolved: UnresolvedModelUsage,
@@ -308,7 +308,7 @@ private fun UnresolvedUsageRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
                 Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
-                Text("Redownloading won't help — " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
+                Text("Redownloading won't help - " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
             }
             DeleteControl(isDeleting, onDelete)
         }
@@ -354,8 +354,8 @@ private fun EngineAssignmentControl(
 }
 
 // Inline, non-blocking hint (issue #38, fixed per maintainer): shows the estimated peak RAM and,
-// ONLY when the model genuinely can't physically fit this device — its peak exceeds TOTAL RAM, not
-// merely whatever happens to be free right now — a "won't fit" warning. A tight-but-possible fit
+// ONLY when the model genuinely can't physically fit this device - its peak exceeds TOTAL RAM, not
+// merely whatever happens to be free right now - a "won't fit" warning. A tight-but-possible fit
 // (e.g. a 3.5 GB model on a 4 GB phone) never warns; [DeviceRamFit] is the single source of truth
 // for that call, no "tight"/tier language here or anywhere else. "unknown" when no estimate exists.
 private fun ramHint(peakRamBytes: Long?, totalRamBytes: Long): String {
@@ -382,7 +382,7 @@ private fun originLabel(origin: Origin): String =
 
 /**
  * Storage-location picker (issue #4/#5): shows where models live now, a button to pick a folder via
- * the Storage Access Framework, and — when this device hasn't granted "All files access" yet — a
+ * the Storage Access Framework, and - when this device hasn't granted "All files access" yet - a
  * button to request it (needed to read/write the picked folder as a plain file, not just through
  * SAF). A folder pick that can't be used as a plain directory is refused with [message] rather than
  * silently accepted; nothing here decides that itself, all of it is [ModelManagementViewModel]'s.
@@ -420,7 +420,7 @@ private fun StorageLocationSection(
     HorizontalDivider()
 }
 
-// MANAGE_EXTERNAL_STORAGE only exists from API 30 — below that there is no such gate to check, so
+// MANAGE_EXTERNAL_STORAGE only exists from API 30 - below that there is no such gate to check, so
 // a picked folder either lives in app-private/media-store-reachable space or the write test in
 // StorageLocation.resolve() will already fail closed with a clear reason.
 private fun hasAllFilesAccess(): Boolean =
@@ -433,11 +433,11 @@ private fun allFilesAccessIntent(packageName: String): Intent =
  * A plain-text listing of the downloaded models for the "Copy list" button (issue #98, extending
  * the original "no way to copy the list of downloaded models"). Each resolved model's line carries
  * whatever [ManageModelFacts] knows for it (HF link, est. RAM, param count, measured/estimated
- * RTF), and each downloaded-but-unclaimed bundle carries a best-effort HF link too — the whole
+ * RTF), and each downloaded-but-unclaimed bundle carries a best-effort HF link too - the whole
  * point of listing it is letting the user click through to what didn't resolve. Headed by the
  * count and grand total size. The actual formatting is pure logic in [ModelListExport] (`:core`,
  * no Android deps) so it's unit-testable on a plain JVM; this function only maps the screen's own
- * state into that call — no model fact is re-hardcoded here (CLAUDE.md rule 1).
+ * state into that call - no model fact is re-hardcoded here (CLAUDE.md rule 1).
  */
 private fun buildModelListText(state: ModelManagementViewModel.UiState): String {
     val resolved = state.usage.map { ExportableModel.from(it, state.factsByModelId[it.descriptor.modelId]) }

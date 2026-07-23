@@ -3,7 +3,7 @@ package com.phonetts.app.playback
 import android.content.Context
 
 /**
- * A tiny, durable snapshot of the current/last playback — the last document [title] and whether
+ * A tiny, durable snapshot of the current/last playback - the last document [title] and whether
  * it is [playing] / [paused]. [PlaybackService] writes it on every state change; the home-screen
  * widget ([PlaybackWidgetProvider], issue #25) and the Quick Settings tile ([ResumeTileService],
  * issue #27) read it, since those surfaces run as separate components that may be shown while the

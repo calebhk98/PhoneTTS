@@ -8,12 +8,12 @@ import java.io.File
 /**
  * Copies `assets/espeak-ng-data/` (see docs/espeak-ng-integration.md for how that directory is
  * produced from the espeak-ng build) into app-private storage on first run, since espeak-ng
- * needs a real filesystem path — it cannot read its data tables out of the APK's compressed
+ * needs a real filesystem path - it cannot read its data tables out of the APK's compressed
  * asset store (docs/research/espeak-ng.md §3.3, §6.5).
  *
  * Re-copies are skipped once a [MARKER_FILE] is present, so this is cheap on every launch after
  * the first. There's deliberately no version check against the app's version code: if the
- * bundled data ever changes, bump [MARKER_FILE]'s contents check below, or simplest — delete the
+ * bundled data ever changes, bump [MARKER_FILE]'s contents check below, or simplest - delete the
  * marker as part of that change so the next launch re-copies.
  */
 internal class EspeakDataInstaller(private val context: Context) {

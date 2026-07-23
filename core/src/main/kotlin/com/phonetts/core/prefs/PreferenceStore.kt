@@ -4,7 +4,7 @@ package com.phonetts.core.prefs
  * Minimal key/value persistence seam, mirroring
  * [com.phonetts.core.resolver.OverrideStore]'s pattern: `:core` defines the interface (plus a
  * plain in-memory double for tests) and `:app` supplies a thin SharedPreferences-backed
- * implementation. Backs [FavoriteVoices] and [DocumentMemory] — neither of those classes touches
+ * implementation. Backs [FavoriteVoices] and [DocumentMemory] - neither of those classes touches
  * Android APIs directly, which is what keeps them unit-testable on a plain JVM.
  */
 interface PreferenceStore {
@@ -25,7 +25,7 @@ interface PreferenceStore {
     fun remove(key: String)
 }
 
-/** A non-persistent [PreferenceStore] backed by in-memory maps — the plain-JVM test double. */
+/** A non-persistent [PreferenceStore] backed by in-memory maps - the plain-JVM test double. */
 class InMemoryPreferenceStore : PreferenceStore {
     private val strings = mutableMapOf<String, String>()
     private val stringSets = mutableMapOf<String, Set<String>>()

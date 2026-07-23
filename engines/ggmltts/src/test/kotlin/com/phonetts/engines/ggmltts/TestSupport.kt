@@ -52,7 +52,7 @@ internal fun multiVoiceBundle(
     return ModelBundle(id = id, fileNames = fileNames, sideFiles = sideFiles, rootPath = "/models/$id")
 }
 
-/** An [EngineContext] with no runtime registered — enough to exercise inspect()/forcedMatch(). */
+/** An [EngineContext] with no runtime registered - enough to exercise inspect()/forcedMatch(). */
 internal fun emptyContext(): EngineContext = EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer())
 
 /**
@@ -82,7 +82,7 @@ internal fun ggmlRuntime(
 
 /**
  * A local double, not reused from `:core`'s `testFixtures` [com.phonetts.core.testing.FakeNativeTtsRuntime]
- * because that fixture does not record the [RuntimeOptions] each `openTtsSession` call receives —
+ * because that fixture does not record the [RuntimeOptions] each `openTtsSession` call receives -
  * and this module's whole point is proving the discovered CrispASR backend id is threaded through
  * [RuntimeOptions.extras] (see [GgmlTtsEngine.BACKEND_OPTION_KEY]), so the test double must capture it.
  */

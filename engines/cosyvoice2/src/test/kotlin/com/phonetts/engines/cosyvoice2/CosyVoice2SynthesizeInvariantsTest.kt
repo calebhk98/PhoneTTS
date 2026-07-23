@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
  * CosyVoice3 is autoregressive and non-deterministic (docs/research/model-facts.md), so per
  * CLAUDE.md's TDD guidance we test INVARIANTS, not golden audio hashes: the native pipeline is
  * driven once per sentence, the Flow drains to one chunk per sentence, and every sample is finite
- * and bounded. The fake native session is deterministic ONLY because it is a test double — that is
+ * and bounded. The fake native session is deterministic ONLY because it is a test double - that is
  * what lets the invariants be asserted, not a claim about the real model.
  */
 class CosyVoice2SynthesizeInvariantsTest {

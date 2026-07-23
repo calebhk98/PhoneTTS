@@ -22,19 +22,19 @@ import com.phonetts.engines.common.requireRuntime
 import java.io.File
 
 /**
- * The Piper (VITS-family) engine — first Tier-A model, proves the espeak -> ONNX path end to
+ * The Piper (VITS-family) engine - first Tier-A model, proves the espeak -> ONNX path end to
  * end (spec §4, Phase 2.3).
  *
  * LICENSE NOTE (spec §5.7 origin/display concern, docs/research/model-facts.md): this targets
  * the actively maintained **OHF-Voice/piper1-gpl fork, licensed GPL-3.0**. The original
  * rhasspy/piper (MIT) was archived October 2025. Any "Piper" build/voice download surfaced to
- * the user should be labelled accordingly — this engine does not itself bundle weights (spec
+ * the user should be labelled accordingly - this engine does not itself bundle weights (spec
  * rule 7), it only loads whatever bundle the resolver hands it.
  *
  * A downloaded/sideloaded Piper bundle is one or more independent `<voice>.onnx` graphs, each
  * with its own `<voice>.onnx.json` sidecar (phoneme_id_map, audio.sample_rate, inference
  * defaults). Each such pair becomes one [Voice]; this engine keeps one [InferenceSession] per
- * loaded voice (spec rule 6 — "one engine loaded at a time" bounds the *engine*, not how many
+ * loaded voice (spec rule 6 - "one engine loaded at a time" bounds the *engine*, not how many
  * voice graphs one Piper bundle may contain). That per-voice-N-sessions topology is bespoke to
  * Piper, so `load()`/`unload()` are hand-written here (see [AbstractVoiceEngine]'s KDoc) using
  * only the leaf session-lifecycle helpers from `com.phonetts.engines.common`.
@@ -53,7 +53,7 @@ internal class PiperEngine(
     private var loadedVoices: Map<String, LoadedVoice> = emptyMap()
 
     // The UNIQUE session per source .onnx graph. A multi-speaker graph backs many [LoadedVoice]s
-    // (one per speaker) but is loaded ONCE — a 4 GB phone cannot hold 100+ copies of a VCTK graph
+    // (one per speaker) but is loaded ONCE - a 4 GB phone cannot hold 100+ copies of a VCTK graph
     // (spec rule 6). Kept separately from [loadedVoices] so unload() closes each graph exactly once.
     private var loadedSessions: List<InferenceSession> = emptyList()
     private var loadedDescriptor: ModelDescriptor? = null
@@ -91,8 +91,8 @@ internal class PiperEngine(
                         opened.add(file.session)
                         file
                     }
-                // Map every public voice — a whole single-speaker graph, or one speaker of a
-                // multi-speaker graph — onto its (shared) session plus the sid to feed, if any.
+                // Map every public voice - a whole single-speaker graph, or one speaker of a
+                // multi-speaker graph - onto its (shared) session plus the sid to feed, if any.
                 val voices = descriptor.voices.associate { voice -> voice.id to resolveLoadedVoice(voice.id, files) }
                 LoadedState(voices, files.values.map { it.session })
             }
@@ -119,24 +119,24 @@ internal class PiperEngine(
         val loadedVoice = loadedVoices[voiceId] ?: error("Piper voice '$voiceId' is not loaded")
         val frontend = PiperFrontend(context.phonemizer, loadedVoice.config.phonemeIdMap)
         val input = frontend.toModelInput(sentence, loadedVoice.config.language)
-        // Speed ALWAYS routes to the model's native length_scale (spec rule 2) — never resample
+        // Speed ALWAYS routes to the model's native length_scale (spec rule 2) - never resample
         // output audio. length_scale is INVERSE to speed: larger = slower. Anchor on the voice's
         // own config default (normally 1.0) so speed=1.0 reproduces the model's natural pace.
         val lengthScale = loadedVoice.config.defaultLengthScale / speed
         val inputs = sessionInputs(input.tokenIds, loadedVoice, lengthScale)
         // Synthesize-time half of the issue #110 verification: a graph that opened cleanly can still
         // reject our fixed input contract on the first run() (an fp16 export refusing float32 scales,
-        // a non-standard export whose real inputs differ) — surface it as the same clear, named error.
+        // a non-standard export whose real inputs differ) - surface it as the same clear, named error.
         val graph = voiceId.substringBefore(SPEAKER_SEPARATOR)
         val outputs = requireSupportedGraph(graph) { loadedVoice.session.run(inputs) }
         return outputs.floatsOrError(OUTPUT_TENSOR, engineLabel)
     }
 
     // ASSUMPTION (not runnable against a real ONNX graph in this environment): mirrors the
-    // upstream piper1-gpl VITS export signature — "input" (int64 phoneme ids, [1, T]),
+    // upstream piper1-gpl VITS export signature - "input" (int64 phoneme ids, [1, T]),
     // "input_lengths" (int64 [1]), "scales" (float32 [noise_scale, length_scale, noise_w]). A
     // MULTI-speaker graph adds a required "sid" (int64 [1]) input; a single-speaker graph has no
-    // such input, so the sid tensor is added ONLY when this voice carries a speaker id — feeding a
+    // such input, so the sid tensor is added ONLY when this voice carries a speaker id - feeding a
     // spurious "sid" to a single-speaker graph would be rejected just as omitting it broke the
     // multi-speaker graphs.
     private fun sessionInputs(
@@ -210,7 +210,7 @@ internal class PiperEngine(
 
     // issue #95: many valid Piper repos (speaches-ai/*, ufozone/*, Lucasllfs/Razo-piper-voice) ship
     // the exact same sidecar shape but name it plain "config.json" instead of "<voice>.onnx.json".
-    // Only accepted when the bundle has EXACTLY ONE .onnx — with two or more graphs a single
+    // Only accepted when the bundle has EXACTLY ONE .onnx - with two or more graphs a single
     // "config.json" is ambiguous about which one it pairs with, so it is never guessed at (rule 4).
     // Content still has to pass [PiperVoiceConfig.parse]'s fail-closed gate, so a foreign
     // "config.json" (a different model family entirely) is still rejected. Deliberately out of
@@ -256,7 +256,7 @@ internal class PiperEngine(
     ): ModelDescriptor {
         val assetPaths = mutableMapOf<String, String>()
         // A single-speaker .onnx becomes one voice; a multi-speaker .onnx fans out into one voice
-        // per speaker (all sharing that one graph) — voices discovered from the model (rule 1).
+        // per speaker (all sharing that one graph) - voices discovered from the model (rule 1).
         val voices = entries.flatMap { entry -> entry.toVoices(bundle.rootPath, assetPaths) }
         return ModelDescriptor(
             modelId = bundle.id,
@@ -267,11 +267,11 @@ internal class PiperEngine(
             voices = voices,
             defaultVoiceId = voices.first().id,
             // Introspected: Piper's VITS graph has a native length/duration input (scales[1]), so it
-            // advertises a speed knob (routed to length_scale — never resampled, CLAUDE.md rule 2).
+            // advertises a speed knob (routed to length_scale - never resampled, CLAUDE.md rule 2).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths = assetPaths,
             // Approximate peak-RAM estimate (issue #38): a small VITS graph, scaled by how many voice
-            // graphs this bundle loads at once. A-priori only — refined by observed peak RAM.
+            // graphs this bundle loads at once. A-priori only - refined by observed peak RAM.
             resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB_PER_VOICE * entries.size),
         )
     }
@@ -291,7 +291,7 @@ internal class PiperEngine(
         return speakers.map { speaker ->
             Voice(
                 id = "$voiceId$SPEAKER_SEPARATOR${speaker.name}",
-                name = "${prettify(voiceId)} — ${speaker.name}",
+                name = "${prettify(voiceId)} - ${speaker.name}",
                 language = config.language,
             )
         }
@@ -312,7 +312,7 @@ internal class PiperEngine(
         private const val SIDECAR_EXTRA_SUFFIX = ".json"
 
         // issue #95: the plain "config.json" name several valid Piper repos use instead of
-        // "<voice>.onnx.json" — only ever tried for a single-.onnx bundle, see
+        // "<voice>.onnx.json" - only ever tried for a single-.onnx bundle, see
         // [singleOnnxConfigJsonEntry].
         private const val CONFIG_JSON_NAME = "config.json"
         private const val ONNX_RUNTIME_ID = "onnx"
@@ -343,7 +343,7 @@ private data class LoadedFile(
     val config: PiperVoiceConfig,
 )
 
-// A public voice bound to the (possibly shared) session it runs on, plus the sid to feed — null for
+// A public voice bound to the (possibly shared) session it runs on, plus the sid to feed - null for
 // a single-speaker graph, an integer speaker id for one speaker of a multi-speaker graph.
 private data class LoadedVoice(
     val session: InferenceSession,
@@ -368,7 +368,7 @@ private data class PiperVoiceEntry(
 /**
  * Thrown when a bundle claimed as Piper (or force-loaded) turns out to use an ONNX graph this
  * engine cannot drive with its fixed input/input_lengths/scales[/sid] VITS contract (issue #110).
- * A clear, named failure at load/synthesize time instead of an uncaught backend crash — the
+ * A clear, named failure at load/synthesize time instead of an uncaught backend crash - the
  * refusal is the feature (CLAUDE.md rule 4), for variants no inspect()-time signal could catch.
  */
 internal class PiperUnsupportedVariantException(
@@ -384,14 +384,14 @@ private fun readSidecarFile(path: String): String? {
 
 // issue #110: fp16 exports advertise their precision in the file name (e.g.
 // "tsukuyomi-chan-6lang-fp16.onnx"). PiperEngine always builds float32 scales and int64 ids, so an
-// fp16 graph is a guaranteed dtype mismatch — rejected at inspect() (matched lowercased).
+// fp16 graph is a guaranteed dtype mismatch - rejected at inspect() (matched lowercased).
 private const val FP16_MARKER = "fp16"
 
 // issue #110 inspect()-time guard: a bundle can be Piper-shaped enough to pass the sidecar gate yet
 // use a graph this engine cannot drive, so it must fail closed (rule 4) rather than claim-then-crash:
-//  - piper-plus multilingual — the sidecar declares language_id/prosody inputs this engine never
+//  - piper-plus multilingual - the sidecar declares language_id/prosody inputs this engine never
 //    feeds ([PiperVoiceConfig.declaresUnfedGraphInputs]);
-//  - fp16 exports — the graph wants fp16 tensors this engine's float32/int64 tensors cannot satisfy.
+//  - fp16 exports - the graph wants fp16 tensors this engine's float32/int64 tensors cannot satisfy.
 // Tiny non-standard "medium" exports carry no such signal and are caught at load/synthesize time
 // instead (see [requireSupportedGraph]).
 private fun isUnsupportedPiperVariant(

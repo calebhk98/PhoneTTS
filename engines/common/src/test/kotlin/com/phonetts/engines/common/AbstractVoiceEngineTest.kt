@@ -70,7 +70,7 @@ class AbstractVoiceEngineTest {
             val engine = StubEngine()
             engine.load(descriptor())
 
-            // Thrown before the Flow is even collected — a guard, not a lazy failure.
+            // Thrown before the Flow is even collected - a guard, not a lazy failure.
             assertFailsWith<IllegalArgumentException> { engine.synthesize("Hi.", "v0", 0f) }
         }
 

@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * bundled in the APK: the app ships this manifest, downloads the listed files into app-private
  * storage, verifies each against its [ManifestFile.sha256], and only then loads them.
  *
- * A manifest entry SEEDS the resolver — it never bypasses it. [ManifestModel.engineId] is a
+ * A manifest entry SEEDS the resolver - it never bypasses it. [ManifestModel.engineId] is a
  * hint; if absent, the resolver auto-detects via `inspect()` or falls back to the user pick.
  */
 @Serializable

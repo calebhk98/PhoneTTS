@@ -7,7 +7,7 @@ package com.phonetts.core.engine
  *
  * Both steps are fail-soft and SSOT-clean:
  *  - [apply] detects blend capability via `engine is BlendableVoices` (polymorphism, not a banned
- *    `when(modelType)` — rule 5); a non-blendable engine, or a spec whose source voices are missing,
+ *    `when(modelType)` - rule 5); a non-blendable engine, or a spec whose source voices are missing,
  *    simply yields nothing. The caller gates on [com.phonetts.core.model.ModelDescriptor.supportsVoiceBlend]
  *    so nothing is even attempted for a model that can't blend.
  *  - [merge] keeps the descriptor's own voices (SSOT) first and appends only blended voices whose id

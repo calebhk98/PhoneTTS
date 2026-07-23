@@ -26,7 +26,7 @@ class HttpUrlConnectionClient(
         try {
             val code = connection.responseCode
             // A 429 on the list/search path is an EXPECTED, self-resolving cooldown, not a real
-            // error — surface it as the typed exception carrying HF's own reset hint (issue #103) so
+            // error - surface it as the typed exception carrying HF's own reset hint (issue #103) so
             // the browse layer can show a countdown and auto-retry instead of flooding the error log.
             if (code == HTTP_TOO_MANY_REQUESTS) throw rateLimited(connection, url)
             if (code !in HTTP_OK_RANGE) throw IOException("HTTP $code for $url")

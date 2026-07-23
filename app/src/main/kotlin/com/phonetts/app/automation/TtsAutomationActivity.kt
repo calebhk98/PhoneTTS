@@ -18,7 +18,7 @@ import android.content.Intent as AndroidIntent
 /**
  * The Tasker/`adb`/MacroDroid automation entry point (issue #41). A headless, exported activity:
  * it takes an intent with the documented [AutomationIntent] extras, drives the EXISTING
- * `synthesize()` flow to the caller's file, and returns a result intent — it is simply a THIRD
+ * `synthesize()` flow to the caller's file, and returns a result intent - it is simply a THIRD
  * consumer of the one generation path (spec §6.1), alongside playback and file export. It adds NO
  * synthesis logic: it reuses [AppGraph]'s `engineManager` + the shared [AudioEncoder]s untouched.
  *
@@ -71,7 +71,7 @@ class TtsAutomationActivity : ComponentActivity() {
 
     // Pick the export encoder whose container matches the output file's extension; fall back to the
     // always-available first encoder (WAV). The list + its extensions come from AppGraph.exportFormats
-    // (SSOT) — no format string is hardcoded here.
+    // (SSOT) - no format string is hardcoded here.
     private fun encoderFor(
         graph: AppGraph,
         uri: Uri,
@@ -89,7 +89,7 @@ class TtsAutomationActivity : ComponentActivity() {
         finish()
     }
 
-    // The single result carried back to the caller — mirrors the RESULT_* extras of the reply intent.
+    // The single result carried back to the caller - mirrors the RESULT_* extras of the reply intent.
     private data class Outcome(
         val success: Boolean,
         val outputUri: String?,

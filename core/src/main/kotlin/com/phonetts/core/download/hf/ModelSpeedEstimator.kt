@@ -4,13 +4,13 @@ import kotlin.math.roundToLong
 
 /**
  * Estimates a browsed model's parameter count and a rough "how fast will this run" hint, purely
- * from facts already on hand — a repo's total download size ([HfSizeEstimate], fetched from the
+ * from facts already on hand - a repo's total download size ([HfSizeEstimate], fetched from the
  * file tree with no extra network call) and any short strings that might hint at a weight
  * precision (file names, HF tags, ...). Neither the HF search endpoint
  * ([HfModelSummary]) nor the tree endpoint ([HfTreeEntry]) expose safetensors/onnx tensor-count
  * metadata, so a byte-accurate parameter count isn't obtainable without yet another per-repo
  * request; this trades that for an honestly-labeled estimate derived from data every browsed
- * model already has (spec rule 1 SSOT: a *formula*, not a per-model literal — the same code runs
+ * model already has (spec rule 1 SSOT: a *formula*, not a per-model literal - the same code runs
  * for every repo, built-in or sideloaded, with no name/family check anywhere in it).
  */
 object ParameterCountEstimator {
@@ -31,7 +31,7 @@ object ParameterCountEstimator {
     /** Bytes-per-parameter implied by [precisionHints] (case-insensitive substring match on any
      * known precision token), falling back to [DEFAULT_BYTES_PER_PARAM] when none is recognized.
      * [precisionHints] can be repo file names, HF tags, or any other short strings that might
-     * mention a precision — the match is a generic substring scan, not filename-specific. */
+     * mention a precision - the match is a generic substring scan, not filename-specific. */
     fun bytesPerParamHint(precisionHints: List<String>): Double {
         val joined = precisionHints.joinToString(" ") { it.lowercase() }
         return when {
@@ -44,7 +44,7 @@ object ParameterCountEstimator {
     }
 
     /** Approximate parameter count from [totalBytes] of weights, refined by any precision hint in
-     * [precisionHints]. Always an estimate — callers must label it as such (spec: never present a
+     * [precisionHints]. Always an estimate - callers must label it as such (spec: never present a
      * guess as a fact). Zero/negative input yields zero rather than a nonsensical negative count. */
     fun estimate(
         totalBytes: Long,
@@ -58,11 +58,11 @@ object ParameterCountEstimator {
 
 /**
  * Predicts a coarse "how many times faster than real-time" speed hint from an estimated parameter
- * count. This is a single formula applied uniformly to every model — never a per-model lookup
- * table (spec rule 1) — anchored to one reference point: a ~30M-parameter on-device TTS model
+ * count. This is a single formula applied uniformly to every model - never a per-model lookup
+ * table (spec rule 1) - anchored to one reference point: a ~30M-parameter on-device TTS model
  * (the size class of the smallest built-in models, e.g. KittenTTS) synthesizing at roughly 8x
  * real-time on the project's target budget hardware (Galaxy A16-class, no NPU; see CLAUDE.md).
- * Speed is assumed to scale roughly inversely with parameter count for this class of TTS decoder —
+ * Speed is assumed to scale roughly inversely with parameter count for this class of TTS decoder -
  * a coarse but directionally honest approximation, not a benchmark result.
  */
 object SpeedPredictor {
@@ -83,7 +83,7 @@ object SpeedPredictor {
     }
 }
 
-/** Bundles a repo's estimated parameter count with the speed hint derived from it — the one call
+/** Bundles a repo's estimated parameter count with the speed hint derived from it - the one call
  * site the browse UI needs, so it never has to sequence [ParameterCountEstimator] and
  * [SpeedPredictor] itself. */
 data class ModelSpeedEstimate(

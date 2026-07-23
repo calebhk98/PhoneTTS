@@ -4,7 +4,7 @@
 **Scope:** Building espeak-ng with Android NDK and wrapping it as a shared phoneme frontend for on-device neural TTS (Piper/KittenTTS/Kokoro)
 
 > **Implementation status:** this research has been acted on. The CMake build, JNI wrapper,
-> `EspeakPhonemizer`, and data-installer described below are implemented — see
+> `EspeakPhonemizer`, and data-installer described below are implemented - see
 > [`docs/espeak-ng-integration.md`](../espeak-ng-integration.md) for the concrete file list,
 > pinned version (1.52.0), exact build steps, and the specific places this research doc's
 > pseudocode diverged from what shipped (notably the `espeak_TextToPhonemes` clause-loop in
@@ -96,11 +96,11 @@ cmake --build build-android
 ```
 
 ### 2.4 espeak-ng CMake Feature Flags (Android Relevant)
-- `-DUSE_KLATT=ON/OFF` – Klatt formant synthesis (default: ON; use OFF to reduce binary size)
-- `-DUSE_MBROLA=ON/OFF` – MBROLA voice support (default: ON if available)
-- `-DUSE_ASYNC=OFF` – Disable async mode (pthreads) for Android to avoid threading complications (see §5.1)
-- `-DBUILD_ESPEAK_DATA=ON` – Build language data (needed; default: ON)
-- `-DEXTRA_ru/cmn/yue=ON/OFF` – Extended dictionaries (large; consider disabling for app size)
+- `-DUSE_KLATT=ON/OFF` - Klatt formant synthesis (default: ON; use OFF to reduce binary size)
+- `-DUSE_MBROLA=ON/OFF` - MBROLA voice support (default: ON if available)
+- `-DUSE_ASYNC=OFF` - Disable async mode (pthreads) for Android to avoid threading complications (see §5.1)
+- `-DBUILD_ESPEAK_DATA=ON` - Build language data (needed; default: ON)
+- `-DEXTRA_ru/cmn/yue=ON/OFF` - Extended dictionaries (large; consider disabling for app size)
 
 **Recommended Android build:**
 ```bash
@@ -110,8 +110,8 @@ cmake --build build-android
 ```
 
 ### 2.5 Resulting Artifacts
-- **libespeak-ng.so** – Phoneme synthesis engine (~500 KB–1.2 MB depending on flags)
-- **espeak-ng-data/** – Language/phoneme data directory (must be shipped separately; see §3)
+- **libespeak-ng.so** - Phoneme synthesis engine (~500 KB-1.2 MB depending on flags)
+- **espeak-ng-data/** - Language/phoneme data directory (must be shipped separately; see §3)
 
 ---
 
@@ -119,11 +119,11 @@ cmake --build build-android
 
 ### 3.1 The Data Directory Structure
 eSpeak NG requires a data directory (`espeak-ng-data/`) containing:
-- `voices/` – Voice definitions (phoneme sets, pitch contours)
-- `phondata` – Compiled phoneme data
-- `phontab` – Phoneme-to-IPA tables
-- `intonation` – Intonation contours per language
-- `mbrola/` – MBROLA voice files (if enabled)
+- `voices/` - Voice definitions (phoneme sets, pitch contours)
+- `phondata` - Compiled phoneme data
+- `phontab` - Phoneme-to-IPA tables
+- `intonation` - Intonation contours per language
+- `mbrola/` - MBROLA voice files (if enabled)
 
 ### 3.2 Shipping Strategy: Assets vs. App-Private Storage
 
@@ -134,7 +134,7 @@ eSpeak NG requires a data directory (`espeak-ng-data/`) containing:
 - **Implementation:** Copy assets to app-private internal storage on first run.
 
 **Option B: Download to App-Private External Storage (For larger datasets)**
-- Download `espeak-ng-data.tar.bz2` (~3–5 MB compressed) to `context.getExternalFilesDir()` or `context.getFilesDir()` on first run.
+- Download `espeak-ng-data.tar.bz2` (~3-5 MB compressed) to `context.getExternalFilesDir()` or `context.getFilesDir()` on first run.
 - **Pros:** Smaller initial APK; user can skip download if offline TTS not needed.
 - **Cons:** First-run overhead; requires network permission; data remains on disk (privacy consideration).
 
@@ -181,7 +181,7 @@ int initEspeak(const char* dataPath) {
 ### 3.4 espeak-ng-data Distribution
 For reference, sherpa-onnx distributes espeak-ng-data as a separate tarball:
 - **Source:** https://github.com/k2-fsa/sherpa-onnx/releases (espeak-ng-data.tar.bz2)
-- **Size:** ~3–5 MB compressed, ~50 MB uncompressed (full language set)
+- **Size:** ~3-5 MB compressed, ~50 MB uncompressed (full language set)
 - For Piper/Kokoro: use the language-specific subset only.
 
 ---
@@ -243,7 +243,7 @@ For Piper/Kokoro, the output is typically in eSpeak's phoneme mnemonic set (sing
 ## 5. Phoneme → Per-Model ID Mapping
 
 ### 5.1 Why Per-Model?
-Each TTS model (Piper, KittenTTS, Kokoro) has its own phoneme inventory and ID mapping. The neural network's embedding layer expects fixed integer IDs (0–N) that correspond to the model's training vocabulary.
+Each TTS model (Piper, KittenTTS, Kokoro) has its own phoneme inventory and ID mapping. The neural network's embedding layer expects fixed integer IDs (0-N) that correspond to the model's training vocabulary.
 
 ### 5.2 Piper's Phoneme ID Map Approach
 Piper's voice configs include a JSON mapping:
@@ -346,7 +346,7 @@ public ListenableFuture<int[]> textToPhonemeIds(String text, String lang,
 **Mitigation:** For Piper/Kokoro (which don't use SSML at the TTS level), pre-process text to strip SSML before passing to espeak-ng, or handle SSML separately in the text-normalization layer (not espeak-ng's job).
 
 ### 6.3 Phoneme Set Differences
-**Problem:** eSpeak NG defines ~100+ phonemes (IPA + eSpeak mnemonics). Each model may only use 50–80 of them. Unknown phonemes → model error.
+**Problem:** eSpeak NG defines ~100+ phonemes (IPA + eSpeak mnemonics). Each model may only use 50-80 of them. Unknown phonemes → model error.
 
 **Mitigation:**
 - Build a phoneme inventory check: before inference, verify all phonemes from espeak are in the model's map.

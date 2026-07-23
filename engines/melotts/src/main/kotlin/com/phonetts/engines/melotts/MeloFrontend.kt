@@ -15,7 +15,7 @@ import com.phonetts.core.engine.TextFrontend
  *  1. Tokenize lowercased text with `[a-zA-Z']+|[.,!?;:]` (words and standalone punctuation).
  *  2. A word in [lexicon] contributes its phonemes + tones. A punctuation token that is itself a
  *     known symbol contributes itself with tone 0. Anything else falls back to the `UNK` symbol
- *     (tone 0) if the table has one — this is the fail-closed OOV path (spec rule 4): unknown
+ *     (tone 0) if the table has one - this is the fail-closed OOV path (spec rule 4): unknown
  *     input never crashes, it degrades to the model's own escape hatch.
  *  3. VITS `add_blank` interspersing: `[0, s0, 0, s1, ..., sN, 0]` for both the symbol and tone
  *     sequences (id 0 is `tokens.txt`'s own blank/pad row, always `_`).

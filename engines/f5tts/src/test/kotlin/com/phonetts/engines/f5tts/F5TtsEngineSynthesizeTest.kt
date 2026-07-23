@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 /**
  * The three-graph orchestration (README-io.md): NOT a claim that this matches a real ONNX graph
  * byte-for-byte (nothing here was run against real weights), but a proof of the WIRING this
- * engine is responsible for — the right session gets the right named tensors, the transformer's
+ * engine is responsible for - the right session gets the right named tensors, the transformer's
  * own `denoised` output is fed back as next iteration's `noise` input, the loop runs a fixed
  * number of times, and the decoder gets the last iteration's state plus `ref_signal_len`
  * forwarded from preprocessing. All per DakeQQ/F5-TTS-ONNX's export contract, cited in
@@ -24,7 +24,7 @@ class F5TtsEngineSynthesizeTest {
     private val refAudioSamples = FloatArray(F5DurationPlanner.HOP_LENGTH_SAMPLES * 10) { 0.01f }
     private val refText = "reference transcript. "
 
-    // The DakeQQ default (NFE_STEP=32, looped NFE_STEP-1 times) — see README-io.md "NFE step
+    // The DakeQQ default (NFE_STEP=32, looped NFE_STEP-1 times) - see README-io.md "NFE step
     // count is also baked in" for why this is an internal orchestration constant, not read from
     // F5TtsEngine (which keeps it private, like every other engine's tensor-shape constants).
     private val expectedTransformerCalls = 31

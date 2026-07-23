@@ -2,7 +2,7 @@ package com.phonetts.core.download.hf
 
 /**
  * A live download's cumulative progress, used to derive an "estimated time remaining" from a
- * *measured* running throughput (bytes transferred since [startedAtMs]) — never a fabricated or
+ * *measured* running throughput (bytes transferred since [startedAtMs]) - never a fabricated or
  * assumed transfer rate (issue #7: only show what's actually knowable). This is pure arithmetic
  * over numbers the caller already has; `:app` only supplies the wall-clock (`nowMs`) and updates
  * [bytesDone] as bytes actually land on disk.
@@ -11,7 +11,7 @@ data class HfDownloadProgress(
     val filesDone: Int = 0,
     val filesTotal: Int = 0,
     val bytesDone: Long = 0,
-    // Null when some file in the plan has no advertised size (see HfSizeEstimate) — an ETA needs a
+    // Null when some file in the plan has no advertised size (see HfSizeEstimate) - an ETA needs a
     // real total, not a guessed one.
     val bytesTotal: Long? = null,
     val startedAtMs: Long = 0,

@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 /**
  * Seam tests for surfacing saved mixes in the main voice list (issue #42): re-applying persisted
  * [BlendedVoiceSpec]s to a loaded engine and merging the resulting voices into the descriptor's own
- * list. Fail-soft — a non-blendable engine or an unknown source voice contributes nothing.
+ * list. Fail-soft - a non-blendable engine or an unknown source voice contributes nothing.
  */
 class BlendedVoiceCatalogTest {
     // A blend-capable engine double: a VoiceEngine (as the real Kokoro/KittenTTS are) that also

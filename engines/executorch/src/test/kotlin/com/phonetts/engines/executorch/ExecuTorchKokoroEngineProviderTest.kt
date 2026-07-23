@@ -10,7 +10,7 @@ import kotlin.test.Test
  * Proves the discovery seam end to end for this module: [ExecuTorchKokoroEngineProvider] is
  * registered via `META-INF/services/com.phonetts.core.engine.EngineProvider` (in this module's
  * resources) and is found by the same generic `EngineLoader` every engine module is discovered
- * through — no shared code names "executorch-kokoro" anywhere in `:core`.
+ * through - no shared code names "executorch-kokoro" anywhere in `:core`.
  */
 class ExecuTorchKokoroEngineProviderTest {
     private fun context() = engineContext()

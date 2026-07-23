@@ -2,8 +2,8 @@ package com.phonetts.core.update
 
 /**
  * A minimal MAJOR.MINOR.PATCH version, tolerant of a leading `v` (release tags are `v0.1.2`, the
- * app's `BuildConfig.VERSION_NAME` is `0.1.2`). Only the numeric core is compared — any pre-release
- * suffix is ignored — which is all the update check needs. [parse] fails closed (returns null) on
+ * app's `BuildConfig.VERSION_NAME` is `0.1.2`). Only the numeric core is compared - any pre-release
+ * suffix is ignored - which is all the update check needs. [parse] fails closed (returns null) on
  * anything it can't read, so a malformed tag never triggers a bogus "update available".
  */
 data class SemVer(

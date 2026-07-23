@@ -25,12 +25,12 @@ import java.io.File
 
 /**
  * MeloTTS engine, retargeted to the MiaoMint/MeloTTS-ONNX sherpa export
- * (`onnx_exports/en_v2`) — PROVEN to produce real, non-silent English speech by
+ * (`onnx_exports/en_v2`) - PROVEN to produce real, non-silent English speech by
  * `scripts/model-verify/run_melo2.py` (10.54 s, 908 KB, peak 0.293). This replaces the previous
  * seasonstudio-oriented dual-session (BERT + acoustic) engine, which ran shape-correctly but
  * produced silence: its hardcoded 219-symbol table didn't match that export's 112-row embedding.
  *
- * The new contract is a SINGLE acoustic session with SEVEN named inputs — no BERT, no language
+ * The new contract is a SINGLE acoustic session with SEVEN named inputs - no BERT, no language
  * id, no sdp_ratio:
  *
  * | input            | dtype   | shape   |
@@ -45,7 +45,7 @@ import java.io.File
  *
  * The output is read positionally (`singleFloatsOrError`), since the export auto-numbers it.
  *
- * The model ships its own symbol table (`tokens.txt`) and G2P dictionary (`lexicon.txt`) — the
+ * The model ships its own symbol table (`tokens.txt`) and G2P dictionary (`lexicon.txt`) - the
  * SSOT fix (spec rule 1): those are read from the bundle at [load] time via [fileReader] rather
  * than hardcoded, so a future export with a different vocabulary can never desync from this
  * engine the way the old one did.
@@ -142,7 +142,7 @@ internal class MeloEngine(
         val language = voices()[voiceIndex].language
 
         val input = activeFrontend.toModelInput(sentence, language)
-        // Speed ALWAYS routes to the model's native length_scale (spec rule 2) — never resample
+        // Speed ALWAYS routes to the model's native length_scale (spec rule 2) - never resample
         // output audio. length_scale is INVERSE to speed, exactly like Piper's scales[1].
         val lengthScale = 1f / speed
         val outputs = session.run(sessionInputs(input, voiceIndex, lengthScale))
@@ -197,11 +197,11 @@ internal class MeloEngine(
             voices = voices,
             defaultVoiceId = defaultVoiceId(voices, metadata),
             // Introspected: MeloTTS's VITS2 graph has a native length_scale input, so it advertises a
-            // speed knob (routed to length_scale = 1/speed — never resampled, CLAUDE.md rule 2).
+            // speed knob (routed to length_scale = 1/speed - never resampled, CLAUDE.md rule 2).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths = assetPaths,
             // Approximate peak-RAM estimate (issue #38): a VITS2 acoustic model plus a BERT frontend
-            // session. A-priori only — refined by observed peak RAM.
+            // session. A-priori only - refined by observed peak RAM.
             resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
 
@@ -238,7 +238,7 @@ internal class MeloEngine(
         // metadata IS present, its own "sample_rate" always wins.
         private const val DEFAULT_SAMPLE_RATE = 44_100
 
-        // Approximate peak resident RAM (MiB) while loaded + generating — acoustic + BERT sessions.
+        // Approximate peak resident RAM (MiB) while loaded + generating - acoustic + BERT sessions.
         private const val PEAK_RAM_MIB = 300L
         private val SPEED_RANGE = 0.5f..2.0f
         private const val DEFAULT_SPEED = 1.0f
@@ -251,7 +251,7 @@ internal class MeloEngine(
         private const val LEXICON_FILE = "lexicon.txt"
         private const val METADATA_FILE = "metadata.json"
 
-        // PROVEN acoustic tensor contract (scripts/model-verify/run_melo2.py) — no bert, no
+        // PROVEN acoustic tensor contract (scripts/model-verify/run_melo2.py) - no bert, no
         // ja_bert, no language input, no sdp_ratio.
         private const val INPUT_X = "x"
         private const val INPUT_X_LENGTHS = "x_lengths"

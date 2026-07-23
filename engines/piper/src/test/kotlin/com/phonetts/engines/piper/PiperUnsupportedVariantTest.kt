@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 
 /**
  * issue #110 load/synthesize-time verification. Some incompatible Piper variants carry NO signal in
- * the sidecar or file name that inspect() could fail closed on — most notably tiny (~1-1.7 MB)
+ * the sidecar or file name that inspect() could fail closed on - most notably tiny (~1-1.7 MB)
  * non-standard "medium" exports whose graph does not match the assumed VITS input/dtype contract.
  * The [com.phonetts.core.runtime.InferenceSession] seam cannot introspect a graph's inputs/dtypes,
  * so those can only be caught by actually loading and running the graph. When they fail, the engine

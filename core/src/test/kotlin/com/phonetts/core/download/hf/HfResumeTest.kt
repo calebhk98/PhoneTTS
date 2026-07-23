@@ -26,7 +26,7 @@ class HfResumeTest {
 
     @Test
     fun restartsWhenTheRepoDidNotAdvertiseASize() {
-        // A partial file we can't trust (no expected size) must not be resumed — refetch instead.
+        // A partial file we can't trust (no expected size) must not be resumed - refetch instead.
         val decision = HfResume.decide(existingBytes = 500, expectedBytes = null)
         assertEquals(ResumeAction.RESTART, decision.action)
         assertEquals(0L, decision.offsetBytes)

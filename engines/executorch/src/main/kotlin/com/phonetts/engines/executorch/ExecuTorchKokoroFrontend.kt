@@ -9,11 +9,11 @@ import com.phonetts.core.text.Phonemizer
  * via the injected [phonemizer], map each character through the bundle's own [vocab] dropping
  * unknown ones, pad-wrap with id `0` at both ends) because the ExecuTorch export's own reference
  * pipeline does EXACTLY the same thing (VALIDATED, `kokoro-export/demo/inference_example.py`:
- * `input_ids = [0] + input_ids[:input_length-2] + [0]`) — only the token-count ceiling differs,
+ * `input_ids = [0] + input_ids[:input_length-2] + [0]`) - only the token-count ceiling differs,
  * since this export's bounded-dynamic-shape method caps the PADDED sequence at [MAX_TOTAL_TOKENS]
  * (128), not 512.
  *
- * The vocabulary is injected, never hardcoded (SSOT, spec rule 1) — read from the bundle's
+ * The vocabulary is injected, never hardcoded (SSOT, spec rule 1) - read from the bundle's
  * `vocab.json` at `ExecuTorchKokoroEngine.load()` time (see [ExecuTorchKokoroVocab]'s kdoc for why
  * that file, rather than a real upstream one, is what this engine requires).
  */

@@ -9,7 +9,7 @@ import kotlin.test.assertEquals
 /**
  * Covers the discovery seam (spec §5.4): the `META-INF/services/com.phonetts.core.engine.
  * EngineProvider` resource in this module must let `EngineLoader` find [KittenEngineProvider]
- * via `ServiceLoader`, exactly as the app's real bootstrap does — and a directly constructed
+ * via `ServiceLoader`, exactly as the app's real bootstrap does - and a directly constructed
  * provider (the no-arg-constructor path `ServiceLoader` relies on) must work identically.
  */
 class KittenEngineProviderTest {

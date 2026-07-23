@@ -8,7 +8,7 @@ import kotlin.test.assertNull
 
 /**
  * The dynamic/introspective parameter model (CLAUDE.md: everything the UI shows is derived from
- * descriptors). Parameters are the SSOT for "what knobs does this model have?" — speed is derived
+ * descriptors). Parameters are the SSOT for "what knobs does this model have?" - speed is derived
  * from them, a model with no knobs reports a locked speed, and an arbitrary future parameter (e.g.
  * emotion) is representable with no new descriptor field.
  */

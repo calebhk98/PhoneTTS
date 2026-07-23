@@ -34,7 +34,7 @@ import com.phonetts.core.update.UpdateStatus
 /**
  * In-app help: how to add a voice model, which recommended models exist (read from
  * [BuiltInCatalog] so this can never drift from the actual one-tap list), what a bring-your-own
- * model needs per engine, and troubleshooting. Pure guidance UI — it names no model fact that
+ * model needs per engine, and troubleshooting. Pure guidance UI - it names no model fact that
  * drives another control; the recommended list is the single source of truth it derives from.
  */
 @Composable
@@ -59,25 +59,25 @@ fun HelpScreen(
             Bullet("Tap Browse models → the Recommended (one-tap) section for a working voice in one tap.")
             Bullet("Or search Hugging Face in Browse models and tap Download on a result.")
             Bullet("Or Sideload folder to add a model you already copied onto the phone.")
-            Bullet("Everything after the download runs fully offline — no network is used to speak.")
+            Bullet("Everything after the download runs fully offline - no network is used to speak.")
         }
 
         Section("Recommended models (one-tap)") {
             BuiltInCatalog.ALL.forEach { model ->
-                Text("• ${model.displayName} — ~${model.approxSizeMb} MB", fontWeight = FontWeight.Medium)
+                Text("• ${model.displayName} - ~${model.approxSizeMb} MB", fontWeight = FontWeight.Medium)
                 model.note?.let { Body("   $it") }
             }
         }
 
         Section("Bringing your own model") {
-            Body("The app auto-detects a model from its files. A lone .onnx usually isn't enough — grab these:")
+            Body("The app auto-detects a model from its files. A lone .onnx usually isn't enough - grab these:")
             Engine("Piper", "rhasspy/piper-voices", "<voice>.onnx + <voice>.onnx.json. Any voice/language works.")
             Engine("KittenTTS", "KittenML/kitten-tts-nano-*", "<model>.onnx + config.json + voices.npz. Tiny, English.")
             Engine(
                 "Kokoro-82M",
                 "onnx-community/Kokoro-82M-v1.0-ONNX",
                 "onnx/model.onnx (fp32) + config.json + tokenizer.json + voices/<name>.bin. " +
-                    "Use fp32 — q8f16 crashes.",
+                    "Use fp32 - q8f16 crashes.",
             )
             Engine(
                 "MeloTTS",
@@ -108,14 +108,14 @@ fun HelpScreen(
 
         Section("Troubleshooting") {
             Q("No sound, or it's garbled?", "Piper/Kitten/Kokoro need the espeak add-on in the build; MeloTTS doesn't.")
-            Q("Which Kokoro file?", "The fp32 onnx/model.onnx — the q8f16 one crashes the runtime.")
+            Q("Which Kokoro file?", "The fp32 onnx/model.onnx - the q8f16 one crashes the runtime.")
             Q(
                 "MeloTTS won't work?",
                 "Use the MiaoMint sherpa export (with tokens.txt/lexicon.txt), not myshell-ai/MeloTTS.",
             )
             Q(
                 "It asked me to pick an engine?",
-                "It couldn't identify the model — pick the matching engine; it's remembered.",
+                "It couldn't identify the model - pick the matching engine; it's remembered.",
             )
             Q("Freeing space?", "Manage models shows each model's size and lets you delete it.")
         }
@@ -123,7 +123,7 @@ fun HelpScreen(
 }
 
 // Version + a manual update check. The app also checks automatically at launch (silent unless a
-// newer build exists); this button lets the user re-check on demand and always gives feedback —
+// newer build exists); this button lets the user re-check on demand and always gives feedback -
 // "Up to date (v…)", a download offer, or a note when the check couldn't reach GitHub. Installing is
 // always the user's choice (offer, never force): Download only opens the APK URL in the browser.
 @Composable
@@ -163,7 +163,7 @@ private fun ThemeSection(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Section("Appearance") {
-        Body("Pick a color theme — sepia and true-black are tuned for long reading / OLED battery.")
+        Body("Pick a color theme - sepia and true-black are tuned for long reading / OLED battery.")
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
             TextField(
                 value = currentTheme.displayName,

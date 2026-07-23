@@ -13,12 +13,12 @@ data class ThermalRegression(
 /**
  * Reads a [BenchmarkHistory] series and flags when the newest run is much slower than the previous
  * one for the same engine+device (issue #39). RTF is wall-clock per second of audio, so a *larger*
- * RTF means *slower* — a ratio of ~2 is the classic signature of thermal throttling on a passively
+ * RTF means *slower* - a ratio of ~2 is the classic signature of thermal throttling on a passively
  * cooled, no-NPU phone that has been synthesizing for a while.
  *
  * Deliberately conservative: it compares only the two most recent samples and stays silent unless
  * the slowdown clears [DEFAULT_SLOWDOWN_THRESHOLD], so ordinary run-to-run variance ("within noise")
- * never gets reported as a regression. This is why the whole view is OFF by default — it is a
+ * never gets reported as a regression. This is why the whole view is OFF by default - it is a
  * power-user diagnostic, not an always-on warning.
  */
 object ThermalRegressionDetector {

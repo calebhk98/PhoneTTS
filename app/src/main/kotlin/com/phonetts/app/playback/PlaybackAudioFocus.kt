@@ -9,7 +9,7 @@ import androidx.media.AudioManagerCompat
 /**
  * Thin wrapper around [AudioManagerCompat]'s focus APIs for [PlaybackService]: [request] asks for
  * `AUDIOFOCUS_GAIN` tagged as media/speech, and [onFocusLost] (wired to the attached
- * [PlaybackController.pause]) fires if the OS takes focus away — e.g. an incoming call or another
+ * [PlaybackController.pause]) fires if the OS takes focus away - e.g. an incoming call or another
  * media app starting. Using the compat request/listener types keeps this correct across API
  * levels without a manual `Build.VERSION.SDK_INT` branch (minSdk 24 predates `AudioFocusRequest`).
  */

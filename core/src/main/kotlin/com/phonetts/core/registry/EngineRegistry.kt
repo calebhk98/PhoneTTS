@@ -3,7 +3,7 @@ package com.phonetts.core.registry
 import com.phonetts.core.engine.VoiceEngine
 
 /**
- * Runtime, mutable registry of [VoiceEngine] registrations — the single source of truth for
+ * Runtime, mutable registry of [VoiceEngine] registrations - the single source of truth for
  * "what engines/models exist" (spec §5.4). Built-in engines are just pre-seeded registrations
  * made at startup; there is no built-in-vs-sideloaded branch here or downstream. Origin is
  * recorded only on [com.phonetts.core.model.ModelDescriptor], for display.

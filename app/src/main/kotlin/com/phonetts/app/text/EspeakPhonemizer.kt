@@ -13,7 +13,7 @@ import com.phonetts.core.text.Phonemizer
  * Never crashes the app: every failure mode (native lib missing, data files missing, espeak-ng
  * init failure, or an unexpected native-call exception) is caught and turns this into a
  * transparent delegate to [fallback] (a labelled [PassthroughPhonemizer] by default), logging a
- * warning instead of throwing (per this ticket's requirement — "the app never hard-crashes").
+ * warning instead of throwing (per this ticket's requirement - "the app never hard-crashes").
  *
  * All native calls are synchronized on [lock]: espeak-ng keeps mutable global state (current
  * voice, synthesis context) and is documented as not safe for concurrent calls across threads

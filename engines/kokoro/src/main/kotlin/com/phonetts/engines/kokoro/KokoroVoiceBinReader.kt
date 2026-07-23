@@ -4,11 +4,11 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Decodes a single Kokoro voice `.bin` file — the REAL per-voice format shipped by
+ * Decodes a single Kokoro voice `.bin` file - the REAL per-voice format shipped by
  * `onnx-community/Kokoro-82M-v1.0-ONNX` under `voices/<name>.bin`, proven end-to-end in
  * `scripts/model-verify/run_kokoro.py` (11s of clean audio). Unlike KittenTTS's `.npy`/`.npz`
  * (which carry a numpy header), a Kokoro voice file has **no header at all**: it is a raw
- * little-endian float32 array, shape [ROWS, COLS] = [510, 256] flattened row-major —
+ * little-endian float32 array, shape [ROWS, COLS] = [510, 256] flattened row-major -
  * [EXPECTED_BYTE_COUNT] bytes total. The only validation available is the byte count, which this
  * fails closed on (returns null) rather than guessing a different reshape for a malformed file.
  *

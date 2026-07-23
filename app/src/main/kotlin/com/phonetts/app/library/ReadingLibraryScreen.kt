@@ -33,7 +33,7 @@ import java.util.Date
  * The reading library (issue #19-5): every document saved via [ReadingLibraryViewModel.saveCurrentDocument]
  * (from here or the main screen), openable back into the reader. Opening a document that has a saved
  * resume position ([ReadingLibraryViewModel.Row.hasResumePoint]) asks "resume, or start over?" first
- * — [onOpen]'s second parameter carries the answer, and the caller (AppNav) turns it into the SAME
+ * - [onOpen]'s second parameter carries the answer, and the caller (AppNav) turns it into the SAME
  * [com.phonetts.app.ui.TtsViewModel.resumeFromSaved] the main screen's own resume button uses; no
  * second resume mechanism is introduced here.
  */
@@ -136,7 +136,7 @@ private fun RenameDialog(
     )
 }
 
-/** "Resume, or start over?" — asked once, right when a document with a saved position is opened. */
+/** "Resume, or start over?" - asked once, right when a document with a saved position is opened. */
 @Composable
 private fun ResumeChoiceDialog(
     documentTitle: String,

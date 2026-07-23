@@ -5,7 +5,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * A favorited voice: a specific [voiceId] within a specific [modelId]. A voice is only meaningful
- * paired with the model it belongs to, so both halves are stored (issue #119 — "a favorite voice
+ * paired with the model it belongs to, so both halves are stored (issue #119 - "a favorite voice
  * may live in any of several models"). Callers must source both ids from a descriptor
  * (`descriptor.id` / `descriptor.voices[].id`, spec §5.7 SSOT); this store only records the choice.
  */
@@ -16,7 +16,7 @@ data class FavoriteVoiceRef(
 )
 
 /**
- * A model the user flagged/downvoted during testing (issue #113 — e.g. an "English" slot that turns
+ * A model the user flagged/downvoted during testing (issue #113 - e.g. an "English" slot that turns
  * out to be a Russian model, or a broken engine). [reason] is an optional free-text note; [atMs] is
  * a caller-supplied timestamp (this class never reads the wall clock, matching every other seam) so
  * a later screen can offer to delete or export the flagged set.
@@ -41,10 +41,10 @@ private data class FavoritesState(
  * (#114) work all consume. It covers three things a user marks while comparing models, and which
  * must survive a restart:
  *
- *  - **favorite voices** — a `(modelId, voiceId)` pair, so a favorite voice can be surfaced on Home
+ *  - **favorite voices** - a `(modelId, voiceId)` pair, so a favorite voice can be surfaced on Home
  *    independent of which model owns it (issue #119);
- *  - **favorite models** — a whole `modelId` (issue #113, "save a model as a favorite");
- *  - **flagged/downvoted models** — a `modelId` plus an optional reason, so bad models can be
+ *  - **favorite models** - a whole `modelId` (issue #113, "save a model as a favorite");
+ *  - **flagged/downvoted models** - a `modelId` plus an optional reason, so bad models can be
  *    reviewed, deleted, or exported after a tournament (issue #113).
  *
  * Pure `:core` logic over an injected [DurableStore] (storage lives in `:app`), so it is

@@ -2,7 +2,7 @@ package com.phonetts.core.runtime
 
 /**
  * A minimal, runtime-agnostic tensor: a flat primitive buffer plus a shape. This is all the
- * seam needs — concrete runtimes (ONNX, an LLM backend) convert to and from their own native
+ * seam needs - concrete runtimes (ONNX, an LLM backend) convert to and from their own native
  * tensor types at the edge. Deliberately not modelling dtypes beyond float/long: those are the
  * only two an engine feeds a TTS graph (phoneme/token ids as long, scalars/audio as float).
  */
@@ -26,7 +26,7 @@ class Tensor private constructor(
             shape: IntArray = intArrayOf(data.size),
         ): Tensor = Tensor(shape, null, data)
 
-        /** A rank-1, single-element float tensor — the common carrier for a scalar speed/param value. */
+        /** A rank-1, single-element float tensor - the common carrier for a scalar speed/param value. */
         fun scalarFloat(value: Float): Tensor = Tensor(intArrayOf(1), floatArrayOf(value), null)
     }
 }

@@ -27,12 +27,12 @@ import java.io.File
 /**
  * The Kokoro-82M engine (spec Phase 2, this ticket: Phase 2.5). StyleTTS2-based, 24 kHz,
  * voices selected by a per-voice **style table** rather than per-file weights
- * (docs/research/model-facts.md) — so, unlike a one-voice-per-file model, loading this engine
+ * (docs/research/model-facts.md) - so, unlike a one-voice-per-file model, loading this engine
  * means loading one graph plus one table PER voice, and synthesis means picking one row out of
  * the active voice's table per sentence.
  *
  * VALIDATED against the REAL `onnx-community/Kokoro-82M-v1.0-ONNX` repo, proven end-to-end in
- * `scripts/model-verify/run_kokoro.py` (11s of clean audio, fp32 `onnx/model.onnx` — the q8f16
+ * `scripts/model-verify/run_kokoro.py` (11s of clean audio, fp32 `onnx/model.onnx` - the q8f16
  * quantized export segfaults onnxruntime, so this engine only ever asks for the fp32 weights
  * file): voices are NOT a `voices.json` name->vector table. They are per-voice files
  * `voices/<name>.bin`, each a raw little-endian float32 array of shape [510, 256]
@@ -97,7 +97,7 @@ internal class KokoroEngine(
     /**
      * Reads+validates the config companion file and fingerprints the voice table by the presence
      * of `voices/<name>.bin` files BY NAME (spec §9.1 fail-closed): [ModelBundle] only carries small
-     * *text* side files for fingerprinting, so `voices/<name>.bin` — binary, no header — is never
+     * *text* side files for fingerprinting, so `voices/<name>.bin` - binary, no header - is never
      * readable here, only listed. That is enough: unlike KittenTTS's single zipped `voices.npz`
      * (whose per-voice entries are invisible until the archive is opened), each Kokoro voice is
      * its own named file, so the real voice ids are already known from [ModelBundle.fileNames]
@@ -173,7 +173,7 @@ internal class KokoroEngine(
 
     /**
      * Voice mixing (issue #42): Kokoro's StyleTTS2 graph feeds a continuous style row, so the whole
-     * [510, 256] style table interpolates element-wise — [VoiceBlend] of two loaded tables IS the
+     * [510, 256] style table interpolates element-wise - [VoiceBlend] of two loaded tables IS the
      * in-between voice (blending the flattened table blends every style row it indexes). Registered
      * as a new selectable voice, inheriting voice A's language. Fails closed if either source id
      * isn't loaded.
@@ -207,7 +207,7 @@ internal class KokoroEngine(
         // VALIDATED against onnx-community/Kokoro-82M-v1.0-ONNX (scripts/model-verify/run_kokoro.py,
         // 11s of clean audio): the graph's inputs are "input_ids" int64 [1, T], "style" float32
         // [1, 256] (ONE row selected from the active voice's [510, 256] table, indexed by token
-        // count — KokoroVoiceBinReader.styleRow), "speed" float32 [1]; the single output is
+        // count - KokoroVoiceBinReader.styleRow), "speed" float32 [1]; the single output is
         // "waveform" float32 [1, N].
         // Index by the INNER token count (`len(tokens)` in run_kokoro.py line 23), not the pad-wrapped
         // length: modelInput.tokenIds is `[0, *inner, 0]`, so subtract the two pads styleRow must not see.
@@ -275,12 +275,12 @@ internal class KokoroEngine(
             voices = voices,
             defaultVoiceId = defaultVoiceId,
             // Introspected: Kokoro's StyleTTS2 graph has a native "speed" input, and its bounds come
-            // from the model's own config.json (speed_min/max/default) — a per-model fact, not a
+            // from the model's own config.json (speed_min/max/default) - a per-model fact, not a
             // constant. Routed to that scalar, never resampled (CLAUDE.md rule 2).
             parameters = listOf(ModelParameter.speed(speedRange, defaultSpeed)),
             // Introspected: the StyleTTS2 graph takes a continuous style vector, so two voices'
             // style tables interpolate into an in-between one (issue #42). A descriptor fact the
-            // "mix voices" UI derives from — never a model-name special case (rule 5).
+            // "mix voices" UI derives from - never a model-name special case (rule 5).
             supportsVoiceBlend = true,
             assetPaths =
                 mapOf(
@@ -289,7 +289,7 @@ internal class KokoroEngine(
                     TOKENIZER_ASSET to joinAssetPath(bundle, TOKENIZER_FILE),
                 ),
             // Approximate peak-RAM estimate (issue #38): Kokoro is an ~82M-param StyleTTS2 model.
-            // A-priori only — refined by observed peak RAM.
+            // A-priori only - refined by observed peak RAM.
             resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
     }
@@ -318,7 +318,7 @@ internal class KokoroEngine(
         const val ENGINE_ID = "kokoro"
         const val DISPLAY_NAME = "Kokoro"
 
-        // Approximate peak resident RAM (MiB) while loaded + generating — ~82M-param StyleTTS2 model.
+        // Approximate peak resident RAM (MiB) while loaded + generating - ~82M-param StyleTTS2 model.
         private const val PEAK_RAM_MIB = 380L
 
         // Companion-file names inspect()/forcedMatch() fingerprint a bundle by.

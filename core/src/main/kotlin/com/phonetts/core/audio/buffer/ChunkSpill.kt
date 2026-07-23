@@ -8,11 +8,11 @@ import java.nio.ByteOrder
 
 // Random-access scratch store that backs [GeneratedAudio]'s long-document mode: older chunks are
 // evicted from the heap to this file, and read back on demand (replay, export, scrubbing) below the
-// live window. Storage is RAW little-endian float32 — no quantization — so a read is byte-identical
+// live window. Storage is RAW little-endian float32 - no quantization - so a read is byte-identical
 // to the chunk that was written; the "replay from index 0 without re-synthesis" guarantee stays
 // lossless whether a chunk is served from RAM or from here.
 //
-// Android-free (java.io only): the scratch [file] is injected. Not thread-safe on its own —
+// Android-free (java.io only): the scratch [file] is injected. Not thread-safe on its own -
 // [GeneratedAudio] serializes all access under its own lock.
 private const val BYTES_PER_FLOAT = 4
 

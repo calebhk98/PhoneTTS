@@ -9,13 +9,13 @@ import java.io.File
  * ([com.phonetts.core.store.FavoritesStore], [com.phonetts.core.store.DurableErrorLog], and the
  * tournament/benchmark persistence to come) all share one consistent, bounded, on-disk home under
  * app-private storage. This mirrors how [com.phonetts.core.download.hf.DownloadDiagnosticsLog]
- * already persists — one JSON file under `filesDir` — just generalised behind the [DurableStore]
+ * already persists - one JSON file under `filesDir` - just generalised behind the [DurableStore]
  * seam so `:core` stays Android-free.
  *
  * Living under `filesDir` (app-private internal storage) it is unaffected by the model-storage
  * relocation the user can do on the Manage screen (issue #74/#88 note): only downloaded *weights*
- * move, never this metadata. This class deals only in [String] + [File] — no `kotlinx.serialization`
- * — because the `:app` module does not carry the serializer compiler plugin (the JSON encoding all
+ * move, never this metadata. This class deals only in [String] + [File] - no `kotlinx.serialization`
+ * - because the `:app` module does not carry the serializer compiler plugin (the JSON encoding all
  * happens in the `:core` helpers).
  *
  * Every method is best-effort and fails closed, matching the [DurableStore] contract: a read error

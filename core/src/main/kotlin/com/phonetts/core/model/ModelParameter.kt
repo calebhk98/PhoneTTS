@@ -1,11 +1,11 @@
 package com.phonetts.core.model
 
 /**
- * One tunable synthesis parameter a model exposes — the SSOT for "what knobs does this model have?"
+ * One tunable synthesis parameter a model exposes - the SSOT for "what knobs does this model have?"
  *
  * This is the introspective, dynamic answer to the design rule that everything the UI shows is
  * derived at runtime from descriptors (CLAUDE.md). An engine does NOT hardcode "there is a speed
- * slider"; it inspects the actual model and declares the parameters that model genuinely supports —
+ * slider"; it inspects the actual model and declares the parameters that model genuinely supports -
  * Piper/Kokoro/Kitten/Melo advertise a [speed] knob (their graphs have a native duration/speed
  * input), CosyVoice3 advertises none (its native synth exposes no speed knob), and a future model
  * that adds, say, an emotion selector declares a [CHOICE] parameter for it and the UI renders a

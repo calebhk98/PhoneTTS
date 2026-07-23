@@ -9,7 +9,7 @@ import com.phonetts.core.text.Phonemizer
  * `scripts/model-verify/run_kokoro.py`:
  *
  *  1. Phonemize the text to a single IPA string via the injected [phonemizer] (real espeak-ng in
- *     `:app`, `FakePhonemizer` in tests) — exactly the `espeak-ng --ipa -v en-us` step the
+ *     `:app`, `FakePhonemizer` in tests) - exactly the `espeak-ng --ipa -v en-us` step the
  *     reference used.
  *  2. Map each IPA character through the model's own [vocab] (from its `tokenizer.json`,
  *     [KokoroVocab]), DROPPING characters the vocab doesn't contain
@@ -30,7 +30,7 @@ class KokoroFrontend(
         language: String,
     ): ModelInput {
         val ipa = phonemizer.phonemize(text, language)
-        // `[vocab[c] for c in ipa if c in vocab]`, then `tokens[:508]` — the reference caps the inner
+        // `[vocab[c] for c in ipa if c in vocab]`, then `tokens[:508]` - the reference caps the inner
         // sequence so the pad-wrapped result stays within the model's 512-token max context.
         val tokens = ipa.mapNotNull { char -> vocab[char.toString()] }.take(MAX_INNER_TOKENS)
         return ModelInput(wrapWithPad(tokens))

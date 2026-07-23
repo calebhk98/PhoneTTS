@@ -78,12 +78,12 @@ import kotlin.math.ceil
 
 /**
  * The main screen. Model list, voice list and speed bounds are read entirely from the
- * [com.phonetts.core.registry.ModelCatalog] + the selected [ModelDescriptor] — register a model and
+ * [com.phonetts.core.registry.ModelCatalog] + the selected [ModelDescriptor] - register a model and
  * it appears here with no UI change (spec §7). Play and Export are the two consumers of the one
  * generation path.
  *
  * Layout: a hamburger [ModalNavigationDrawer] holds the navigation destinations (browse / manage /
- * sideload / help) so the body stays a clean stack of titled cards — voice, text, playback, output.
+ * sideload / help) so the body stays a clean stack of titled cards - voice, text, playback, output.
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -127,7 +127,7 @@ fun TtsScreen(
         }
 
     // Close the drawer, then run the destination's action. Navigation actions swap the whole screen
-    // out from under the drawer, so the close is mostly cosmetic — but sideload just fires a launcher
+    // out from under the drawer, so the close is mostly cosmetic - but sideload just fires a launcher
     // and stays here, where the tidy close matters.
     val navigate: (() -> Unit) -> Unit = { action ->
         scope.launch { drawerState.close() }
@@ -215,7 +215,7 @@ private fun TtsBody(
     }
 }
 
-/** A titled, elevated grouping — the unit that turns the old button wall into scannable sections. */
+/** A titled, elevated grouping - the unit that turns the old button wall into scannable sections. */
 @Composable
 private fun SectionCard(
     title: String,
@@ -287,7 +287,7 @@ private fun DrawerLink(
     )
 }
 
-/** Model + voice + tunable parameters — everything about *what* voice speaks. */
+/** Model + voice + tunable parameters - everything about *what* voice speaks. */
 @Composable
 private fun VoiceCard(
     state: TtsViewModel.UiState,
@@ -308,7 +308,7 @@ private fun VoiceCard(
             onSelect = viewModel::setVoice,
             onToggleFavorite = viewModel::toggleFavoriteVoice,
         )
-        // Star the currently selected model+voice as a cross-model favorite (issue #119) — a separate
+        // Star the currently selected model+voice as a cross-model favorite (issue #119) - a separate
         // concept from the picker's per-voice stars above (which only re-order the current model's list).
         FavoriteVoiceToggle(
             isFavorite = state.currentVoiceIsFavorite,
@@ -342,7 +342,7 @@ private fun TextCard(
     SectionCard("Text") {
         var fieldValue by remember { mutableStateOf(TextFieldValue(state.text)) }
         // Reflect external text changes (e.g. Import) into the field without stomping the caret while
-        // the user is typing — an edit sets state.text before this recomposes, so the guard is false then.
+        // the user is typing - an edit sets state.text before this recomposes, so the guard is false then.
         if (fieldValue.text != state.text) {
             fieldValue = fieldValue.copy(text = state.text, selection = TextRange(state.text.length))
         }
@@ -376,7 +376,7 @@ private fun TextCard(
                 onClick = { viewModel.playFromCursor(fieldValue.selection.start) },
                 enabled = state.selected != null && !state.playing && state.text.isNotBlank(),
             ) { Text("Read from cursor") }
-            // Save into the reading library (issue #19-5) — reachable from here or the library
+            // Save into the reading library (issue #19-5) - reachable from here or the library
             // screen itself, which lists everything saved from either place.
             OutlinedButton(
                 onClick = viewModel::saveToLibrary,
@@ -405,10 +405,10 @@ private fun FontSizeControls(
 
 /**
  * Karaoke-style "now playing" view (issue #19-3): the document's sentences ([TextChunker.intoSentences]
- * — the SAME split the one generation path chunks by, so this always agrees with what's actually
+ * - the SAME split the one generation path chunks by, so this always agrees with what's actually
  * playing), one per line, with the current sentence highlighted and auto-scrolled toward. Renders
  * nothing when there is nothing applicable to highlight: no active sentence, or no sentences at all
- * (blank text) — the guard clauses below cover both, so an empty document is simply absent, not broken.
+ * (blank text) - the guard clauses below cover both, so an empty document is simply absent, not broken.
  */
 @Composable
 private fun KaraokeText(
@@ -421,7 +421,7 @@ private fun KaraokeText(
     val index = currentSentenceIndex.coerceIn(0, sentences.lastIndex)
     val scrollState = rememberScrollState()
     // Best-effort scroll-into-view: proportional to how far through the sentence list we are, rather
-    // than an exact pixel position (sentences wrap to different heights) — good enough to keep the
+    // than an exact pixel position (sentences wrap to different heights) - good enough to keep the
     // highlighted line on screen during a long document without measuring every line's layout.
     LaunchedEffect(index) {
         val target = scrollState.maxValue.toFloat() * index / sentences.size
@@ -457,14 +457,14 @@ private fun KaraokeText(
 private val KARAOKE_MAX_HEIGHT = 160.dp
 
 // Issue #75: caps the "Text to speak" field so a large loaded/typed document can't push Play/Generate
-// off-screen — the field scrolls internally past this height instead of growing unbounded inside the
+// off-screen - the field scrolls internally past this height instead of growing unbounded inside the
 // page's own scrolling Column. min keeps short text from collapsing below the 3-line minLines floor.
 private val TEXT_FIELD_MIN_HEIGHT = 96.dp
 private val TEXT_FIELD_MAX_HEIGHT = 280.dp
 
 /**
  * Playback controls. Play is the single primary action (it generates on first tap, then replays
- * instantly); everything else — load-ahead, preview-only generate, sample, transport — is a
+ * instantly); everything else - load-ahead, preview-only generate, sample, transport - is a
  * secondary button so the common path reads at a glance. Live progress/stats/status sit right here.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -504,7 +504,7 @@ private fun PlaybackCard(
         }
 
         // Standard media transport (prev · play/pause · next · stop), only mid-playback. Play/Pause
-        // is the prominent central control and toggles in place — pause now halts immediately at the
+        // is the prominent central control and toggles in place - pause now halts immediately at the
         // hardware level (BufferedPlayback→AudioTrackSink), not only at the next sentence boundary.
         // Prev/next are the same per-sentence restart-from-index mechanism the lock-screen skip uses.
         if (state.playing) {
@@ -544,7 +544,7 @@ private fun PlaybackCard(
     }
 }
 
-/** Export + the non-destructive post-processing toggles + the sleep timer — the "on the way out" knobs. */
+/** Export + the non-destructive post-processing toggles + the sleep timer - the "on the way out" knobs. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OutputCard(
@@ -622,7 +622,7 @@ private fun TransformToggles(
     ToggleRow(PresenceBoost().displayName, state.presenceBoost, viewModel::setPresenceBoost)
     ToggleRow(DeEsser().displayName, state.deEss, viewModel::setDeEss)
     TempoBoostControl(state, viewModel)
-    // Long-document mode (issue #34): opt-in memory ceiling — older audio spills to disk during a
+    // Long-document mode (issue #34): opt-in memory ceiling - older audio spills to disk during a
     // book-length synthesis. Off by default; when off, generation is unchanged.
     ToggleRow("Long-document mode (spill audio to disk)", state.longDocumentMode, viewModel::setLongDocumentMode)
 }
@@ -664,7 +664,7 @@ private fun ToggleRow(
     ) {
         // weight(1f) lets a long label (e.g. "Long-document mode (spill audio to disk)") wrap onto
         // a second line within its own share of the row instead of pushing the fixed-size Switch
-        // past the row's bound — without it, a long label and the Switch fight over unbounded width
+        // past the row's bound - without it, a long label and the Switch fight over unbounded width
         // and the Switch ends up overlapped or shoved off-screen (issues #20/#21).
         Text(label, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChecked)
@@ -716,7 +716,7 @@ private fun ModelPicker(
 }
 
 /**
- * Voice picker; voices always come from [voices] (a descriptor's own list — SSOT). Favorited
+ * Voice picker; voices always come from [voices] (a descriptor's own list - SSOT). Favorited
  * voices ([favoriteVoiceIds], sourced from [com.phonetts.core.prefs.FavoriteVoices]) sort first
  * and show a filled star; the star toggle never changes the voice list itself, only its order.
  */
@@ -793,7 +793,7 @@ private fun FavoriteVoiceToggle(
 /**
  * Cross-model favorite voices (issue #119): a quick-pick of every voice the user starred, in ANY
  * model, so switching to a favorite never means hunting through each model's list. The options are
- * resolved against the catalog (SSOT) in the ViewModel — a ref whose model/voice no longer exists is
+ * resolved against the catalog (SSOT) in the ViewModel - a ref whose model/voice no longer exists is
  * already dropped there (fail closed), so this is simply absent when there is nothing to offer.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -844,7 +844,7 @@ private fun UpdateBanner(
 
 // Surfaces DetectionFailureExplainer's narration of why a sideloaded folder's model couldn't be
 // auto-detected (issue #19-2), with a Copy action (the LocalClipboardManager idiom BenchmarkScreen
-// uses) so the owner can paste it into a bug report — this is read-only narration, it changes
+// uses) so the owner can paste it into a bug report - this is read-only narration, it changes
 // nothing and offers no retry (the user still picks a folder again via the drawer's Sideload link).
 @Composable
 private fun SideloadFailureBanner(
@@ -864,7 +864,7 @@ private fun SideloadFailureBanner(
     }
 }
 
-// DYNAMIC: one control per parameter the model DECLARES (descriptor.parameters — the SSOT the engine
+// DYNAMIC: one control per parameter the model DECLARES (descriptor.parameters - the SSOT the engine
 // filled by inspecting the model). A model with no tunable parameters (e.g. CosyVoice3) renders no
 // controls at all; a model that later adds an emotion selector shows a chooser here with NO change to
 // this code. Nothing about "speed" is special-cased except its familiar preset shortcuts.
@@ -896,7 +896,7 @@ private fun ContinuousControl(
     // Speed keeps its familiar preset shortcuts; other continuous knobs just get the slider.
     if (param.id != ModelParameter.SPEED_ID) return
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Only presets the model's own range actually supports — clamping out-of-range presets to
+        // Only presets the model's own range actually supports - clamping out-of-range presets to
         // the boundary instead would show the same value twice (e.g. two "1.50x" buttons).
         SPEED_PRESETS.filter { it in range }.forEach { preset ->
             OutlinedButton(onClick = { onValue(preset) }) { Text("${"%.2fx".format(preset)}") }
@@ -926,10 +926,10 @@ private fun ChoiceControl(
 
 private val SPEED_PRESETS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
-// "~6 min at 1.25×" (or "~4 sec at 1.0×" under a minute) — the estimate itself (seconds) comes from
+// "~6 min at 1.25×" (or "~4 sec at 1.0×" under a minute) - the estimate itself (seconds) comes from
 // ListeningTimeEstimator (:core, SSOT for the reading rate); this only rounds for display and formats
 // the speed. Below a minute, rounding UP to "~1 min" overstated a short phrase's listening time by up
-// to ~20x (issue #17) — showing seconds there instead keeps the estimate honest at that scale.
+// to ~20x (issue #17) - showing seconds there instead keeps the estimate honest at that scale.
 private fun formatListeningEstimate(
     seconds: Double,
     speed: Float,
@@ -982,7 +982,7 @@ interface SleepTimerHandle {
     }
 }
 
-/** "Stop after N minutes" — routes to the same `stop()` a Stop tap uses (see [PlaybackService]). */
+/** "Stop after N minutes" - routes to the same `stop()` a Stop tap uses (see [PlaybackService]). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SleepTimerControls(sleepTimer: SleepTimerHandle) {

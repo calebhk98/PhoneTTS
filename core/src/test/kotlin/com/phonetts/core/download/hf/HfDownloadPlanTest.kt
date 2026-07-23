@@ -74,7 +74,7 @@ class HfDownloadPlanTest {
                 HfTreeEntry(type = "file", path = "training_args.bin", size = 2000),
                 HfTreeEntry(type = "file", path = "events.out.tfevents.123", size = 9000),
                 HfTreeEntry(type = "file", path = ".github/workflows/ci.yml", size = 800),
-                // required companion/payload files that share ambiguous extensions — must be kept
+                // required companion/payload files that share ambiguous extensions - must be kept
                 HfTreeEntry(type = "file", path = "config.json", size = 1200),
                 HfTreeEntry(type = "file", path = "tokens.txt", size = 1200),
                 HfTreeEntry(type = "file", path = "vocab.txt", size = 1200),

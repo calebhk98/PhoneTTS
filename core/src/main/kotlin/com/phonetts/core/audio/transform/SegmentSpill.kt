@@ -11,10 +11,10 @@ import java.io.FileOutputStream
 
 // Sequential scratch spill for FloatArray segments: append during pass one, read back in order
 // during pass two. Lets a full-buffer transform (LoudnessNormalize's global-peak pass) run in
-// bounded HEAP — the segments live on disk, never all in memory at once. Layout per segment is
+// bounded HEAP - the segments live on disk, never all in memory at once. Layout per segment is
 // [Int length][length × Float], little/JVM-default via DataOutput, so read-back is byte-lossless.
 //
-// Android-free by design (java.io only): the scratch [dir] is injected — null means the JVM default
+// Android-free by design (java.io only): the scratch [dir] is injected - null means the JVM default
 // temp dir, which on Android resolves to app-private cache, still off-heap and app-scoped.
 internal class SegmentSpill(dir: File? = null) : Closeable {
     private val file: File = File.createTempFile("phonetts_norm_", ".f32", dir)

@@ -3,19 +3,19 @@ package com.phonetts.core.download.hf
 /**
  * Turns a raw transport error into a friendly, actionable line when it's really just "no internet"
  * (issue: a 5-minute network drop surfaced `Unable to resolve host "huggingface.co": No address
- * associated with hostname` — accurate, but not what a user should have to read). Pattern-based
- * rather than exception-type based so it works no matter where the error was already stringified —
+ * associated with hostname` - accurate, but not what a user should have to read). Pattern-based
+ * rather than exception-type based so it works no matter where the error was already stringified -
  * the download path ([HfDownloader]) and the search path both funnel their messages through here.
  *
  * Fail-safe: if the message doesn't clearly indicate a connectivity problem, this returns `null` and
- * the caller keeps the original text — a genuine, specific error is never masked behind a generic
+ * the caller keeps the original text - a genuine, specific error is never masked behind a generic
  * "check your connection".
  */
 object OfflineErrorHint {
-    private const val FRIENDLY = "No internet connection — check your network and try again."
+    private const val FRIENDLY = "No internet connection - check your network and try again."
 
     // Substrings that only appear when the device couldn't reach the network at all (DNS failure,
-    // no route, connection refused/timed out at the socket level) — not a server-side or file-level
+    // no route, connection refused/timed out at the socket level) - not a server-side or file-level
     // error, which the user can't fix by reconnecting.
     private val OFFLINE_MARKERS =
         listOf(

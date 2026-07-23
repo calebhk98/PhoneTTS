@@ -11,7 +11,7 @@ import kotlin.math.abs
 // there is no zero-memory streaming form. The bounded-memory export path therefore runs it as a
 // TWO-PASS stage backed by a [SegmentSpill] scratch file: pass one scans the peak while spilling
 // raw floats to DISK (heap stays at one segment); pass two reads them back and applies the one gain
-// as it emits. Result is bit-identical to the batch [apply] — same peak, same single gain — but the
+// as it emits. Result is bit-identical to the batch [apply] - same peak, same single gain - but the
 // utterance never sits fully in RAM. The tradeoff vs. a running/adaptive "streaming gain" is a
 // scratch-file round-trip; we take that so relative dynamics and the exact target peak are kept.
 private const val DEFAULT_TARGET_PEAK = 0.95f

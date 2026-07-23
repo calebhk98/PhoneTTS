@@ -50,7 +50,7 @@ class ModelImporterTest {
     }
 
     // Issue #8: a bundle no engine claims and the user-pick fallback itself declines (the real
-    // shape of "downloaded, no matching engine") must not just vanish — it lands in the catalog's
+    // shape of "downloaded, no matching engine") must not just vanish - it lands in the catalog's
     // unresolved list so a "manage models" screen can show it honestly instead of pretending
     // nothing was ever downloaded.
     @Test
@@ -71,7 +71,7 @@ class ModelImporterTest {
     }
 
     // Bug #1: the manual "pick an engine" fallback must actually land the bundle in the catalog and
-    // clear its unresolved marker — this is the real, end-to-end fix, not just Resolver in isolation.
+    // clear its unresolved marker - this is the real, end-to-end fix, not just Resolver in isolation.
     @Test
     fun importWithChosenEngineResolvesViaForcedMatchAndClearsTheUnresolvedMarker() {
         val rejecting = FakeEngine(id = "eng-a", claims = { false })

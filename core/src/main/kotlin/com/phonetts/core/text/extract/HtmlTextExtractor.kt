@@ -4,7 +4,7 @@ package com.phonetts.core.text.extract
  * Reads HTML (.html/.htm/.xhtml, `text/html`) into readable text: drops `<script>`/`<style>`
  * content and comments, turns block elements (paragraphs, headings, list items, line breaks) into
  * line breaks so the structure is audible, strips the remaining tags, and decodes the common HTML
- * entities. Lightweight and dependency-free — enough to read a page's prose aloud, not a full DOM.
+ * entities. Lightweight and dependency-free - enough to read a page's prose aloud, not a full DOM.
  */
 class HtmlTextExtractor : TextExtractor {
     override val id: String = "html"

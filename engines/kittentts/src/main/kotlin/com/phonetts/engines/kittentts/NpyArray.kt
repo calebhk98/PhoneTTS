@@ -4,7 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Decodes a single NumPy `.npy` v1.0 array — the format each entry inside KittenTTS's
+ * Decodes a single NumPy `.npy` v1.0 array - the format each entry inside KittenTTS's
  * `voices.npz` uses (docs/research/onnx-io.md, VALIDATED): a `\x93NUMPY` magic, a 1-byte
  * major/minor version pair, a little-endian uint16 header length, a space-padded Python-literal
  * header dict (carrying `descr` `<f4`, `fortran_order`, `shape`), then the raw little-endian

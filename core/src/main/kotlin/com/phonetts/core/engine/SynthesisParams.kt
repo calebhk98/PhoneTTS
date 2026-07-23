@@ -3,7 +3,7 @@ package com.phonetts.core.engine
 import com.phonetts.core.model.ModelParameter
 
 /**
- * The chosen values for a synthesis call — a uniform, forward-compatible bag keyed by
+ * The chosen values for a synthesis call - a uniform, forward-compatible bag keyed by
  * [ModelParameter.id]. This is what flows through the one generation path
  * ([VoiceEngine.synthesize]) so that a parameter a model adds later (an emotion selector, a pitch
  * knob) reaches the engine with no signature change: the UI puts its value in here under the
@@ -29,7 +29,7 @@ class SynthesisParams(
     companion object {
         const val DEFAULT_SPEED = 1.0f
 
-        /** No overrides — every parameter takes its default. */
+        /** No overrides - every parameter takes its default. */
         val DEFAULT = SynthesisParams()
 
         /** The common case: just a speed value. */

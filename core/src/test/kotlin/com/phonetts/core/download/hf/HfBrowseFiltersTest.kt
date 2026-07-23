@@ -41,7 +41,7 @@ class HfBrowseFiltersTest {
     }
 
     // A ~30M-param model estimates near 8x real-time; a huge one estimates well under 1x. int8 tags
-    // halve the byte-per-param, so the same bytes imply more params (slower) — proves the estimate
+    // halve the byte-per-param, so the same bytes imply more params (slower) - proves the estimate
     // reads the precision hint, not just the size.
     private val speedResults =
         listOf(

@@ -26,7 +26,7 @@ import java.io.File
 
 /**
  * KittenTTS (KittenML/kitten-tts-nano-0.1) engine. VALIDATED (docs/research/onnx-io.md): the
- * real model is StyleTTS2, shape-identical to Kokoro — its ONNX graph takes `input_ids`,
+ * real model is StyleTTS2, shape-identical to Kokoro - its ONNX graph takes `input_ids`,
  * a 256-dim `style` voice embedding, and `speed`, **not** an integer `speaker_id`. There is no
  * per-voice weight file; the 8 built-in voices are 256-dim style embedding rows in `voices.npz`,
  * selected by name at synthesis time exactly like [com.phonetts.engines.kokoro.KokoroEngine].
@@ -233,7 +233,7 @@ internal class KittenEngine(
 
     /**
      * Voice mixing (issue #42): KittenTTS's StyleTTS2 graph feeds a continuous 256-dim `style`
-     * vector, so an in-between voice is just the [VoiceBlend] of two loaded embeddings — registered
+     * vector, so an in-between voice is just the [VoiceBlend] of two loaded embeddings - registered
      * as a new selectable voice that synthesis then feeds like any other. Fails closed if either
      * source id isn't loaded.
      */
@@ -321,11 +321,11 @@ internal class KittenEngine(
             voices = voices,
             defaultVoiceId = voices.first().id,
             // Introspected: KittenTTS's StyleTTS2 graph has a native "speed" input, so it advertises
-            // a speed knob (routed to that scalar — never resampled, CLAUDE.md rule 2).
+            // a speed knob (routed to that scalar - never resampled, CLAUDE.md rule 2).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             // Introspected: the StyleTTS2 graph takes a continuous 256-dim `style` vector, so two
             // voices can be linearly interpolated into an in-between one (issue #42). A descriptor
-            // fact the "mix voices" UI derives from — never a model-name special case (rule 5).
+            // fact the "mix voices" UI derives from - never a model-name special case (rule 5).
             supportsVoiceBlend = true,
             // The voices asset key varies by layout (voices.npz vs a voices/ dir), so it is passed
             // in by whichever fingerprint matched rather than hardcoded to one file here.
@@ -336,7 +336,7 @@ internal class KittenEngine(
                     voicesAsset?.let { (key, path) -> put(key, path) }
                 },
             // Approximate peak-RAM estimate (issue #38): KittenTTS is the tiny ~15M-param model, the
-            // lightest engine here. A-priori only — refined by observed peak RAM.
+            // lightest engine here. A-priori only - refined by observed peak RAM.
             resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
     }
@@ -350,7 +350,7 @@ internal class KittenEngine(
 
         const val SAMPLE_RATE = 24_000
 
-        // Approximate peak resident RAM (MiB) while loaded + generating — the lightest model here.
+        // Approximate peak resident RAM (MiB) while loaded + generating - the lightest model here.
         private const val PEAK_RAM_MIB = 80L
 
         // VALIDATED (docs/research/onnx-io.md): the ONNX graph takes a native "speed" scalar, same

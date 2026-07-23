@@ -7,7 +7,7 @@ package com.phonetts.core.text
  * no engine hardcodes a phonemizer and the seam stays fakeable in tests.
  *
  * How a phoneme string maps to the model's own phoneme→id vector is the ENGINE's business,
- * not this interface's — that mapping is exactly the kind of per-model knowledge that must
+ * not this interface's - that mapping is exactly the kind of per-model knowledge that must
  * not leak into shared code.
  */
 interface Phonemizer {

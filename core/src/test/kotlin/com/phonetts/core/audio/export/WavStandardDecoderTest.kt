@@ -19,8 +19,8 @@ import kotlin.test.assertTrue
 /**
  * Proves the exported WAV is valid to a STANDARD audio decoder, not merely round-trippable by our
  * own [com.phonetts.core.audio.WavWriter]/reader. It runs the real [WavEncoder] end to end and then
- * hands the bytes to `javax.sound.sampled.AudioSystem` — the JVM's own WAV parser, the same class a
- * standard Java audio player uses — which throws on a malformed RIFF/`fmt `/`data` structure. This
+ * hands the bytes to `javax.sound.sampled.AudioSystem` - the JVM's own WAV parser, the same class a
+ * standard Java audio player uses - which throws on a malformed RIFF/`fmt `/`data` structure. This
  * is the guarantee the size>0 / duration>1s checks never gave: that a general-purpose player would
  * actually accept the file (the "fd://… can not be played" class of bug, issue #65).
  *
@@ -30,7 +30,7 @@ import kotlin.test.assertTrue
 class WavStandardDecoderTest {
     private val sampleRate = 22_050
     private val chunkSamples = 11_025 // 0.5 s per chunk
-    private val chunkCount = 3 // 1.5 s total — comfortably over the 1 s floor
+    private val chunkCount = 3 // 1.5 s total - comfortably over the 1 s floor
 
     @Test
     fun exportedWavIsReadableByAStandardDecoder() {
@@ -58,7 +58,7 @@ class WavStandardDecoderTest {
             val expectedFrames = (chunkSamples * chunkCount).toLong()
             assertEquals(expectedFrames, stream.frameLength, "frame count doesn't match the audio written")
 
-            // Fully decode every frame — a truncated/mis-sized data chunk surfaces here.
+            // Fully decode every frame - a truncated/mis-sized data chunk surfaces here.
             val decoded = stream.readBytes().size.toLong()
             assertEquals(expectedFrames * format.frameSize, decoded, "decoded byte count doesn't match frames")
         }
@@ -71,7 +71,7 @@ class WavStandardDecoderTest {
      * errors at the end when the header's size fields disagree with the actual bytes (the original
      * "error with the saved file, after playing it", issue #65). So this asserts the two size fields
      * are byte-exact AND that feeding every frame reaches a single clean end-of-stream (-1) with no
-     * trailing partial frame — the structural guarantee that a player runs to the end without a tail
+     * trailing partial frame - the structural guarantee that a player runs to the end without a tail
      * error. (Actual speaker output is an on-device check; there is no audio line in CI.)
      */
     @Test
@@ -106,15 +106,15 @@ class WavStandardDecoderTest {
 
     /**
      * The two tests above exercise [WavEncoder] with no [com.phonetts.core.audio.transform.TransformChain]
-     * — but the real export path ([com.phonetts.app.ui.TtsViewModel.export]) always routes through
+     * - but the real export path ([com.phonetts.app.ui.TtsViewModel.export]) always routes through
      * [AudioEncoder.encode]'s transform pipeline, even when every transform happens to be disabled. A
      * header/byte mismatch could in principle hide in that pipeline (e.g. a stage's `finish()` losing
      * or duplicating trailing samples) without either test above ever exercising it. This runs the same
-     * clean-EOF/byte-exact assertions through a chain with BOTH kinds of stage enabled — an
+     * clean-EOF/byte-exact assertions through a chain with BOTH kinds of stage enabled - an
      * [com.phonetts.core.audio.transform.IncrementalTransform] streaming stage ([LoudnessNormalize])
      * and the one full-buffer fallback
      * stage ([SilenceTrim], which also intentionally shortens the clip by trimming the sine's near-zero
-     * leading/trailing samples) — so the header's data size is proven to still track whatever the
+     * leading/trailing samples) - so the header's data size is proven to still track whatever the
      * pipeline actually emits, not just the untransformed case.
      */
     @Test
@@ -157,7 +157,7 @@ class WavStandardDecoderTest {
         }
     }
 
-    // A quiet 440 Hz sine split across [chunkCount] segments — mimics multi-sentence synthesis
+    // A quiet 440 Hz sine split across [chunkCount] segments - mimics multi-sentence synthesis
     // arriving as separate flow emissions, which is what the streaming encoder must stitch together.
     private fun sineChunks(): List<FloatArray> =
         (0 until chunkCount).map { chunk ->

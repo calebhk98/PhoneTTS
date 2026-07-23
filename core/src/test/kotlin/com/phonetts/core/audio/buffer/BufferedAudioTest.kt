@@ -162,13 +162,13 @@ class BufferedAudioTest {
 
     // TtsViewModel.startPlaybackFrom launches generation and playback as two SIBLING coroutines on
     // REAL dispatchers (genJob appends on Main after each chunk lands, playJob's BufferedPlayback.play
-    // runs wholly on Dispatchers.IO) — not the deterministic, single-threaded virtual-time scheduling
+    // runs wholly on Dispatchers.IO) - not the deterministic, single-threaded virtual-time scheduling
     // every other test in this file uses (UnconfinedTestDispatcher / runTest). This test is the one
     // seam-level check that reproduces that shape with genuine multi-threading and real wall-clock
-    // gaps between chunks (standing in for real generation latency — e.g. model load + inference
+    // gaps between chunks (standing in for real generation latency - e.g. model load + inference
     // time before the first chunk, which is exactly the gap the app's "fresh Play plays nothing"
     // report pointed at), so a lost-wakeup or visibility bug in the count/complete StateFlow
-    // hand-off — one that a fully-deterministic test could never exercise — would show up here as a
+    // hand-off - one that a fully-deterministic test could never exercise - would show up here as a
     // shorter-than-expected `sink.recorded` or a `play()` that never returns (caught by the timeout).
     // Repeated many times because a genuine race would not necessarily fail on every run.
     @Test
@@ -180,14 +180,14 @@ class BufferedAudioTest {
                     val sink = RecordingSink()
                     val chunks = List(CHUNKS_PER_ITERATION) { i -> floatArrayOf(i.toFloat(), i.toFloat() + 0.5f) }
 
-                    // A lost-wakeup bug would hang play() forever waiting at the live edge — the
+                    // A lost-wakeup bug would hang play() forever waiting at the live edge - the
                     // enclosing withTimeout turns that into a clear test failure instead of a hang.
                     val playDeferred =
                         async(Dispatchers.IO) { BufferedPlayback().play(audio, RATE, sink) }
                     val genDeferred =
                         async(Dispatchers.Default) {
                             // A real (if tiny) wall-clock gap between chunks, unlike a test-dispatcher's
-                            // virtual time — this is what makes playback genuinely race generation
+                            // virtual time - this is what makes playback genuinely race generation
                             // instead of the two being lockstep-driven by runCurrent().
                             for (chunk in chunks) {
                                 delay(1)
@@ -213,7 +213,7 @@ class BufferedAudioTest {
     // The fix for "Pause doesn't stop until the current sentence finishes": pausing must halt the
     // sink (the hardware) IMMEDIATELY, not only stop the read loop advancing to the next chunk. This
     // asserts BufferedPlayback forwards pause()/resume() straight to the active sink the moment
-    // they're called — mid-chunk, before any boundary — which is what makes an in-flight sentence
+    // they're called - mid-chunk, before any boundary - which is what makes an in-flight sentence
     // stop at the AudioTrack level in the app.
     @Test
     fun pauseAndResumeSignalTheSinkImmediatelyNotOnlyTheReadIndex() =

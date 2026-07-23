@@ -3,8 +3,8 @@ package com.phonetts.core.download.hf
 /**
  * The download-size facts derivable purely from a repo's file list (issue #7). Hugging Face only
  * reports per-file byte sizes on the recursive tree endpoint ([HfCatalog.listFiles] /
- * [HfTreeEntry.size]) — the search and model-info endpoints don't carry sizes at all (verified
- * against the live API; see [HfCatalog]'s kdoc for the endpoint split) — so this is the only place
+ * [HfTreeEntry.size]) - the search and model-info endpoints don't carry sizes at all (verified
+ * against the live API; see [HfCatalog]'s kdoc for the endpoint split) - so this is the only place
  * a size can honestly come from. [unknownFileCount] > 0 means the tree omitted a size for some
  * file, so [knownBytes] is a lower bound, not the true total; callers must label it as such rather
  * than presenting it as exact (spec: never fabricate a number).

@@ -35,10 +35,10 @@ fun JsonValue.asLongListOrEmpty(): List<Long> =
     asArrayOrNull()?.mapNotNull { (it as? JsonValue.JsonNumber)?.value?.toLong() } ?: emptyList()
 
 /**
- * Parses [text] as a flat JSON array of strings, e.g. `["Bella","Jasper"]` — the shape every
+ * Parses [text] as a flat JSON array of strings, e.g. `["Bella","Jasper"]` - the shape every
  * engine's own "list of names" side file uses. Malformed input, a non-array document, or a
  * non-string element all fall out as an empty list rather than throwing (fail-closed, matching
- * [MiniJson.parse] itself) — this is the one shared reader for that shape, in place of each
+ * [MiniJson.parse] itself) - this is the one shared reader for that shape, in place of each
  * engine hand-rolling its own quoted-string regex.
  */
 fun parseStringArray(text: String): List<String> =

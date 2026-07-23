@@ -53,7 +53,7 @@ class AutoLoadIntegrationTest {
         val importer = ModelImporter(DirectoryBundleReader(), resolver, catalog)
 
         // A KittenTTS-shaped bundle: an .onnx plus its config marker and its voices.npz style-
-        // embedding table (present by name — inspect() fingerprints it; the rows are decoded at
+        // embedding table (present by name - inspect() fingerprints it; the rows are decoded at
         // load()). Contents are irrelevant to detection, so an empty placeholder file suffices.
         val folder =
             writeFolder(
@@ -84,12 +84,12 @@ class AutoLoadIntegrationTest {
             }
         val importer = ModelImporter(DirectoryBundleReader(), resolver, catalog)
 
-        // A bare .onnx with no companion files — not self-describing, so every inspect() refuses it.
+        // A bare .onnx with no companion files - not self-describing, so every inspect() refuses it.
         val folder = writeFolder("mystery-download", mapOf("mystery.onnx" to ""))
 
         val descriptor = importer.import(folder)
 
-        assertTrue(asked, "no engine should confidently claim a bare .onnx — fail closed to the user pick")
+        assertTrue(asked, "no engine should confidently claim a bare .onnx - fail closed to the user pick")
         assertEquals("piper", descriptor.engineId)
         assertEquals(Origin.SIDELOADED, descriptor.origin)
         assertEquals(1, catalog.list().size)

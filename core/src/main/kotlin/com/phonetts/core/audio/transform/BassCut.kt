@@ -1,7 +1,7 @@
 package com.phonetts.core.audio.transform
 
 // Rolls off low-frequency energy (rumble, boom) with a high-pass biquad. Aimed at car listening,
-// where a phone's speaker/BT stream plus road noise turns bass into mud — cutting it back makes
+// where a phone's speaker/BT stream plus road noise turns bass into mud - cutting it back makes
 // speech sit clearer over the drone. Operates on timbre only, per segment, non-destructively
 // (rule 2 untouched: nothing here changes playback speed). [cutoffHz] is the transform's own
 // tuning constant, the same way [SilenceTrim]'s threshold or [Crossfade]'s fade length are.

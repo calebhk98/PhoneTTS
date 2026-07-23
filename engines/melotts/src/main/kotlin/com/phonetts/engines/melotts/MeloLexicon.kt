@@ -2,9 +2,9 @@ package com.phonetts.engines.melotts
 
 /**
  * Parses MeloTTS's `lexicon.txt` companion file (MiaoMint/MeloTTS-ONNX `onnx_exports/en_v2`,
- * ~4.8 MB — proven end-to-end by `scripts/model-verify/run_melo2.py`): one
+ * ~4.8 MB - proven end-to-end by `scripts/model-verify/run_melo2.py`): one
  * `"<word> p1 p2 ... pN t1 t2 ... tN"` line per entry, e.g. `hello hh ah l ow 7 8 7 9`. This IS
- * the model's G2P dictionary — read from the bundled model rather than a hardcoded phoneme map
+ * the model's G2P dictionary - read from the bundled model rather than a hardcoded phoneme map
  * (SSOT, spec rule 1), which is what let this replace the old espeak-IPA-guessing frontend.
  *
  * The word is lowercased on lookup (matches the reference recipe's `text.lower()` + dict built

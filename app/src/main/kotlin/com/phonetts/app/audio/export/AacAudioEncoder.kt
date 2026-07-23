@@ -21,15 +21,15 @@ private const val CHANNEL_COUNT = 1
 /**
  * AAC-LC audio in an .m4a (MPEG-4) container, via [MediaCodecFileEncoder] (MediaCodec +
  * MediaMuxer). Extends the same [AudioEncoder] base WavEncoder does, so it gets the shared
- * bounded-memory flow-drain + transform-pipeline logic (`AudioEncoder.encode`) for free — this
+ * bounded-memory flow-drain + transform-pipeline logic (`AudioEncoder.encode`) for free - this
  * class only owns the AAC-specific byte encoding, per spec's "one generation path, many consumers"
  * rule.
  *
- * Why a temp file: `MediaMuxer` writes to a file path or FD, not an arbitrary [OutputStream] — so
+ * Why a temp file: `MediaMuxer` writes to a file path or FD, not an arbitrary [OutputStream] - so
  * the [SegmentWriter] returned by [openWriter] streams PCM to a scratch file (bounded heap: one
  * segment at a time), runs the codec into a temp container on close(), then copies that into [out].
  * Callers who already have a real destination `File` (e.g. a SAF export target opened as a file)
- * should call [encodeToFile] instead — it skips the temp-container/copy detour and encodes straight
+ * should call [encodeToFile] instead - it skips the temp-container/copy detour and encodes straight
  * to the target, still spilling PCM to disk rather than buffering the whole utterance.
  */
 class AacAudioEncoder(private val tempDir: File) : AudioEncoder() {
@@ -72,7 +72,7 @@ class AacAudioEncoder(private val tempDir: File) : AudioEncoder() {
         // NOTE (on-device verification needed): MediaCodec's AAC encoder is present on every
         // Android device (it's a mandatory codec), so unlike Opus this has no min-API gate. What
         // has NOT been verified on real hardware here (no device/emulator in this environment) is
-        // that every engine's native sample rate is accepted by the AAC encoder's config step —
+        // that every engine's native sample rate is accepted by the AAC encoder's config step -
         // it should be, AAC has no fixed sample-rate table like Opus does, but this needs a real
         // on-device run to confirm end to end (encoder config -> muxer -> playable .m4a).
         private val ENCODER =

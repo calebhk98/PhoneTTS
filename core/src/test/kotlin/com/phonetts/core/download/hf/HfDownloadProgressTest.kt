@@ -9,7 +9,7 @@ class HfDownloadProgressTest {
     fun tooLittleElapsedTimeYieldsNoThroughputReadingYet() {
         val progress = HfDownloadProgress(bytesDone = 10_000, bytesTotal = 100_000, startedAtMs = 0)
 
-        assertNull(progress.bytesPerSecond(nowMs = 200), "under a second elapsed — no rate yet, not a wild guess")
+        assertNull(progress.bytesPerSecond(nowMs = 200), "under a second elapsed - no rate yet, not a wild guess")
         assertNull(progress.etaSeconds(nowMs = 200))
     }
 

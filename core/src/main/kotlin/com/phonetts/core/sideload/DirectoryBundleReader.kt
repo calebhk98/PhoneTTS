@@ -29,7 +29,7 @@ class DirectoryBundleReader(
 
     // A file is a side file if it is non-empty, within the size cap, and not a known weight
     // format. The size cap is applied UNIFORMLY (including known text extensions) so an oversized
-    // config.json/tokens.txt — accidental or hostile — can't be read whole into memory and OOM.
+    // config.json/tokens.txt - accidental or hostile - can't be read whole into memory and OOM.
     private fun isSideFile(file: File): Boolean {
         if (file.extension.lowercase() in WEIGHT_EXTENSIONS) return false
         return file.length() in 1..maxSideFileBytes

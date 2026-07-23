@@ -22,26 +22,26 @@ import com.phonetts.engines.common.tensorOrError
 import java.io.File
 
 /**
- * F5-TTS — a flow-matching (CFM) diffusion-transformer voice-CLONING model, the hardest engine
+ * F5-TTS - a flow-matching (CFM) diffusion-transformer voice-CLONING model, the hardest engine
  * in this registry after CosyVoice2: three ONNX graphs (preprocess / DiT transformer / Vocos
- * decoder) wired through an ODE denoising loop, and — unlike every other engine here — no baked
+ * decoder) wired through an ODE denoising loop, and - unlike every other engine here - no baked
  * voice table at all. See `README-io.md` in this module for the full researched pipeline, every
  * tensor name/shape/dtype claim's source, and an explicit list of what is implemented vs. TODO.
  *
  * ASSUMPTION (not runnable against real ONNX graphs in this environment, spec §9's honesty rule):
  * every tensor key below is the LITERAL `input_names`/`output_names` string quoted from
- * `DakeQQ/F5-TTS-ONNX`'s `Export_ONNX/F5_TTS/Export_F5.py` (a stable, citable export contract —
+ * `DakeQQ/F5-TTS-ONNX`'s `Export_ONNX/F5_TTS/Export_F5.py` (a stable, citable export contract -
  * the same confidence level as [com.phonetts.engines.piper.PiperEngine]'s VITS signature, i.e.
  * "we know the names, not that this exact orchestration is byte-correct against the graph").
  * Dtype/shape details Export_F5.py doesn't pin down are called out individually below.
  *
  * Bundle fingerprint (spec §9.1, fail-closed): [inspect] claims a bundle only when it has all
- * three ONNX graphs AND `vocab.txt` — that four-file set (mirroring
+ * three ONNX graphs AND `vocab.txt` - that four-file set (mirroring
  * [com.phonetts.engines.cosyvoice2.CosyVoice2Engine]'s four-GGUF-stage fingerprint) is confirmed
  * by two independent HuggingFace re-uploads of the DakeQQ export to always ship together.
  *
  * Voices: F5 clones from a reference clip, so a "voice" here is a bundled `<name>.reference.wav`
- * + `<name>.reference.txt` pair (this engine's own convention, not an upstream standard — see
+ * + `<name>.reference.txt` pair (this engine's own convention, not an upstream standard - see
  * `README-io.md`). A bundle with none still loads (the graphs are independently usable) but
  * exposes only the placeholder [DEFAULT_VOICE], which has no backing clip and so fails loudly, not
  * silently, at synthesis time (spec rule 4).
@@ -49,7 +49,7 @@ import java.io.File
 internal class F5TtsEngine(
     context: EngineContext,
     // Injected so load() stays plain-JVM testable with no real files on disk (parity with
-    // MeloEngine's fileReader / PiperEngine's sidecarReader) — production reads real files.
+    // MeloEngine's fileReader / PiperEngine's sidecarReader) - production reads real files.
     private val textReader: (path: String) -> String = { File(it).readText() },
     private val audioReader: (path: String) -> F5WavDecoder.Decoded = { F5WavDecoder.decode(File(it).readBytes()) },
 ) : AbstractVoiceEngine(context) {
@@ -70,7 +70,7 @@ internal class F5TtsEngine(
         val weightFiles = listOf(PREPROCESS_FILE, TRANSFORMER_FILE, DECODE_FILE)
         require(weightFiles.all { bundle.hasFile(it) }) {
             "F5-TTS forcedMatch requires all three ONNX graphs (${weightFiles.joinToString()}) in" +
-                " bundle '${bundle.id}' — the pipeline is unusable with only some of them"
+                " bundle '${bundle.id}' - the pipeline is unusable with only some of them"
         }
         return EngineMatch(id, buildDescriptor(bundle, Origin.SIDELOADED))
     }
@@ -114,12 +114,12 @@ internal class F5TtsEngine(
         val reference =
             loaded.references[voiceId] ?: error(
                 "$engineLabel: voice '$voiceId' has no bundled reference clip" +
-                    " (<name>$REFERENCE_AUDIO_SUFFIX + <name>$REFERENCE_TEXT_SUFFIX) — F5-TTS needs a" +
+                    " (<name>$REFERENCE_AUDIO_SUFFIX + <name>$REFERENCE_TEXT_SUFFIX) - F5-TTS needs a" +
                     " reference clip to clone a voice, see README-io.md",
             )
 
         // DakeQQ's driver concatenates ref text and gen text with NO separator before tokenizing
-        // (`convert_char_to_pinyin([ref_text + gen_text])`) — mirrored verbatim, not a guess.
+        // (`convert_char_to_pinyin([ref_text + gen_text])`) - mirrored verbatim, not a guess.
         val combinedText = reference.text + sentence
         val tokenIds = F5Vocab.tokenIds(combinedText, loaded.vocab)
         val maxDuration =
@@ -147,8 +147,8 @@ internal class F5TtsEngine(
 
     /**
      * The ODE/CFG denoising loop (`README-io.md`): CFG is baked INTO `F5_Transformer.onnx` at
-     * export time — both the conditioned (`cat_mel_text`) and unconditioned (`cat_mel_text_drop`)
-     * passes happen inside ONE `run()`, combined with a `cfg_strength` frozen into the graph — so
+     * export time - both the conditioned (`cat_mel_text`) and unconditioned (`cat_mel_text_drop`)
+     * passes happen inside ONE `run()`, combined with a `cfg_strength` frozen into the graph - so
      * there is no separate CFG call here, only the NFE Euler-step loop. [TRANSFORMER_STEPS] is the
      * DakeQQ default (`NFE_STEP=32`, looped `NFE_STEP-1` times); see `README-io.md` for why this
      * can't be discovered from the loaded graph and is therefore NOT a [ModelParameter].
@@ -185,7 +185,7 @@ internal class F5TtsEngine(
                         TIME_STEP_TENSOR to timeStep,
                     ),
                 )
-            // Mirrors the reference driver exactly: `noise, time_step = ort_session_B.run(...)` —
+            // Mirrors the reference driver exactly: `noise, time_step = ort_session_B.run(...)` -
             // the transformer's own "denoised" output becomes next iteration's "noise" input.
             noise = transformerOut.tensorOrError(DENOISED_TENSOR, engineLabel)
             timeStep = transformerOut.tensorOrError(TIME_STEP_TENSOR, engineLabel)
@@ -207,7 +207,7 @@ internal class F5TtsEngine(
             val textPath = descriptor.assetPaths[referenceTextAssetKey(voice.id)] ?: return@mapNotNull null
             // ASSUMPTION: a bundled reference clip is already at F5's 24 kHz model sample rate.
             // This module has no resampler (and resampling a REFERENCE clip is a different concern
-            // from CLAUDE.md rule 2's ban on resampling OUTPUT to fake speed — but it is still an
+            // from CLAUDE.md rule 2's ban on resampling OUTPUT to fake speed - but it is still an
             // unverified assumption, so it's called out here, not silently relied on).
             val audio = audioReader(audioPath).samples
             val text = textReader(textPath)
@@ -239,9 +239,9 @@ internal class F5TtsEngine(
             defaultVoiceId = voices.first().id,
             // Introspected (README-io.md "Speed: routes to max_duration"): the Preprocess graph has
             // a native `max_duration` (mel-frame count) input that F5DurationPlanner routes speed
-            // through — never resampled output audio (CLAUDE.md rule 2). NFE/CFG are baked into
-            // F5_Transformer.onnx at export time, not a runtime input the loaded graph exposes, so —
-            // unlike speed — they are deliberately NOT declared here (see README-io.md).
+            // through - never resampled output audio (CLAUDE.md rule 2). NFE/CFG are baked into
+            // F5_Transformer.onnx at export time, not a runtime input the loaded graph exposes, so -
+            // unlike speed - they are deliberately NOT declared here (see README-io.md).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
             assetPaths = buildAssetPaths(bundle, discovered),
             // Approximate peak-RAM estimate (issue #38): F5_Transformer.onnx alone is roughly
@@ -311,7 +311,7 @@ internal class F5TtsEngine(
         private const val REFERENCE_TEXT_ASSET_SUFFIX = ".referenceText"
 
         // This engine's own bundle convention for a voice's reference clip (README-io.md "Voice =
-        // a bundled reference clip") — not an upstream standard.
+        // a bundled reference clip") - not an upstream standard.
         const val REFERENCE_AUDIO_SUFFIX = ".reference.wav"
         const val REFERENCE_TEXT_SUFFIX = ".reference.txt"
 
@@ -323,11 +323,11 @@ internal class F5TtsEngine(
         private const val DEFAULT_SPEED = 1.0f
 
         // DakeQQ default NFE_STEP=32, looped NFE_STEP-1 times (README-io.md "NFE step count...
-        // baked in") — an internal orchestration constant, NOT a ModelParameter (see class KDoc).
+        // baked in") - an internal orchestration constant, NOT a ModelParameter (see class KDoc).
         private const val TRANSFORMER_STEPS = 31
         private const val INITIAL_TIME_STEP = 0L
 
-        // Approximate peak resident RAM (MiB) while loaded — F5_Transformer.onnx dominates.
+        // Approximate peak resident RAM (MiB) while loaded - F5_Transformer.onnx dominates.
         private const val PEAK_RAM_MIB = 1400L
 
         // Literal ONNX tensor names, quoted from Export_F5.py's torch.onnx.export calls (see class

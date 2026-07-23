@@ -8,7 +8,7 @@ import java.nio.ByteOrder
 /**
  * Minimal WAV parser for the files `TextToSpeech.synthesizeToFile()` produces (Android always
  * writes that output as a RIFF/WAVE PCM file). Walks chunks by id rather than assuming a fixed
- * 44-byte header — some engines emit extra chunks (e.g. `LIST`/`INFO`) before `data` — so the real
+ * 44-byte header - some engines emit extra chunks (e.g. `LIST`/`INFO`) before `data` - so the real
  * sample rate and PCM payload are always read from what the engine actually wrote (CLAUDE.md rule
  * "determine the real sample rate... rather than assuming").
  *
@@ -38,7 +38,7 @@ object SystemTtsWavReader {
     private fun hasRiffWaveTag(raf: RandomAccessFile): Boolean {
         if (raf.length() < RIFF_HEADER_BYTES) return false
         val riff = fourCc(raf)
-        raf.skipBytes(SIZE_FIELD_BYTES) // overall RIFF size, unused — the real sizes live per-chunk
+        raf.skipBytes(SIZE_FIELD_BYTES) // overall RIFF size, unused - the real sizes live per-chunk
         val wave = fourCc(raf)
         return riff == "RIFF" && wave == "WAVE"
     }
@@ -68,7 +68,7 @@ object SystemTtsWavReader {
 
     /**
      * Reads [file] and decodes its PCM16 payload to floats in `[-1, 1]`. Returns an empty array
-     * (never throws) if the header can't be parsed or isn't 16-bit PCM — fail closed, the caller
+     * (never throws) if the header can't be parsed or isn't 16-bit PCM - fail closed, the caller
      * treats an empty chunk as "nothing to play" rather than crashing mid-utterance.
      */
     fun readFloats(file: File): FloatArray {

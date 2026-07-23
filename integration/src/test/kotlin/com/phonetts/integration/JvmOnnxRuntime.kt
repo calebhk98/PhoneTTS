@@ -16,7 +16,7 @@ import java.nio.LongBuffer
  * The JVM twin of the app's `com.phonetts.app.runtime.OnnxRuntime`: the exact same
  * [com.phonetts.core.runtime.Runtime] seam, backed by desktop `com.microsoft.onnxruntime:onnxruntime`
  * instead of `onnxruntime-android`. Kept byte-for-byte equivalent so the end-to-end auto-load test
- * runs the REAL engine code — only this platform adapter differs from what ships on-device.
+ * runs the REAL engine code - only this platform adapter differs from what ships on-device.
  */
 class JvmOnnxRuntime : Runtime {
     override val id: String = "onnx"

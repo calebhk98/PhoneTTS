@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // Shared, model-AGNOSTIC engine plumbing (base class + helpers + a tiny JSON reader) that the
 // engine modules link against. Depends only on :core's seams. It names no model and branches on
-// no engine id — deleting any engine module still requires zero change here.
+// no engine id - deleting any engine module still requires zero change here.
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.detekt)

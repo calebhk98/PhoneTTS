@@ -46,7 +46,7 @@ class Pcm16Test {
         assertEquals(0.toShort(), Pcm16.toShort(0f))
         assertEquals(Short.MAX_VALUE, Pcm16.toShort(1f))
         // Symmetric scaling by Short.MAX_VALUE (32767) means exactly -1f lands one short of
-        // Short.MIN_VALUE (-32768) — that's -32767, not a clamp, since -1f is in-range input.
+        // Short.MIN_VALUE (-32768) - that's -32767, not a clamp, since -1f is in-range input.
         assertEquals((-Short.MAX_VALUE).toShort(), Pcm16.toShort(-1f))
     }
 }

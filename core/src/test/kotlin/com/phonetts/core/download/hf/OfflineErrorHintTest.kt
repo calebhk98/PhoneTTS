@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class OfflineErrorHintTest {
-    private val friendly = "No internet connection — check your network and try again."
+    private val friendly = "No internet connection - check your network and try again."
 
     @Test
     fun recognizesDnsFailureAsAConnectivityProblem() {

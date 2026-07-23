@@ -6,7 +6,7 @@ import java.util.zip.ZipInputStream
 /**
  * Reads Microsoft Word .docx files. A .docx is a ZIP whose `word/document.xml` holds the body;
  * this pulls the text runs (`<w:t>`) out in document order, turning paragraph ends (`</w:p>`) into
- * line breaks. Pure JVM (java.util.zip), so no Office/parser dependency — enough for reading a
+ * line breaks. Pure JVM (java.util.zip), so no Office/parser dependency - enough for reading a
  * document aloud, not a full OOXML implementation. Legacy `.doc` (binary) is intentionally not
  * handled and falls through to the registry's fail-closed path.
  */

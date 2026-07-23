@@ -30,7 +30,7 @@ private const val NANOS_PER_SECOND = 1_000_000_000.0
 /**
  * Drives the Benchmarks screen: measure every downloaded model's real generation speed on the same
  * phrase and lay the numbers side by side. Reuses the metrics seam ([RtfEstimator]) that measures a
- * real `synthesize()` run — never a guessed RTF — and the one-engine-at-a-time [EngineManager], so a
+ * real `synthesize()` run - never a guessed RTF - and the one-engine-at-a-time [EngineManager], so a
  * benchmark run is just the sample loop timed. Model facts (voice, params, sample rate, and now the
  * peak-RAM estimate) all come from each [ModelDescriptor]; nothing here is hardcoded per model.
  *
@@ -43,7 +43,7 @@ private const val NANOS_PER_SECOND = 1_000_000_000.0
  *
  * Issue #14 extends each row with: time to first audio (TTFA), the model-load time paid before
  * synthesis even starts (timed around [com.phonetts.core.registry.EngineManager.switchTo]), and a
- * snapshot of this process's RAM footprint against the device's available RAM at run time — all
+ * snapshot of this process's RAM footprint against the device's available RAM at run time - all
  * carried in [BenchmarkMetrics] (:core, so the derived math is unit-tested, not re-derived here).
  */
 class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
@@ -62,7 +62,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         /**
          * TTFA / model-load time / RAM footprint for this run (issue #14), or null on a failed run
          * where nothing beyond the failure itself was measured. All the honesty logic (what counts as
-         * "unknown" rather than a guess) lives in [BenchmarkMetrics] — this only carries the result.
+         * "unknown" rather than a guess) lives in [BenchmarkMetrics] - this only carries the result.
          */
         val metrics: BenchmarkMetrics? = null,
     )
@@ -120,7 +120,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
 
     /**
      * Benchmark every downloaded model in turn, updating the table as each finishes. Loads one
-     * engine at a time (EngineManager.switchTo unloads the previous — one engine in memory), times a
+     * engine at a time (EngineManager.switchTo unloads the previous - one engine in memory), times a
      * real synthesis of [BENCH_PHRASE], and records the measured RTF. Best-effort: a model that fails
      * to load/generate becomes a failed row, not a fatal error.
      */
@@ -128,7 +128,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         if (mutableState.value.running) return
         val models = graph.modelManager.usage()
         if (models.isEmpty()) {
-            mutableState.update { it.copy(status = "No models to benchmark — download one first.") }
+            mutableState.update { it.copy(status = "No models to benchmark - download one first.") }
             return
         }
         // Issue #116: estimate each model's run time up front (prompt word count + its estimated RTF
@@ -174,7 +174,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         }
         ticker.cancel()
         val succeeded = rows.count { it.ok }
-        mutableState.update { it.copy(running = false, status = "Done — $succeeded/${models.size} succeeded") }
+        mutableState.update { it.copy(running = false, status = "Done - $succeeded/${models.size} succeeded") }
     }
 
     // Up-front estimate for one model: its estimated real-time multiple (from the existing
@@ -268,7 +268,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         graph.benchmarkHistory.record(BenchmarkRecord(descriptor.engineId, device, System.currentTimeMillis(), rtf))
         val history = graph.benchmarkHistory.history(descriptor.engineId, device)
         val regression = ThermalRegressionDetector.detect(history) ?: return null
-        return "~%.1fx slower than your last benchmark — likely thermal throttling".format(regression.slowdownRatio)
+        return "~%.1fx slower than your last benchmark - likely thermal throttling".format(regression.slowdownRatio)
     }
 
     /** The results as a Markdown table, for the "Copy results" button (paste into an issue/notes). */
@@ -283,7 +283,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     private fun markdownRow(row: Row): String {
         val ramUsed = ramText(row.metrics?.processMemoryBytes)
         val estRam = ramText(row.peakRamBytes)
-        if (!row.ok) return "| ${row.displayName} | failed | — | — | — | — | $ramUsed | $estRam |"
+        if (!row.ok) return "| ${row.displayName} | failed | - | - | - | - | $ramUsed | $estRam |"
         val speed = "${fmt(row.realTimeFactor)} | ${fmt(row.audioSeconds)} | ${fmt(row.wallSeconds)}"
         val ttfa = optionalFmt(row.metrics?.timeToFirstAudioSeconds)
         val load = optionalFmt(row.metrics?.modelLoadSeconds)
@@ -299,7 +299,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     companion object {
         // Multiple sentences on purpose (issue: TTFA == total Gen time): AbstractVoiceEngine emits
         // one Flow<FloatArray> chunk per TextChunker sentence (spec §8), and RtfEstimator measures
-        // TTFA at the FIRST emitted chunk vs total elapsed at the LAST — both correct (see
+        // TTFA at the FIRST emitted chunk vs total elapsed at the LAST - both correct (see
         // RtfEstimatorTest). But a single-sentence phrase can only ever produce one chunk, so TTFA
         // and total generation time are mathematically forced to be identical no matter how correct
         // the measurement code is. Three sentences exercise the actual streaming/chunking path so the
@@ -314,7 +314,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         /**
          * The rows to actually show, filtered by [query] (case-insensitive name match) and ordered by
          * [sort] (issue #115). Failed rows always sink to the bottom regardless of direction - they
-         * have no measured figures to rank meaningfully — so the sort only reorders successful rows.
+         * have no measured figures to rank meaningfully - so the sort only reorders successful rows.
          * Pure, so it can be called straight from the composable on the collected state.
          */
         fun visibleRows(
