@@ -22,7 +22,10 @@ import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -246,10 +249,24 @@ private fun AppNav(
                                     // SAME persisted history the Benchmarks screen writes to — never a
                                     // second measurement path.
                                     benchmarkHistory = graph.benchmarkHistory,
+                                    // The registered engine ids feed the Browse "Engine type" filter
+                                    // (issue #107); without them the dropdown only offers "Other".
+                                    knownEngineIds = graph.engineRegistry.list().map { it.id },
                                 )
                             }
                         },
                 )
+            // Auto-resume interrupted downloads when connectivity returns while Browse is open
+            // (issue #105). Scoped to this screen so the callback is registered only while it matters.
+            DisposableEffect(hfViewModel) {
+                val connectivity = graph.appContext.getSystemService(ConnectivityManager::class.java)
+                val callback =
+                    object : ConnectivityManager.NetworkCallback() {
+                        override fun onAvailable(network: Network) = hfViewModel.onConnectivityAvailable()
+                    }
+                connectivity?.registerDefaultNetworkCallback(callback)
+                onDispose { connectivity?.unregisterNetworkCallback(callback) }
+            }
             BackScaffold(title = "Browse models", current = Screen.BROWSE, onNavigate = { target ->
                 ttsViewModel.refreshModels() // pick up anything downloaded while browsing
                 screen = target
