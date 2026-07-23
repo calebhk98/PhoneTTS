@@ -6,6 +6,7 @@ import com.phonetts.app.device.DeviceInfo
 import com.phonetts.app.hf.HfDownloader
 import com.phonetts.app.hf.HttpUrlConnectionClient
 import com.phonetts.app.runtime.ExecuTorchRuntime
+import com.phonetts.app.runtime.LiteRtRuntime
 import com.phonetts.app.runtime.NativeCosyVoiceRuntime
 import com.phonetts.app.runtime.NativeGgmlTtsRuntime
 import com.phonetts.app.runtime.OnnxRuntime
@@ -92,6 +93,11 @@ class AppGraph(context: Context) {
             // model that needs them surfaces a clear error rather than silently disappearing.
             register(ExecuTorchRuntime())
             register(NativeGgmlTtsRuntime())
+            // LiteRT (.tflite) backend (issue #109). Every load/run failure it hits is written to the
+            // durable error log the user can copy - the lambda runs only when the runtime is used, by
+            // which point durableErrorLog (declared below) is initialised, and it supplies the clock
+            // at the app edge so :core never reads it.
+            register(LiteRtRuntime { durableErrorLog.record(System.currentTimeMillis(), "litert", it) })
         }
 
     // EspeakPhonemizer never throws (see its kdoc): it falls back to PassthroughPhonemizer

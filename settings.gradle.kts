@@ -34,6 +34,7 @@ include(":engines:f5tts")
 include(":engines:ggmltts")
 include(":engines:executorch")
 include(":engines:pytorch")
+include(":engines:litert")
 
 // Cross-module integration tests (pure JVM) - the one place all engines share a classpath.
 include(":integration")

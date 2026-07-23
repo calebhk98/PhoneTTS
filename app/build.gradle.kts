@@ -203,6 +203,7 @@ dependencies {
     runtimeOnly(project(":engines:ggmltts"))
     runtimeOnly(project(":engines:executorch"))
     runtimeOnly(project(":engines:pytorch"))
+    runtimeOnly(project(":engines:litert"))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json) // HfCatalog exposes a kotlinx.serialization Json default
@@ -226,4 +227,9 @@ dependencies {
     // ONNX Runtime for the Tier-A/B engines (a second, LLM-style runtime is added for CosyVoice2).
     implementation(libs.onnxruntime.android)
     implementation(libs.executorch.android) // ExecuTorch .pte runtime - ships in the main APK (BSD-3, ~7 MB, no NDK)
+    // LiteRT / TensorFlow-Lite (.tflite) runtime (issue #109) - ships in the main APK via its Maven
+    // AAR, JNI-backed so it only runs on-device (like the two runtimes above). We use the classic Java
+    // Interpreter API artifact: the newer com.google.ai.edge.litert Kotlin API is compiled with Kotlin
+    // metadata newer than this project's compiler (2.0.21) can read. Not in the version catalog yet.
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
 }

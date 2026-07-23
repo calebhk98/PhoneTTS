@@ -358,6 +358,10 @@ private fun AppNav(
                     repoUrl = "https://github.com/${AppGraph.REPO_OWNER}/${AppGraph.REPO_NAME}",
                     currentTheme = theme,
                     onThemeSelected = onThemeSelected,
+                    // The durable error log's rows, newest-first, one formatted line each so the user
+                    // has a copyable "why" a model (e.g. a LiteRT .tflite) failed to load or run.
+                    errorLogEntries =
+                        graph.durableErrorLog.entries().map { "[${it.source}] ${it.message}" },
                 )
             }
         }
