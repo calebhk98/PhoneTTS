@@ -2,6 +2,7 @@ package com.phonetts.app.benchmark
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,15 +12,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -57,8 +65,24 @@ fun BenchmarkScreen(viewModel: BenchmarkViewModel) {
 
         if (state.running) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        // Issue #116: "elapsed / estimated-total, remaining left" (e.g. "4:30 / 3:00, 2:45 left").
+        state.progress?.let { Text(it.label, style = MaterialTheme.typography.titleMedium) }
 
-        if (state.rows.isNotEmpty()) ResultsTable(state.rows)
+        if (state.rows.isNotEmpty()) {
+            ResultControls(
+                sort = state.sort,
+                query = state.query,
+                onSortKey = viewModel::setSortKey,
+                onToggleDirection = viewModel::toggleSortDirection,
+                onQuery = viewModel::setQuery,
+            )
+            val visible = BenchmarkViewModel.visibleRows(state.rows, state.sort, state.query)
+            if (visible.isEmpty()) {
+                Text("No results match \"${state.query}\".")
+            } else {
+                ResultsTable(visible)
+            }
+        }
 
         // Power-user, OFF by default (issue #39): a hidden toggle reveals the persisted speed-trend /
         // thermal-throttling note so casual users aren't confused by normal run-to-run variance.
@@ -66,6 +90,56 @@ fun BenchmarkScreen(viewModel: BenchmarkViewModel) {
             Text(if (state.showHistory) "Hide speed-trend (advanced)" else "Show speed-trend (advanced)")
         }
         if (state.showHistory) SpeedTrendSection(state.rows)
+    }
+}
+
+// Sort/filter controls for the results table (issue #115): a name filter plus a sort-key dropdown
+// and an ascending/descending toggle. Kept compact so it stays usable on a phone. All the ordering
+// logic itself is the pure [BenchmarkViewModel.visibleRows]; this only reports the user's choices.
+@Composable
+private fun ResultControls(
+    sort: BenchmarkViewModel.Sort,
+    query: String,
+    onSortKey: (BenchmarkViewModel.SortKey) -> Unit,
+    onToggleDirection: () -> Unit,
+    onQuery: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQuery,
+            label = { Text("Filter by name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            SortKeyMenu(sort.key, onSortKey)
+            TextButton(onClick = onToggleDirection) {
+                Text(if (sort.ascending) "Ascending" else "Descending")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SortKeyMenu(
+    selected: BenchmarkViewModel.SortKey,
+    onSelect: (BenchmarkViewModel.SortKey) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) { Text("Sort: ${selected.label}") }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            BenchmarkViewModel.SortKey.values().forEach { key ->
+                DropdownMenuItem(
+                    text = { Text(key.label) },
+                    onClick = {
+                        expanded = false
+                        onSelect(key)
+                    },
+                )
+            }
+        }
     }
 }
 

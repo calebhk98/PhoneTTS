@@ -3,18 +3,25 @@ package com.phonetts.app.benchmark
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
+import com.phonetts.core.download.hf.ModelSpeedEstimate
 import com.phonetts.core.engine.SynthesisParams
+import com.phonetts.core.metrics.BenchmarkEta
 import com.phonetts.core.metrics.BenchmarkMetrics
+import com.phonetts.core.metrics.BenchmarkProgress
 import com.phonetts.core.metrics.BenchmarkRecord
 import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.RtfResult
 import com.phonetts.core.metrics.ThermalRegressionDetector
+import com.phonetts.core.metrics.WordCounter
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.registry.ModelUsage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -60,12 +67,32 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         val metrics: BenchmarkMetrics? = null,
     )
 
+    /** How the results table is ordered (issue #115). Each key maps to a comparable Row field. */
+    enum class SortKey(val label: String) {
+        NAME("Name"),
+        RTF("Speed (RTF)"),
+        RAM("Est. RAM"),
+    }
+
+    /** The chosen sort key and direction (issue #115). */
+    data class Sort(val key: SortKey, val ascending: Boolean) {
+        companion object {
+            val DEFAULT = Sort(SortKey.NAME, ascending = true)
+        }
+    }
+
     data class UiState(
         val running: Boolean = false,
         val status: String? = null,
         val rows: List<Row> = emptyList(),
         /** OFF by default: the power-user history/regression view is hidden until the user opts in. */
         val showHistory: Boolean = false,
+        /** Live "elapsed / estimated-total, remaining left" for the current run (issue #116); null when idle. */
+        val progress: BenchmarkProgress? = null,
+        /** Sort key/direction for the results table (issue #115). */
+        val sort: Sort = Sort.DEFAULT,
+        /** Case-insensitive name filter for the results table (issue #115); blank shows everything. */
+        val query: String = "",
     )
 
     private val mutableState = MutableStateFlow(UiState())
@@ -76,6 +103,21 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(showHistory = !it.showHistory) }
     }
 
+    /** Choose which column the results table is sorted by (issue #115). */
+    fun setSortKey(key: SortKey) {
+        mutableState.update { it.copy(sort = it.sort.copy(key = key)) }
+    }
+
+    /** Flip the sort between ascending and descending (issue #115). */
+    fun toggleSortDirection() {
+        mutableState.update { it.copy(sort = it.sort.copy(ascending = !it.sort.ascending)) }
+    }
+
+    /** Update the name filter applied to the results table (issue #115). */
+    fun setQuery(query: String) {
+        mutableState.update { it.copy(query = query) }
+    }
+
     /**
      * Benchmark every downloaded model in turn, updating the table as each finishes. Loads one
      * engine at a time (EngineManager.switchTo unloads the previous — one engine in memory), times a
@@ -84,24 +126,78 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
      */
     fun run() {
         if (mutableState.value.running) return
-        val models = graph.catalog.list()
+        val models = graph.modelManager.usage()
         if (models.isEmpty()) {
             mutableState.update { it.copy(status = "No models to benchmark — download one first.") }
             return
         }
-        mutableState.update { it.copy(running = true, rows = emptyList(), status = "Benchmarking…") }
-        viewModelScope.launch {
-            val rows = mutableListOf<Row>()
-            models.forEachIndexed { index, descriptor ->
-                mutableState.update {
-                    it.copy(status = "Benchmarking ${index + 1}/${models.size}: ${descriptor.displayName}…")
-                }
-                rows += benchmarkOne(descriptor)
-                mutableState.update { it.copy(rows = rows.toList()) }
-            }
-            val succeeded = rows.count { it.ok }
-            mutableState.update { it.copy(running = false, status = "Done — $succeeded/${models.size} succeeded") }
+        // Issue #116: estimate each model's run time up front (prompt word count + its estimated RTF
+        // + a load allowance) so the screen can show elapsed / estimated-total / predicted-remaining
+        // from the very first tick. All the timing math is the pure, unit-tested [BenchmarkEta] seam.
+        val wordCount = WordCounter.count(BENCH_PHRASE)
+        val perModelSeconds = models.map { estimatedSeconds(wordCount, it) }
+        val startMillis = System.currentTimeMillis()
+        mutableState.update {
+            it.copy(
+                running = true,
+                rows = emptyList(),
+                status = "Benchmarking…",
+                progress = BenchmarkEta.progress(startMillis, startMillis, perModelSeconds, completedModels = 0),
+            )
         }
+        viewModelScope.launch { runBenchmarks(models, perModelSeconds, startMillis) }
+    }
+
+    private suspend fun runBenchmarks(
+        models: List<ModelUsage>,
+        perModelSeconds: List<Double>,
+        startMillis: Long,
+    ) {
+        // A 1s ticker advances the "elapsed / … left" readout between model completions so the time
+        // keeps moving even while one long model is mid-synthesis. Cancelled the moment the run ends.
+        val ticker =
+            viewModelScope.launch {
+                while (isActive) {
+                    publishProgress(perModelSeconds, startMillis)
+                    delay(PROGRESS_TICK_MILLIS)
+                }
+            }
+        val rows = mutableListOf<Row>()
+        models.forEachIndexed { index, model ->
+            val descriptor = model.descriptor
+            mutableState.update {
+                it.copy(status = "Benchmarking ${index + 1}/${models.size}: ${descriptor.displayName}…")
+            }
+            rows += benchmarkOne(descriptor)
+            mutableState.update { it.copy(rows = rows.toList()) }
+            publishProgress(perModelSeconds, startMillis)
+        }
+        ticker.cancel()
+        val succeeded = rows.count { it.ok }
+        mutableState.update { it.copy(running = false, status = "Done — $succeeded/${models.size} succeeded") }
+    }
+
+    // Up-front estimate for one model: its estimated real-time multiple (from the existing
+    // ModelSpeedEstimator, keyed off on-disk size + the model's own asset file names as precision
+    // hints, the same signal InstalledModelFacts uses - no per-model literal) fed into [BenchmarkEta].
+    private fun estimatedSeconds(
+        wordCount: Int,
+        model: ModelUsage,
+    ): Double {
+        val speed = ModelSpeedEstimate.from(model.sizeBytes, model.descriptor.assetPaths.keys.toList())
+        return BenchmarkEta.estimateModelSeconds(wordCount, speed.realtimeMultiple)
+    }
+
+    // Recompute the live progress from the current finished-model count and the wall clock, and push
+    // it into state. The clock is read here and handed to the pure helper (seam style); [BenchmarkEta]
+    // never reads it itself.
+    private fun publishProgress(
+        perModelSeconds: List<Double>,
+        startMillis: Long,
+    ) {
+        val completed = mutableState.value.rows.size
+        val progress = BenchmarkEta.progress(startMillis, System.currentTimeMillis(), perModelSeconds, completed)
+        mutableState.update { it.copy(progress = progress) }
     }
 
     private suspend fun benchmarkOne(descriptor: ModelDescriptor): Row {
@@ -213,5 +309,32 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
                 "Pack my box with five dozen liquor jugs. " +
                 "The five boxing wizards jump quickly."
         private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
+        private const val PROGRESS_TICK_MILLIS = 1_000L
+
+        /**
+         * The rows to actually show, filtered by [query] (case-insensitive name match) and ordered by
+         * [sort] (issue #115). Failed rows always sink to the bottom regardless of direction - they
+         * have no measured figures to rank meaningfully — so the sort only reorders successful rows.
+         * Pure, so it can be called straight from the composable on the collected state.
+         */
+        fun visibleRows(
+            rows: List<Row>,
+            sort: Sort,
+            query: String,
+        ): List<Row> {
+            val needle = query.trim()
+            val filtered = rows.filter { needle.isEmpty() || it.displayName.contains(needle, ignoreCase = true) }
+            val (ok, failed) = filtered.partition { it.ok }
+            val sorted = ok.sortedWith(rowComparator(sort.key))
+            val ordered = if (sort.ascending) sorted else sorted.reversed()
+            return ordered + failed
+        }
+
+        private fun rowComparator(key: SortKey): Comparator<Row> =
+            when (key) {
+                SortKey.NAME -> compareBy { it.displayName.lowercase() }
+                SortKey.RTF -> compareBy { it.realTimeFactor }
+                SortKey.RAM -> compareBy { it.peakRamBytes ?: Long.MAX_VALUE }
+            }
     }
 }

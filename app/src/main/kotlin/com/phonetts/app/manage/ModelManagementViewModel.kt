@@ -69,6 +69,23 @@ class ModelManagementViewModel(
     private val benchmarkHistory: BenchmarkHistory? = null,
     private val deviceName: String = "",
 ) : ViewModel() {
+    /** Which downloaded-model field the list is ordered by (issue #115). */
+    enum class SortKey(val label: String) {
+        NAME("Name"),
+        SIZE("Size"),
+        RAM("Est. RAM"),
+        SPEED("Speed"),
+        ENGINE("Engine"),
+        ORIGIN("Origin"),
+    }
+
+    /** The chosen sort key and direction (issue #115). */
+    data class Sort(val key: SortKey, val ascending: Boolean) {
+        companion object {
+            val DEFAULT = Sort(SortKey.NAME, ascending = true)
+        }
+    }
+
     data class UiState(
         val usage: List<ModelUsage> = emptyList(),
         val totalBytes: Long = 0L,
@@ -94,6 +111,10 @@ class ModelManagementViewModel(
         val storageDescription: String = "",
         /** Feedback from the last storage-location action (folder picked / rejected / reset). */
         val storageMessage: String? = null,
+        /** Sort key/direction for the downloaded-models list (issue #115). */
+        val sort: Sort = Sort.DEFAULT,
+        /** Case-insensitive name filter for the downloaded-models list (issue #115); blank shows all. */
+        val query: String = "",
     )
 
     private val mutableState = MutableStateFlow(UiState())
@@ -233,4 +254,53 @@ class ModelManagementViewModel(
 
     /** Dismiss the last storage-location feedback message. */
     fun dismissStorageMessage() = mutableState.update { it.copy(storageMessage = null) }
+
+    /** Choose which field the downloaded-models list is sorted by (issue #115). */
+    fun setSortKey(key: SortKey) {
+        mutableState.update { it.copy(sort = it.sort.copy(key = key)) }
+    }
+
+    /** Flip the sort between ascending and descending (issue #115). */
+    fun toggleSortDirection() {
+        mutableState.update { it.copy(sort = it.sort.copy(ascending = !it.sort.ascending)) }
+    }
+
+    /** Update the name filter applied to the downloaded-models list (issue #115). */
+    fun setQuery(query: String) {
+        mutableState.update { it.copy(query = query) }
+    }
+
+    companion object {
+        /**
+         * The downloaded models to actually show, filtered by [query] (case-insensitive name match)
+         * and ordered by [sort] (issue #115). RAM/Speed keys read the derived [facts]; a model with no
+         * such fact sorts last in ascending order rather than being dropped. Pure, so the composable
+         * can call it straight on the collected state.
+         */
+        fun visibleUsage(
+            usage: List<ModelUsage>,
+            facts: Map<String, ManageModelFacts>,
+            sort: Sort,
+            query: String,
+        ): List<ModelUsage> {
+            val needle = query.trim()
+            val filtered =
+                usage.filter { needle.isEmpty() || it.descriptor.displayName.contains(needle, ignoreCase = true) }
+            val sorted = filtered.sortedWith(usageComparator(sort.key, facts))
+            return if (sort.ascending) sorted else sorted.reversed()
+        }
+
+        private fun usageComparator(
+            key: SortKey,
+            facts: Map<String, ManageModelFacts>,
+        ): Comparator<ModelUsage> =
+            when (key) {
+                SortKey.NAME -> compareBy { it.descriptor.displayName.lowercase() }
+                SortKey.SIZE -> compareBy { it.sizeBytes }
+                SortKey.RAM -> compareBy { facts[it.descriptor.modelId]?.peakRamBytes ?: Long.MAX_VALUE }
+                SortKey.SPEED -> compareBy { facts[it.descriptor.modelId]?.realtimeMultiple ?: Double.MAX_VALUE }
+                SortKey.ENGINE -> compareBy { it.descriptor.engineId.lowercase() }
+                SortKey.ORIGIN -> compareBy { it.descriptor.origin.name }
+            }
+    }
 }

@@ -8,6 +8,7 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +23,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -115,8 +117,21 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
             Text("No models downloaded yet.")
         }
 
+        if (state.usage.isNotEmpty()) {
+            ManageControls(
+                sort = state.sort,
+                query = state.query,
+                onSortKey = viewModel::setSortKey,
+                onToggleDirection = viewModel::toggleSortDirection,
+                onQuery = viewModel::setQuery,
+            )
+        }
+
+        val visibleUsage =
+            ModelManagementViewModel.visibleUsage(state.usage, state.factsByModelId, state.sort, state.query)
+
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(state.usage, key = { it.descriptor.modelId }) { usage ->
+            items(visibleUsage, key = { it.descriptor.modelId }) { usage ->
                 ModelUsageRow(
                     usage = usage,
                     peakRamBytes = state.peakRamByModelId[usage.descriptor.modelId],
@@ -137,6 +152,56 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                     onAssignEngine = { engineId -> viewModel.assignEngine(unresolved.bundleId, engineId) },
                 )
                 HorizontalDivider()
+            }
+        }
+    }
+}
+
+// Sort/filter controls for the downloaded-models list (issue #115): a name filter, a sort-key
+// dropdown, and an ascending/descending toggle. Compact so it stays usable on a phone. The ordering
+// itself is the pure [ModelManagementViewModel.visibleUsage]; this only reports the user's choices.
+@Composable
+private fun ManageControls(
+    sort: ModelManagementViewModel.Sort,
+    query: String,
+    onSortKey: (ModelManagementViewModel.SortKey) -> Unit,
+    onToggleDirection: () -> Unit,
+    onQuery: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQuery,
+            label = { Text("Filter by name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            ManageSortKeyMenu(sort.key, onSortKey)
+            TextButton(onClick = onToggleDirection) {
+                Text(if (sort.ascending) "Ascending" else "Descending")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManageSortKeyMenu(
+    selected: ModelManagementViewModel.SortKey,
+    onSelect: (ModelManagementViewModel.SortKey) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) { Text("Sort: ${selected.label}") }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ModelManagementViewModel.SortKey.values().forEach { key ->
+                DropdownMenuItem(
+                    text = { Text(key.label) },
+                    onClick = {
+                        expanded = false
+                        onSelect(key)
+                    },
+                )
             }
         }
     }
