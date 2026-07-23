@@ -23,7 +23,7 @@ class ModelStorageMigratorTest {
         assertFalse(ModelStorageMigrator.sameLocation(a, b))
     }
 
-    // Rule 2: re-picking the SAME folder must be a no-op — migrate() must short-circuit before
+    // Rule 2: re-picking the SAME folder must be a no-op - migrate() must short-circuit before
     // touching anything, even if (hypothetically) called on an old/new pair that resolve equal.
     @Test
     fun migrateIsANoOpWhenOldAndNewResolveToTheSameLocation() {
@@ -112,7 +112,7 @@ class ModelStorageMigratorTest {
     }
 
     // Re-running migrate() after a folder already made it across (e.g. a previous partial-failure
-    // retry) must not fail or duplicate — it's treated as already done for that entry.
+    // retry) must not fail or duplicate - it's treated as already done for that entry.
     @Test
     fun migrateTreatsAnAlreadyPresentDestinationEntryAsDone() {
         val oldDir = File(tempDir(), "models").apply { mkdirs() }

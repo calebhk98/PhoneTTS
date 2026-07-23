@@ -11,7 +11,7 @@ import kotlin.test.assertNotNull
  * Proves the discovery seam: an [com.phonetts.core.engine.EngineProvider] registered via
  * ServiceLoader (see core/src/test/resources/META-INF/services/) is discovered and seeded into
  * the registry with no shared code naming it. This is the mechanism that lets a real engine
- * module drop in — or be deleted — with zero changes elsewhere.
+ * module drop in - or be deleted - with zero changes elsewhere.
  */
 class EngineLoaderTest {
     private fun context() = EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer())

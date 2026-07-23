@@ -7,7 +7,7 @@ import com.phonetts.engines.common.json.asObjectOrNull
 import com.phonetts.engines.common.json.asStringOrNull
 
 /**
- * Parses Kokoro's `config.json` companion file — one of the two signals [KokoroEngine.inspect]
+ * Parses Kokoro's `config.json` companion file - one of the two signals [KokoroEngine.inspect]
  * fingerprints a bundle by (the other being at least one `voices/<name>.bin` file present by
  * name; see [KokoroVoiceTable]). Reads it through
  * the shared, dependency-free `com.phonetts.engines.common.json.MiniJson` reader every engine
@@ -38,7 +38,7 @@ object KokoroConfig {
 
     fun parse(text: String): Parsed {
         val root = MiniJson.parse(text)?.asObjectOrNull()
-        // The real onnx-community Kokoro export's config.json carries no "family" field — just
+        // The real onnx-community Kokoro export's config.json carries no "family" field - just
         // {"model_type": "style_text_to_speech_2"}. Fall back to model_type so a curated/sideloaded
         // real repo is recognized (KokoroEngine accepts either marker), while our own curated
         // "family": "kokoro" bundles keep working.

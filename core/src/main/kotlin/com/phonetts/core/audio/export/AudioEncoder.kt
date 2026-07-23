@@ -6,8 +6,8 @@ import java.io.OutputStream
 
 // Base class for every file-export consumer. It is the file-side sibling of StreamingConsumer:
 // both drain the ONE `synthesize()` flow, so a new export format is a new *consumer*, never a new
-// synthesis path (spec §6.1). This parent owns the shared work — draining the flow INCREMENTALLY
-// through the (optional, non-destructive) transform pipeline — so each concrete format (WAV here;
+// synthesis path (spec §6.1). This parent owns the shared work - draining the flow INCREMENTALLY
+// through the (optional, non-destructive) transform pipeline - so each concrete format (WAV here;
 // AAC/Opus in :app) only implements the raw byte encoding, with zero duplicated drain/transform
 // code.
 //

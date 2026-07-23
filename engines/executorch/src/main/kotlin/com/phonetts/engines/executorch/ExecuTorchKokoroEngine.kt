@@ -36,18 +36,18 @@ import java.io.File
  * [DurationExpansion] bridges the two graphs' outputs/inputs in pure Kotlin.
  *
  * The `voices/<name>.bin` layout is VERIFIED identical to `:engines:kokoro`'s ONNX export ([510,
- * 256] raw little-endian float32, no header — [ExecuTorchKokoroVoiceBinReader]), so voice mixing
+ * 256] raw little-endian float32, no header - [ExecuTorchKokoroVoiceBinReader]), so voice mixing
  * (issue #42) works the same way: [VoiceBlend] of two loaded tables IS the in-between voice.
  *
- * FLAGGED, not silently assumed correct — three things this engine could not verify without the
+ * FLAGGED, not silently assumed correct - three things this engine could not verify without the
  * real AAR + a device (see `engines/executorch/INTEGRATION.md`):
  *  1. `text_mask`'s real dtype is BOOL; ExecuTorch's public Java `Tensor` API exposes no bool
  *     factory (see `com.phonetts.app.runtime.ExecuTorchRuntime`'s kdoc), so it is fed here as an
- *     all-true INT64 tensor — UNVALIDATED.
+ *     all-true INT64 tensor - UNVALIDATED.
  *  2. [MAX_DURATION] and the `forward_128` method name are copied from the `kokoro-export` demo
  *     script, not independently reverified against this specific `.pte` export.
  *  3. The reference pipeline's silence-trimming post-process (`find_voice_bound`) is NOT
- *     replicated — this engine returns the synthesizer's raw output (spec TDD note: test the
+ *     replicated - this engine returns the synthesizer's raw output (spec TDD note: test the
  *     plumbing, not the audio).
  */
 internal class ExecuTorchKokoroEngine(
@@ -179,7 +179,7 @@ internal class ExecuTorchKokoroEngine(
 
     override fun voices(): List<Voice> = loadedVoices
 
-    /** Voice mixing (issue #42): same rationale as `:engines:kokoro` — see class kdoc. */
+    /** Voice mixing (issue #42): same rationale as `:engines:kokoro` - see class kdoc. */
     override fun addBlendedVoice(spec: BlendedVoiceSpec): Voice? {
         val a = voiceTables[spec.voiceAId] ?: return null
         val b = voiceTables[spec.voiceBId] ?: return null

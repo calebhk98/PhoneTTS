@@ -11,18 +11,18 @@ import com.phonetts.app.R
 /**
  * Shows a system notification with live byte-progress while a Browse download is in flight, and
  * clears/completes it when the download finishes, fails, or is cancelled. A model download can take
- * several minutes (issue: download progress notification) — long enough that the user reasonably
+ * several minutes (issue: download progress notification) - long enough that the user reasonably
  * switches away from the app, and the in-screen progress bar ([HfBrowseScreen]'s `DownloadProgress`)
  * alone gives them no way to check on it without returning to this exact screen.
  *
  * Mirrors the existing notification pattern in
  * [com.phonetts.app.playback.PlaybackNotificationFactory]: a single low-importance channel created
  * once in [init], reused by every notification this class posts. Unlike playback (one notification
- * for the one active session), downloads can run several at once (issue #2) — so each repo id gets
+ * for the one active session), downloads can run several at once (issue #2) - so each repo id gets
  * its own notification id ([notificationId]) instead of one shared row that the last-started
  * download would clobber.
  *
- * Reuses the `POST_NOTIFICATIONS` permission already declared in AndroidManifest.xml for playback —
+ * Reuses the `POST_NOTIFICATIONS` permission already declared in AndroidManifest.xml for playback -
  * no new permission needed. Fails closed on Android 13+ when the user denied it (or on any API level
  * where notifications are otherwise disabled for the app): every method checks
  * [NotificationManagerCompat.areNotificationsEnabled] first, so a denied permission just means no
@@ -36,7 +36,7 @@ class DownloadNotifier(private val context: Context) {
     }
 
     /** Post/update the progress notification for [modelId]. [bytesTotal] null means the repo's
-     * total size isn't known yet (see [com.phonetts.core.download.hf.HfSizeEstimate]) — shown as an
+     * total size isn't known yet (see [com.phonetts.core.download.hf.HfSizeEstimate]) - shown as an
      * indeterminate bar, same fallback the in-screen progress bar uses, never a fabricated percent. */
     fun updateProgress(
         modelId: String,
@@ -89,7 +89,7 @@ class DownloadNotifier(private val context: Context) {
         manager.notify(notificationId(modelId), notification)
     }
 
-    /** Drops [modelId]'s notification outright — used when the user cancels from the in-app row, so
+    /** Drops [modelId]'s notification outright - used when the user cancels from the in-app row, so
      * no stale "downloading"/"failed" notification lingers for a download the user chose to abandon. */
     fun cancel(modelId: String) = manager.cancel(notificationId(modelId))
 
@@ -106,7 +106,7 @@ class DownloadNotifier(private val context: Context) {
         bytesTotal: Long?,
     ) {
         if (bytesTotal == null || bytesTotal <= 0L) {
-            builder.setProgress(0, 0, true) // indeterminate — total isn't known yet
+            builder.setProgress(0, 0, true) // indeterminate - total isn't known yet
             return
         }
         val percent = ((bytesDone.toDouble() / bytesTotal) * PERCENT_MAX).toInt().coerceIn(0, PERCENT_MAX)

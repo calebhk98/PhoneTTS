@@ -4,20 +4,20 @@ import java.io.File
 
 /**
  * Moves a downloaded-models tree from one base directory to another when the storage location
- * changes (issue #4/#5, data-loss bug). Deliberately `:core`-pure — only `java.io.File`, no
- * Android types — so the logic (and its failure handling) is provable on a plain JVM.
+ * changes (issue #4/#5, data-loss bug). Deliberately `:core`-pure - only `java.io.File`, no
+ * Android types - so the logic (and its failure handling) is provable on a plain JVM.
  *
  * The bug this fixes: switching (or even re-picking the SAME) storage folder used to clear the
  * catalog and re-scan only the NEW base dir, with nothing ever moving the model folders that were
  * physically sitting under the OLD one. They became permanently unreachable, while the catalog
  * still called them "known" (from a stale entry, or a re-import that could no longer find the
- * files) — installed-but-undeletable, undeletable-but-not-reinstallable. [migrate] is the missing
+ * files) - installed-but-undeletable, undeletable-but-not-reinstallable. [migrate] is the missing
  * step: it must run BEFORE the caller clears/re-hydrates the catalog against the new location.
  */
 object ModelStorageMigrator {
     /** What happened when [migrate] tried to move [oldModelsDir]'s contents to [newModelsDir]. */
     sealed interface Outcome {
-        /** [oldModelsDir] and [newModelsDir] already resolve to the same real location — nothing to do. */
+        /** [oldModelsDir] and [newModelsDir] already resolve to the same real location - nothing to do. */
         data object SameLocation : Outcome
 
         /** Nothing existed under [oldModelsDir] to move (e.g. first-ever pick, nothing downloaded yet). */
@@ -28,14 +28,14 @@ object ModelStorageMigrator {
 
         /**
          * At least one top-level entry failed to migrate. [failedNames] are left completely
-         * untouched under the OLD location (fail safe, per rule 1 — never delete a source that
+         * untouched under the OLD location (fail safe, per rule 1 - never delete a source that
          * wasn't confirmed copied) so nothing is lost; the caller surfaces this to the user.
          */
         data class PartialFailure(val movedCount: Int, val failedNames: List<String>) : Outcome
     }
 
     /**
-     * True if [a] and [b] refer to the same real directory — e.g. re-picking the identical folder,
+     * True if [a] and [b] refer to the same real directory - e.g. re-picking the identical folder,
      * possibly resolved to a slightly different (but equivalent) path string. Falls back to plain
      * absolute-path equality if canonicalization fails (e.g. a transient I/O error), which is still
      * strictly more accurate than never checking at all.
@@ -50,7 +50,7 @@ object ModelStorageMigrator {
      * [File.renameTo] (same volume); falls back to a recursive copy that is verified (size + file
      * count) before the source is deleted (cross-volume, e.g. moving onto/off an SD card).
      *
-     * A same-location pair (rule 2 — re-picking the identical folder must be a no-op) short-circuits
+     * A same-location pair (rule 2 - re-picking the identical folder must be a no-op) short-circuits
      * before touching anything. A per-entry failure never deletes that entry's source (rule 1).
      */
     fun migrate(
@@ -79,7 +79,7 @@ object ModelStorageMigrator {
     }
 
     // Already present at the destination (e.g. a retried migration after a previous partial
-    // failure moved everything else) counts as done for this entry — nothing lost, nothing
+    // failure moved everything else) counts as done for this entry - nothing lost, nothing
     // clobbered; the leftover source is harmless and left alone rather than risking a bad delete.
     private fun migrateOne(
         src: File,

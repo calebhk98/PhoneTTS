@@ -18,10 +18,10 @@ fun Map<String, Tensor>.floatsOrError(
 
 /**
  * Pull the SOLE output tensor out of an inference result, regardless of its name. Some ONNX
- * exports auto-number their output (e.g. MeloTTS's acoustic graph — see docs/research/onnx-io.md)
+ * exports auto-number their output (e.g. MeloTTS's acoustic graph - see docs/research/onnx-io.md)
  * so no fixed name can be hardcoded; a graph with exactly one output can still be read
  * positionally. [run] already hands back whatever key the runtime reported, so this needs no
- * change to [com.phonetts.core.runtime.InferenceSession] — just a different way to pull a value
+ * change to [com.phonetts.core.runtime.InferenceSession] - just a different way to pull a value
  * back out of the map it already returns.
  */
 fun Map<String, Tensor>.singleTensorOrError(engineLabel: String): Tensor {

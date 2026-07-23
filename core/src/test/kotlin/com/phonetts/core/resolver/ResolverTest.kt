@@ -135,7 +135,7 @@ class ResolverTest {
         assertEquals("engine-b", secondDescriptor.engineId)
     }
 
-    // "Handle forcedMatch throwing... with a clear message rather than a crash" — the message itself
+    // "Handle forcedMatch throwing... with a clear message rather than a crash" - the message itself
     // is whatever the engine reports; this proves it propagates unmangled rather than being swallowed.
     @Test
     fun `resolveWithChosenEngine propagates a forcedMatch rejection instead of swallowing it`() {

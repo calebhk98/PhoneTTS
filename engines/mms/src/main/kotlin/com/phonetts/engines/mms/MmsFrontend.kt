@@ -5,7 +5,7 @@ import com.phonetts.core.engine.TextFrontend
 
 /**
  * MMS's text frontend: **character/grapheme -> id**, via the model's OWN [vocab] (read from that
- * bundle's `vocab.json` at load — never a shared/global table, spec §5.2/CLAUDE.md rule 1). This
+ * bundle's `vocab.json` at load - never a shared/global table, spec §5.2/CLAUDE.md rule 1). This
  * is deliberately NOT espeak-based (unlike Piper/KittenTTS/Kokoro): MMS-VITS's tokenizer maps raw
  * text characters straight to ids with no phoneme step, so [com.phonetts.core.engine.EngineContext.phonemizer]
  * is unused here.
@@ -15,11 +15,11 @@ import com.phonetts.core.engine.TextFrontend
  * `Xenova/mms-tts-ara`'s `tokenizer.json`/`tokenizer_config.json` directly, 2026-07-22):
  *  1. Lowercase the text.
  *  2. Drop every character absent from [vocab] (the tokenizer's normalizer replaces them with the
- *     empty string outright — never mapped to an "unknown" id, so `unk_token` is never actually
+ *     empty string outright - never mapped to an "unknown" id, so `unk_token` is never actually
  *     produced by this path and is intentionally not modelled here).
  *  3. Trim leading/trailing whitespace from what remains.
  *  4. If [addBlank] (true for both bundles checked; read from `tokenizer_config.json`, never
- *     assumed): intersperse [padId] before every kept character AND once more at the end —
+ *     assumed): intersperse [padId] before every kept character AND once more at the end -
  *     `pad, c1, pad, c2, pad, ..., cN, pad` (length `2N+1`). This is the MMS/VITS equivalent of
  *     Piper's BOS/PAD/EOS framing, except a single id plays every role (`vocab.json`'s id `0` is
  *     always both a real grapheme AND the blank/pad token in every bundle checked).

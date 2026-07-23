@@ -14,7 +14,7 @@ object Pcm16 {
     /**
      * Quantize a single sample, clamping out-of-range values instead of wrapping. A NaN sample
      * (e.g. a runtime producing a stray non-finite value) is treated as silence rather than
-     * propagated — `Float.roundToInt()` throws `IllegalArgumentException` on NaN, so this must be
+     * propagated - `Float.roundToInt()` throws `IllegalArgumentException` on NaN, so this must be
      * checked before scaling/rounding, not left to `coerceIn` (which only guards the finite range).
      */
     fun toShort(sample: Float): Short {

@@ -1,14 +1,14 @@
 package com.phonetts.engines.f5tts
 
 /**
- * Parses F5-TTS's `vocab.txt` into a char->id map and converts text into vocab ids — SSOT
+ * Parses F5-TTS's `vocab.txt` into a char->id map and converts text into vocab ids - SSOT
  * (CLAUDE.md rule 1): every symbol id this engine uses comes from the bundle's own `vocab.txt`,
  * never a hardcoded table.
  *
  * Mirrors `SWivid/F5-TTS`'s `list_str_to_idx` (`src/f5_tts/model/utils.py`, quoted in
- * `README-io.md`): `torch.tensor([vocab_char_map.get(c, 0) for c in t])` — one entry per Unicode
+ * `README-io.md`): `torch.tensor([vocab_char_map.get(c, 0) for c in t])` - one entry per Unicode
  * character of the input, id = the character's 0-based line number in `vocab.txt`. A character
- * absent from the vocabulary falls back to id `0` — the SAME fallback upstream uses (not a
+ * absent from the vocabulary falls back to id `0` - the SAME fallback upstream uses (not a
  * guess): `get_tokenizer` asserts index 0 is the space character, and `vocab.txt`'s first line
  * IS a single space, so this degrades gracefully rather than crashing on an unrecognized symbol
  * (fail-closed in spirit, spec rule 4), though see `README-io.md` for why this is wrong for raw

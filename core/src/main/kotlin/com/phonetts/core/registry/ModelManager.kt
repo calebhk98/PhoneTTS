@@ -7,7 +7,7 @@ import com.phonetts.core.resolver.SelectableEngine
 
 /**
  * Optional capability an [OverrideStore] can support: dropping a previously saved bundle→engine
- * decision. Deliberately NOT folded into [OverrideStore] itself — that interface already has
+ * decision. Deliberately NOT folded into [OverrideStore] itself - that interface already has
  * production implementations ([com.phonetts.core.resolver.InMemoryOverrideStore] and the
  * SharedPreferences-backed one in `:app`), and widening it would ripple into every existing
  * caller for a capability only [ModelManager] needs. [ModelManager] downcasts to this and no-ops
@@ -38,7 +38,7 @@ data class UnresolvedModelUsage(
 /** What happened when [ModelManager.remove] was asked to remove a model. */
 data class ModelRemoval(
     val modelId: String,
-    /** False if [modelId] was not in the catalog to begin with — nothing else happened. */
+    /** False if [modelId] was not in the catalog to begin with - nothing else happened. */
     val removedFromCatalog: Boolean,
     /** Whatever the injected `deleteModelDir` reported (e.g. false if there was nothing on disk). */
     val filesDeleted: Boolean,
@@ -47,10 +47,10 @@ data class ModelRemoval(
 )
 
 /**
- * Deletes a model cleanly (spec §1.1.6, "removable models" — here applied to a user deleting a
+ * Deletes a model cleanly (spec §1.1.6, "removable models" - here applied to a user deleting a
  * *downloaded* model rather than a whole engine being pulled from the build). Deliberately
  * `:core`-pure: it never touches the filesystem itself. The app supplies [dirSizeBytes] and
- * [deleteModelDir] — real File I/O in `:app`, trivial fakes in tests — so this class is provable
+ * [deleteModelDir] - real File I/O in `:app`, trivial fakes in tests - so this class is provable
  * on a plain JVM with no Android SDK.
  *
  * A clean removal touches every place a model can be referenced:
@@ -70,7 +70,7 @@ data class ModelRemoval(
  * anything that captured a fixed base dir, and re-scanning the new location). It receives the
  * previous and new custom-base-path values (both possibly null for "app-private default") so the
  * app layer knows exactly which directory to migrate FROM without re-reading state that
- * [changeStorageLocation] has, by then, already overwritten — and may return a message (e.g. a
+ * [changeStorageLocation] has, by then, already overwritten - and may return a message (e.g. a
  * migration warning) to surface to the user; both are optional so existing callers that don't care
  * about relocatable storage are unaffected.
  *
@@ -79,7 +79,7 @@ data class ModelRemoval(
  * pick was described but never actually reachable from the UI). Re-reading a bundle from disk and
  * re-running it through a chosen engine's `forcedMatch` needs a
  * [com.phonetts.core.sideload.BundleReader] and a [com.phonetts.core.resolver.Resolver], neither of
- * which this class otherwise depends on — so, like [dirSizeBytes]/[deleteModelDir], that work is
+ * which this class otherwise depends on - so, like [dirSizeBytes]/[deleteModelDir], that work is
  * injected rather than pulled in directly. Both default to "not wired": [selectableEnginesProvider]
  * to an empty list, [assignEngineAction] to null (making [assignEngine] throw), so existing callers
  * that don't need manual assignment are unaffected.
@@ -99,40 +99,40 @@ class ModelManager(
     fun usage(): List<ModelUsage> = catalog.list().map { ModelUsage(it, dirSizeBytes(it.modelId)) }
 
     /**
-     * Sum of every model's on-disk size — [usage] (identified models) AND [unresolvedUsage]
-     * (downloaded-but-unclaimed bundles, issue #8) — what a "storage used" header reads. A bundle
+     * Sum of every model's on-disk size - [usage] (identified models) AND [unresolvedUsage]
+     * (downloaded-but-unclaimed bundles, issue #8) - what a "storage used" header reads. A bundle
      * with no engine still occupies real space on the phone; leaving it out of the total made a
      * "0 B used" screen possible even while an unresolved download sat on disk (bug #7/#6:
-     * the two are the same root cause — a bundle isn't "not downloaded" just because it isn't
+     * the two are the same root cause - a bundle isn't "not downloaded" just because it isn't
      * identified yet).
      */
     fun totalBytes(): Long = usage().sumOf { it.sizeBytes } + unresolvedUsage().sumOf { it.sizeBytes }
 
     /**
-     * Every bundle on disk no engine could identify (issue #8), paired with its on-disk size —
+     * Every bundle on disk no engine could identify (issue #8), paired with its on-disk size -
      * present so a "manage models" UI can list it honestly instead of it looking like nothing was
      * ever downloaded. These are never selectable (rule 4: `inspect()` fails closed, never guessed).
      */
     fun unresolvedUsage(): List<UnresolvedModelUsage> =
         catalog.listUnresolved().map { UnresolvedModelUsage(it.bundleId, dirSizeBytes(it.bundleId), it.reason) }
 
-    /** Delete an unresolved bundle's files and forget it — the user freeing space on a dead download. */
+    /** Delete an unresolved bundle's files and forget it - the user freeing space on a dead download. */
     fun removeUnresolved(bundleId: String): Boolean {
         val filesDeleted = deleteModelDir(bundleId)
         catalog.clearUnresolved(bundleId)
         return filesDeleted
     }
 
-    /** Engines the user can manually assign an unresolved bundle to — see [assignEngine]. */
+    /** Engines the user can manually assign an unresolved bundle to - see [assignEngine]. */
     fun selectableEngines(): List<SelectableEngine> = selectableEnginesProvider()
 
     /**
      * Manually assign [bundleId] (a downloaded-but-unidentified bundle, [UnresolvedModelUsage]) to
-     * [engineId] — the working end of the "pick an engine" fallback. Re-resolves the bundle through
+     * [engineId] - the working end of the "pick an engine" fallback. Re-resolves the bundle through
      * that engine's `forcedMatch` and persists the choice, so on success [bundleId] moves from
      * [unresolvedUsage] to a normal, usable [usage] entry. Throws [IllegalStateException] if no
      * [assignEngineAction] callback was wired at construction, or whatever the injected callback
-     * throws (e.g. the chosen engine's `forcedMatch` rejecting the bundle) — a "manage models"
+     * throws (e.g. the chosen engine's `forcedMatch` rejecting the bundle) - a "manage models"
      * caller is expected to catch and surface that message rather than let it crash the app.
      */
     fun assignEngine(
@@ -143,15 +143,15 @@ class ModelManager(
         return assign(bundleId, engineId)
     }
 
-    /** Where models are currently stored — the app-private default, or a user-picked folder. */
+    /** Where models are currently stored - the app-private default, or a user-picked folder. */
     fun currentStorageDescription(): String =
-        storageLocation?.customBasePath() ?: "App-private storage (default — removed on uninstall)"
+        storageLocation?.customBasePath() ?: "App-private storage (default - removed on uninstall)"
 
     /**
      * Switch the models base directory (issue #4/#5). [absolutePath] null reverts to the
      * app-private default. Reads the PREVIOUS path first (rule 4: old vs new must be captured
      * before either is lost), persists the new choice, then runs [onStorageLocationChanged] with
-     * both — so the app layer can migrate already-downloaded models from the old base dir to the
+     * both - so the app layer can migrate already-downloaded models from the old base dir to the
      * new one (never silently losing them, the data-loss bug this fixes), rebuild anything holding
      * a fixed reference to the old base dir, and re-scan the new location. Returns whatever message
      * the callback reports (e.g. a migration warning), or null if nothing needs surfacing / no
@@ -185,7 +185,7 @@ class ModelManager(
     private fun unloadIfCurrent(modelId: String): Boolean {
         val manager = engineManager ?: return false
         if (manager.currentDescriptor?.modelId != modelId) return false
-        // Use EngineManager's own unload so its currentEngine/currentDescriptor are cleared too —
+        // Use EngineManager's own unload so its currentEngine/currentDescriptor are cleared too -
         // calling currentEngine.unload() directly would leave the manager reporting stale state.
         manager.unloadCurrent()
         return true

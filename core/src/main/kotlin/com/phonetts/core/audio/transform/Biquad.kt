@@ -6,7 +6,7 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-// A single second-order (biquad) IIR filter section — the shared primitive behind the EQ-flavored
+// A single second-order (biquad) IIR filter section - the shared primitive behind the EQ-flavored
 // transforms (bass cut, presence boost, de-ess). Coefficients follow the standard RBJ audio-EQ
 // cookbook and are normalized by a0 up front, so [process] is just the direct-form-I difference
 // equation. State (the two previous input/output samples) is LOCAL to a [process] call and reset
@@ -71,7 +71,7 @@ class Biquad private constructor(
             )
         }
 
-        // High-shelf: lifts or (with negative [gainDb]) tames everything above the [freq] corner —
+        // High-shelf: lifts or (with negative [gainDb]) tames everything above the [freq] corner -
         // the de-esser uses a gentle negative shelf to soften sibilant highs.
         fun highShelf(
             sampleRate: Int,

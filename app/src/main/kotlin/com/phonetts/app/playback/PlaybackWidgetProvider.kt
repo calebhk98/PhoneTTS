@@ -15,9 +15,9 @@ private const val WIDGET_IDLE_TITLE = "Nothing loaded"
 
 /**
  * Home-screen widget (issue #25): the current/last document title plus a Play/Pause button. The
- * button reuses the *exact* control surface the notification uses — it fires
+ * button reuses the *exact* control surface the notification uses - it fires
  * [PLAYBACK_ACTION_PLAY_PAUSE] at [PlaybackService], which toggles the attached
- * [PlaybackController] — so there is no second control path. Title + play/paused icon come from
+ * [PlaybackController] - so there is no second control path. Title + play/paused icon come from
  * the [PlaybackStateStore] snapshot the service keeps current, since the widget lives in the
  * launcher's process and can't be pushed to directly; [refresh] repaints it whenever that snapshot
  * changes. Tapping the body opens the app, mirroring the notification's content intent.

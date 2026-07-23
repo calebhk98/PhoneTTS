@@ -46,15 +46,15 @@ import com.phonetts.core.model.ModelDescriptor
 import java.text.DateFormat
 import java.util.Date
 
-/** Which comparison flow the screen is showing. Purely a UI switch — both drive the same [CompareViewModel]. */
+/** Which comparison flow the screen is showing. Purely a UI switch - both drive the same [CompareViewModel]. */
 private enum class CompareMode { AB, TOURNAMENT }
 
 /**
  * Opt-in compare screen (issue #19-6, extended by issue #11): pick a model+voice for A and B,
  * synthesize the SAME text on each through [CompareViewModel]'s one generation path, and play them
- * back-to-back with clear labels — OR switch to tournament mode, where several model+voice picks
+ * back-to-back with clear labels - OR switch to tournament mode, where several model+voice picks
  * are judged two at a time, blind, in a single-elimination bracket, until a ranking is revealed.
- * NOT part of the normal reading flow — reached only from the drawer (the owner's call: "an option,
+ * NOT part of the normal reading flow - reached only from the drawer (the owner's call: "an option,
  * a new screen or toggle, not default").
  */
 @Composable
@@ -63,12 +63,12 @@ fun CompareScreen(viewModel: CompareViewModel) {
     var mode by remember { mutableStateOf(CompareMode.AB) }
     val context = LocalContext.current
 
-    // Re-read the catalog every time this screen is (re)entered — the ViewModel is Activity-scoped
+    // Re-read the catalog every time this screen is (re)entered - the ViewModel is Activity-scoped
     // and otherwise keeps the model list it snapshotted the FIRST time Compare was ever opened, so
     // anything downloaded/discovered since was missing from the pickers and the tournament roster.
     LaunchedEffect(Unit) { viewModel.refreshModels() }
 
-    // Save-to-file launchers (issue: "replay + save + relisten") — a SAF "Save As" picker per side,
+    // Save-to-file launchers (issue: "replay + save + relisten") - a SAF "Save As" picker per side,
     // same pattern TtsScreen's export launcher uses; the ViewModel/controller do the actual encode.
     val saveALauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
@@ -78,7 +78,7 @@ fun CompareScreen(viewModel: CompareViewModel) {
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
             uri?.let { context.contentResolver.openOutputStream(it)?.let(viewModel::saveB) }
         }
-    // One shared launcher for tournament entries — CreateDocument only returns a Uri, so the entry
+    // One shared launcher for tournament entries - CreateDocument only returns a Uri, so the entry
     // id it's saving is stashed here between "Save" and the picker's callback.
     var pendingSaveEntryId by remember { mutableStateOf<String?>(null) }
     val saveEntryLauncher =
@@ -100,7 +100,7 @@ fun CompareScreen(viewModel: CompareViewModel) {
     ) {
         Text(
             "Synthesizes the same text on two or more model/voice picks so you can compare them " +
-                "directly — either a straight A/B, or a blind tournament bracket that ranks several at once.",
+                "directly - either a straight A/B, or a blind tournament bracket that ranks several at once.",
             style = MaterialTheme.typography.bodySmall,
         )
 
@@ -212,7 +212,7 @@ private fun SlotCard(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                if (playing) "Voice $label — playing…" else "Voice $label",
+                if (playing) "Voice $label - playing…" else "Voice $label",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -246,17 +246,32 @@ private fun TournamentSection(
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(
             "Add several model+voice picks below, then judge them two at a time. You'll only see " +
-                "\"Voice 1\" / \"Voice 2\" while judging — identities are revealed once the bracket finishes.",
+                "\"Voice 1\" / \"Voice 2\" while judging - identities are revealed once the bracket finishes.",
             style = MaterialTheme.typography.bodySmall,
         )
 
         when {
             t.complete -> {
-                RankingTable(t.revealedRanking, onReplay = controller::replayEntry, onSave = onSaveEntry)
+                RankingTable(
+                    rows = t.revealedRanking,
+                    favoriteModelIds = t.favoriteModelIds,
+                    onReplay = controller::replayEntry,
+                    onSave = onSaveEntry,
+                    onToggleFavorite = controller::toggleFavoriteResultModel,
+                )
+                if (t.flaggedReview.isNotEmpty()) {
+                    FlaggedReviewSection(t.flaggedReview, onDelete = controller::deleteFlaggedModel)
+                }
                 Button(onClick = controller::stop) { Text("New tournament") }
             }
             t.running -> {
-                ActiveMatchCard(t, onPick = controller::pickWinner, onReplay = controller::replayEntry, onSave = onSaveEntry)
+                ActiveMatchCard(
+                    t = t,
+                    onPick = controller::pickWinner,
+                    onReplay = controller::replayEntry,
+                    onSave = onSaveEntry,
+                    onFlag = controller::flagSlot,
+                )
                 OutlinedButton(onClick = controller::stop) { Text("Cancel tournament") }
             }
             else -> {
@@ -275,7 +290,7 @@ private fun TournamentSection(
         }
 
         // A failing voice auto-fails (its opponent advances without a pick) rather than blocking the
-        // whole tournament — every such failure lands here, copyable, so it can be reported/debugged.
+        // whole tournament - every such failure lands here, copyable, so it can be reported/debugged.
         if (t.errors.isNotEmpty()) {
             TextButton(onClick = { showErrorLog = true }) { Text("Errors (${t.errors.size})") }
         }
@@ -326,7 +341,7 @@ private fun formatTournamentErrorLine(
     formatter: DateFormat,
 ): String {
     val time = formatter.format(Date(error.atMs))
-    return "[$time] ${error.label} — ${error.message}"
+    return "[$time] ${error.label} - ${error.message}"
 }
 
 @Composable
@@ -384,13 +399,24 @@ private fun ActiveMatchCard(
     onPick: (Int) -> Unit,
     onReplay: (String) -> Unit,
     onSave: (String) -> Unit,
+    onFlag: (Int) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Round ${t.roundNumber ?: 1} — blind pick", style = MaterialTheme.typography.titleMedium)
-            BlindSlotsRow(t, onPick, onReplay, onSave)
+            Text(roundHeadline(t), style = MaterialTheme.typography.titleMedium)
+            BlindSlotsRow(t, onPick, onReplay, onSave, onFlag)
         }
     }
+}
+
+// "Round R - comparison (X/N)" when the within-round counter is known (issue #113b), else a plain
+// "Round R - blind pick". The counter is anonymous, so showing it never breaks the blind comparison.
+private fun roundHeadline(t: CompareViewModel.TournamentUiState): String {
+    val round = t.roundNumber ?: 1
+    val current = t.comparisonInRound
+    val total = t.comparisonsInRound
+    if (current == null || total == null) return "Round $round - blind pick"
+    return "Round $round - comparison ($current/$total)"
 }
 
 @Composable
@@ -399,6 +425,7 @@ private fun BlindSlotsRow(
     onPick: (Int) -> Unit,
     onReplay: (String) -> Unit,
     onSave: (String) -> Unit,
+    onFlag: (Int) -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         BlindSlot(
@@ -406,44 +433,51 @@ private fun BlindSlotsRow(
             entryId = t.slot1Id,
             ready = t.slot1Ready,
             playing = t.playingSlot == 1,
+            flagged = t.slot1Flagged,
             canPick = t.canPick,
             onPick = onPick,
             onReplay = onReplay,
             onSave = onSave,
+            onFlag = onFlag,
         )
         BlindSlot(
             slot = 2,
             entryId = t.slot2Id,
             ready = t.slot2Ready,
             playing = t.playingSlot == 2,
+            flagged = t.slot2Flagged,
             canPick = t.canPick,
             onPick = onPick,
             onReplay = onReplay,
             onSave = onSave,
+            onFlag = onFlag,
         )
     }
 }
 
-// One blind slot's card: while judging, [entryId] is an OPAQUE contender id (never a label) — just
-// enough for "Replay"/"Save" to act on the already-generated audio without regenerating, without
-// revealing which model/voice it is (issue: "replay + save + relisten").
+// One blind slot's card: while judging, [entryId] is an OPAQUE contender id (never a label) - just
+// enough for "Replay"/"Save"/"Flag" to act on the already-generated audio / underlying model without
+// regenerating, without revealing which model/voice it is (issues: "replay + save + relisten",
+// #113d downvote). The flag toggle acts on the hidden model behind the slot, staying blind.
 @Composable
 private fun BlindSlot(
     slot: Int,
     entryId: String?,
     ready: Boolean,
     playing: Boolean,
+    flagged: Boolean,
     canPick: Boolean,
     onPick: (Int) -> Unit,
     onReplay: (String) -> Unit,
     onSave: (String) -> Unit,
+    onFlag: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val label =
             when {
-                playing -> "Voice $slot — playing…"
-                ready -> "Voice $slot — ready"
-                else -> "Voice $slot — generating…"
+                playing -> "Voice $slot - playing…"
+                ready -> "Voice $slot - ready"
+                else -> "Voice $slot - generating…"
             }
         Text(label, style = MaterialTheme.typography.bodyMedium)
         Button(onClick = { onPick(slot) }, enabled = canPick) { Text("Choose $slot") }
@@ -451,38 +485,112 @@ private fun BlindSlot(
             OutlinedButton(onClick = { entryId?.let(onReplay) }, enabled = ready && !playing) { Text("Replay $slot") }
             OutlinedButton(onClick = { entryId?.let(onSave) }, enabled = ready) { Text("Save $slot") }
         }
+        OutlinedButton(onClick = { onFlag(slot) }, enabled = ready) {
+            Text(if (flagged) "Flagged - undo" else "Flag as bad")
+        }
     }
 }
 
 @Composable
 private fun RankingTable(
     rows: List<CompareViewModel.RevealedRankRow>,
+    favoriteModelIds: Set<String>,
     onReplay: (String) -> Unit,
     onSave: (String) -> Unit,
+    onToggleFavorite: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Final ranking — identities revealed", style = MaterialTheme.typography.titleMedium)
+        Text("Final ranking - identities revealed", style = MaterialTheme.typography.titleMedium)
         rows.sortedBy { it.place }.forEach { row ->
-            // A row with no RTF never got a real synthesis result (a same-pairing double-failure —
+            // A row with no RTF never got a real synthesis result (a same-pairing double-failure -
             // see TournamentController.advance()'s kdoc), so there is no cached audio to replay/save.
             val hasAudio = row.realTimeFactor != null
+            val isFavorite = row.modelId in favoriteModelIds
             Column {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("#${row.place} — ${row.label}", modifier = Modifier.weight(1f))
-                    Text(row.realTimeFactor?.let { "RTF %.2f×".format(it) } ?: "RTF —")
+                    Text("#${row.place} - ${row.label}", modifier = Modifier.weight(1f))
+                    Text(row.realTimeFactor?.let { "RTF %.2fx".format(it) } ?: "RTF -")
                 }
                 Text("Judged wins: ${row.winsRecorded}", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onReplay(row.entryId) }, enabled = hasAudio) { Text("Replay") }
                     OutlinedButton(onClick = { onSave(row.entryId) }, enabled = hasAudio) { Text("Save") }
+                    OutlinedButton(onClick = { onToggleFavorite(row.modelId) }) {
+                        Text(if (isFavorite) "Favorited" else "Favorite")
+                    }
                 }
             }
             HorizontalDivider()
         }
     }
+}
+
+/** Models the user downvoted during the run, surfaced once identities are revealed (issue #113d):
+ * each can be deleted (through the app's normal model-delete path) or the whole list copied to a
+ * shareable log to investigate later (e.g. an "English" slot that was actually a Russian model). */
+@Composable
+private fun FlaggedReviewSection(
+    rows: List<CompareViewModel.FlaggedReviewRow>,
+    onDelete: (String) -> Unit,
+) {
+    var showLog by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Flagged models (${rows.size})", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Downvoted during this tournament. Delete one to reclaim its space, or copy the list to " +
+                "share/investigate.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        rows.forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(row.label, modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = { onDelete(row.modelId) }) { Text("Delete") }
+            }
+        }
+        TextButton(onClick = { showLog = true }) { Text("Copy flagged log") }
+    }
+
+    if (showLog) {
+        FlaggedLogDialog(rows = rows, onDismiss = { showLog = false })
+    }
+}
+
+/** Selectable text of every flagged model plus a "Copy all" button, mirroring [TournamentErrorLogDialog]
+ * so the export affordance is the same familiar pattern (issue #113d "copy/export them to a log"). */
+@Composable
+private fun FlaggedLogDialog(
+    rows: List<CompareViewModel.FlaggedReviewRow>,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val fullText = remember(rows) { rows.joinToString("\n") { "${it.label} (${it.modelId})" } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+        },
+        title = { Text("Flagged models") },
+        text = {
+            SelectionContainer {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    rows.forEach { row ->
+                        Text("${row.label} (${row.modelId})", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

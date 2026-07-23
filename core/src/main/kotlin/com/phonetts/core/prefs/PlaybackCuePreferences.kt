@@ -4,7 +4,7 @@ package com.phonetts.core.prefs
  * The user's opt-in for playback cues, over an injected [PreferenceStore] (mirrors
  * [FavoriteVoices] / [DocumentMemory]: `:core` holds the pure logic, `:app` supplies the
  * SharedPreferences-backed store). Today the only cue is the end-of-document chime/haptic
- * (issue #32) — a short tone/vibration fired by the `:app` side's `PlaybackService` when a
+ * (issue #32) - a short tone/vibration fired by the `:app` side's `PlaybackService` when a
  * playback flow completes *naturally* (as opposed to a user Stop).
  *
  * Kept a tiny value seam so the toggle is unit-testable on a plain JVM and so the actual

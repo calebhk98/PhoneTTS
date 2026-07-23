@@ -11,7 +11,7 @@ import com.phonetts.core.audio.transform.AudioTransform
  * time-stretch can never leak onto the native "Speed" control or the export path.
  *
  * The transform is applied per chunk (each generated chunk is a sentence-sized segment), so audio
- * still streams — the first stretched chunk plays before the whole utterance is generated. Because
+ * still streams - the first stretched chunk plays before the whole utterance is generated. Because
  * the transform may change a chunk's length, [onChunk] forwards every segment the transform returns.
  */
 class TransformingSink(

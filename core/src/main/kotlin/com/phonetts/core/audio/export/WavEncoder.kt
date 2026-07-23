@@ -12,7 +12,7 @@ import java.nio.ByteOrder
 // is modelled on this one (that's why the shared drain/transform logic lives in the parent).
 //
 // The WAV header needs the total byte count up front, but a cold synthesis flow doesn't know it
-// until it drains — and buffering the whole thing in RAM is exactly the OOM this fixes (issue #33).
+// until it drains - and buffering the whole thing in RAM is exactly the OOM this fixes (issue #33).
 // So [WavStreamWriter] streams the PCM to a scratch file as segments arrive (bounded heap: one
 // segment at a time), then on close() writes the now-known header to [out] and copies the scratch
 // PCM after it. Output bytes are identical to the old buffer-everything encoder.

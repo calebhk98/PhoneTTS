@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 /**
  * Proves the discovery seam (spec §5.4) for this deliberately-inert engine: its `EngineProvider` is
  * still found via `ServiceLoader` and still seeds a working (if permanently unmatched-anything)
- * [PyTorchEngine] into the registry — a provider is safe to keep exactly because its engine always
+ * [PyTorchEngine] into the registry - a provider is safe to keep exactly because its engine always
  * fails closed (see [PyTorchEngine]'s kdoc).
  */
 class PyTorchEngineProviderTest {

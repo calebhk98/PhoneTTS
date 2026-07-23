@@ -9,7 +9,7 @@ import com.phonetts.core.model.ModelDescriptor
  * `:core` owns the logic over an injected [PreferenceStore]; `:app` supplies the
  * SharedPreferences-backed store and feeds it a measured peak after each load.
  *
- * Keeps the MAX observed peak per model — a ceiling is the safe thing to warn against. Fails closed:
+ * Keeps the MAX observed peak per model - a ceiling is the safe thing to warn against. Fails closed:
  * an unrecorded or corrupt value reads back as null and the caller falls back to the descriptor's
  * declared estimate.
  */

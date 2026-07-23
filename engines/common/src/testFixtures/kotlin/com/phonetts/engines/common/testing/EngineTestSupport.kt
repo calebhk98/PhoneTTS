@@ -18,10 +18,10 @@ import kotlin.test.assertNull
 
 // Shared test scaffolding for every engine module's test suite (spec §9 seam tests). The first
 // dedup pass extracted shared MAIN plumbing into :engines:common; this testFixtures source set is
-// its TEST-side counterpart — every one of the five engine test suites independently reimplemented
+// its TEST-side counterpart - every one of the five engine test suites independently reimplemented
 // "build an EngineContext wired to a fake ONNX runtime/session", the inspect() fail-closed assertion
 // (spec §9.1), and the two ServiceLoader-discovery invariants every engine's own ProviderTest
-// re-proves (spec §5.4). All parameterized by caller-supplied engines/ids/sessions — this file
+// re-proves (spec §5.4). All parameterized by caller-supplied engines/ids/sessions - this file
 // names no model, exactly like the rest of :engines:common.
 
 /** The runtime id every engine except CosyVoice2's LLM-style backend registers under. */
@@ -43,7 +43,7 @@ fun onnxRuntime(session: FakeSession): FakeRuntime = FakeRuntime(id = ONNX_RUNTI
 fun onnxRuntime(sessionFor: (String) -> FakeSession): FakeRuntime =
     FakeRuntime(id = ONNX_RUNTIME_ID, sessionFactory = sessionFor)
 
-/** [engineContext] pre-wired with a single-session ONNX [FakeRuntime] — the common one-graph case. */
+/** [engineContext] pre-wired with a single-session ONNX [FakeRuntime] - the common one-graph case. */
 fun onnxEngineContext(
     session: FakeSession = FakeSession(),
     phonemizer: Phonemizer = FakePhonemizer(),

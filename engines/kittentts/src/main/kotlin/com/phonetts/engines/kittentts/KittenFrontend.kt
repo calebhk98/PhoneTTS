@@ -6,11 +6,11 @@ import com.phonetts.core.text.Phonemizer
 
 /**
  * KittenTTS's text frontend. KittenTTS is StyleTTS2, whose phoneme->id table is the fixed
- * StyleTTS2 symbol set (pad + punctuation + ASCII letters + IPA letters) — NOT shipped as a
+ * StyleTTS2 symbol set (pad + punctuation + ASCII letters + IPA letters) - NOT shipped as a
  * file, so it is the engine's own internal data here (spec §5.2: the phoneme->id mapping is the
  * engine's business and must not leak into shared code). Text is phonemized to an IPA string via
  * the shared [phonemizer] (espeak-ng in :app), each IPA character is mapped to its symbol id, and
- * the sequence is wrapped with the pad id (0) at both ends — matching the verified reference
+ * the sequence is wrapped with the pad id (0) at both ends - matching the verified reference
  * recipe in `scripts/model-verify/run_kitten.py` (`input_ids = [0, *ids, 0]`).
  */
 class KittenFrontend(private val phonemizer: Phonemizer) : TextFrontend {
@@ -35,7 +35,7 @@ class KittenFrontend(private val phonemizer: Phonemizer) : TextFrontend {
         // letters. Index == token id. Copied verbatim from the StyleTTS2 text cleaner (the same
         // table run_kitten.py validated against the real model).
         private const val PAD = "$"
-        private const val PUNCTUATION = ";:,.!?¡¿—…\"«»“” "
+        private const val PUNCTUATION = ";:,.!?¡¿-…\"«»“” "
         private const val LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
         private const val IPA_LETTERS =
             "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊ" +

@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
  * vocab doesn't contain), and the result is wrapped with the pad id `0` at both ends.
  */
 class KokoroFrontendTest {
-    // A tiny stand-in for the model's tokenizer.json vocab — real ids for a handful of IPA chars.
+    // A tiny stand-in for the model's tokenizer.json vocab - real ids for a handful of IPA chars.
     private val vocab = mapOf("h" to 50L, "ə" to 60L, "l" to 55L, "o" to 45L)
 
     @Test

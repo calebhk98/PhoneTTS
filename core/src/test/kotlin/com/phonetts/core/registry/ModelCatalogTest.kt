@@ -36,7 +36,7 @@ class ModelCatalogTest {
         val catalog = ModelCatalog()
         catalog.markUnresolved("mystery", "no engine claimed it")
         assertEquals(listOf(UnresolvedModel("mystery", "no engine claimed it")), catalog.listUnresolved())
-        // It stays out of the real model list — it isn't selectable, only visible (issue #8).
+        // It stays out of the real model list - it isn't selectable, only visible (issue #8).
         assertEquals(emptyList(), catalog.list())
     }
 

@@ -4,7 +4,7 @@ package com.phonetts.core.prefs
  * The manual theme choices the user can pick, over and above "follow the system". Kept in `:core`
  * as a plain enum so the *set* of themes has one authority (the picker renders one entry per value,
  * no theme name hardcoded in the UI) and so the persistence logic below is unit-testable on a plain
- * JVM. The concrete Compose `ColorScheme` each value maps to lives in `:app` — this layer only names
+ * JVM. The concrete Compose `ColorScheme` each value maps to lives in `:app` - this layer only names
  * the options and remembers which one was chosen.
  *
  * [SYSTEM] is the default: follow the OS light/dark setting (and platform dynamic color where

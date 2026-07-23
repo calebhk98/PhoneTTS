@@ -14,7 +14,7 @@ private const val TONE_HZ = 300.0
 private fun tone(samples: Int): FloatArray =
     FloatArray(samples) { i -> (0.5 * sin(2.0 * PI * TONE_HZ * i / RATE)).toFloat() }
 
-// Zero-crossing rate (sign changes per sample) — a resampling-free proxy for pitch/spectral
+// Zero-crossing rate (sign changes per sample) - a resampling-free proxy for pitch/spectral
 // content of a tonal signal. A naive resample-to-speed-up would DOUBLE this for a 2x speed; WSOLA,
 // which preserves pitch, must leave it (nearly) unchanged.
 private fun zeroCrossingRate(x: FloatArray): Float {
@@ -62,7 +62,7 @@ class TempoStretchTest {
         val fast = TempoStretch(2f).apply(listOf(input), RATE).single()
         val slow = TempoStretch(0.5f).apply(listOf(input), RATE).single()
 
-        // Within 15%: pitch stays put. (Resampling to 2x would push the rate toward 2x — rejected.)
+        // Within 15%: pitch stays put. (Resampling to 2x would push the rate toward 2x - rejected.)
         assertTrue(abs(zeroCrossingRate(fast) - inZcr) < inZcr * 0.15f, "2x pitch drifted")
         assertTrue(abs(zeroCrossingRate(slow) - inZcr) < inZcr * 0.15f, "0.5x pitch drifted")
     }

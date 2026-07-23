@@ -23,7 +23,7 @@ private const val FOREIGN_CONFIG = """{"family": "piper", "sample_rate": 22050}"
 // voice list without reading any bytes.
 private val VOICE_FILE_NAMES = setOf("voices/af_heart.bin", "voices/bf_emma.bin")
 
-// tokenizer.json (the phoneme vocabulary) is now a required fingerprint signal — every real Kokoro
+// tokenizer.json (the phoneme vocabulary) is now a required fingerprint signal - every real Kokoro
 // bundle ships it, and without it the frontend can't turn IPA into token ids.
 private const val TOKENIZER_FILE = "tokenizer.json"
 
@@ -91,6 +91,40 @@ class KokoroEngineInspectTest {
             )
 
         assertInspectRejects(engine(), bundle)
+    }
+
+    @Test
+    fun refusesAKittenV01BundleWearingTheGenericStyleTts2Marker() {
+        // onnx-community/kitten-tts-nano-0.1-ONNX ships the SAME layout Kokoro fingerprints (a
+        // style_text_to_speech_2 config.json, tokenizer.json, voices/<name>.bin) but its voices are
+        // KittenTTS's expr-voice-* set. Kokoro must fail closed so KittenTTS owns it (issue #111),
+        // rather than claiming it and mislabeling it "Kokoro".
+        val bundle =
+            ModelBundle(
+                id = "kitten-v0.1-onnx-community",
+                fileNames =
+                    setOf("onnx/model.onnx", "config.json", TOKENIZER_FILE) +
+                        setOf("voices/expr-voice-2-m.bin", "voices/expr-voice-2-f.bin"),
+                sideFiles = mapOf("config.json" to """{"model_type": "style_text_to_speech_2"}"""),
+            )
+
+        assertInspectRejects(engine(), bundle)
+    }
+
+    @Test
+    fun stillClaimsAGenericStyleTts2BundleWhoseVoicesAreGenuinelyKokoro() {
+        // Guards the regression: the REAL onnx-community/Kokoro-82M-v1.0-ONNX config is exactly
+        // {"model_type":"style_text_to_speech_2"} with af_/bf_ voices. The generic marker must still
+        // be honored when the voices are NOT the foreign kitten signature.
+        val bundle =
+            ModelBundle(
+                id = "kokoro-styletts2",
+                fileNames = setOf("model.onnx", "config.json", TOKENIZER_FILE) + VOICE_FILE_NAMES,
+                sideFiles = mapOf("config.json" to """{"model_type": "style_text_to_speech_2"}"""),
+                rootPath = "/models/kokoro-styletts2",
+            )
+
+        assertNotNull(engine().inspect(bundle))
     }
 
     @Test

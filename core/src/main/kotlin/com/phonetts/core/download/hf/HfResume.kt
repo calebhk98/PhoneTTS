@@ -2,8 +2,8 @@ package com.phonetts.core.download.hf
 
 /**
  * Decides how to fetch a single repo file given what is already on disk, so an interrupted
- * download — a dropped connection, the app being backgrounded and its process reclaimed, a crash
- * mid-fetch — **resumes** on the next attempt instead of starting the whole (often multi-hundred-MB)
+ * download - a dropped connection, the app being backgrounded and its process reclaimed, a crash
+ * mid-fetch - **resumes** on the next attempt instead of starting the whole (often multi-hundred-MB)
  * weight file over. This is the single source of truth for that policy; the `:app` downloader only
  * supplies the on-disk size and an HTTP `Range` request, so the decision stays pure and unit-tested.
  *
@@ -23,7 +23,7 @@ object HfResume {
     /**
      * @param existingBytes bytes already on disk for this file (0 if it isn't there yet).
      * @param expectedBytes the file's advertised size from the repo tree, or `null` if the repo
-     *   omitted it (some do) — in which case a partial file can't be trusted and we restart.
+     *   omitted it (some do) - in which case a partial file can't be trusted and we restart.
      */
     fun decide(
         existingBytes: Long,

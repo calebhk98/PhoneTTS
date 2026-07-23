@@ -7,7 +7,7 @@ import java.util.ServiceLoader
 /**
  * Discovers [EngineProvider]s on the classpath and seeds an [EngineRegistry] from them. This
  * is the single, generic bootstrap path for the built-in engines (spec §5.4: pre-seeded at
- * startup) — and it names no model. Whichever engine modules are on the classpath appear;
+ * startup) - and it names no model. Whichever engine modules are on the classpath appear;
  * removing a module removes its engine with no other change.
  */
 object EngineLoader {

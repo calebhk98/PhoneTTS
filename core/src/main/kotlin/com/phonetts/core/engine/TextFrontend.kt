@@ -19,12 +19,12 @@ class ModelInput(
  * A typed key into [ModelInput.extras] (issue #18 item 2): pairs the string key a [TextFrontend]
  * stores an extra under with the Kotlin type an engine expects to read it back as. Lets a single
  * generic accessor (`ModelInput.extra`/`requireExtra` in `com.phonetts.engines.common`) fetch and
- * type-check any extra — a `LongArray` of tone ids, a scalar `Int`, a `FloatArray` embedding, or
- * whatever a future frontend adds — with no per-model helper code and no unsafe `as?` cast at the
+ * type-check any extra - a `LongArray` of tone ids, a scalar `Int`, a `FloatArray` embedding, or
+ * whatever a future frontend adds - with no per-model helper code and no unsafe `as?` cast at the
  * callsite. Adding a new kind of extra means declaring a new [ExtraKey], never touching the
  * accessor.
  *
- * Lives here, next to [ModelInput], because it is the data shape `extras` is keyed by — a core
+ * Lives here, next to [ModelInput], because it is the data shape `extras` is keyed by - a core
  * fact, not a leaf helper (the accessor functions that use it are the leaf helper, and live in
  * `:engines:common`).
  */

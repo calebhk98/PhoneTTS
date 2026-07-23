@@ -2,7 +2,7 @@ package com.phonetts.core.compare
 
 /**
  * One entry in a tournament: an opaque, caller-chosen [id] the engine uses to identify contenders
- * across rounds, plus [payload] — data of the caller's choice (e.g. a model+voice selection) that
+ * across rounds, plus [payload] - data of the caller's choice (e.g. a model+voice selection) that
  * the bracket engine itself never inspects. Keeping the payload generic is what keeps this class a
  * pure ranking algorithm rather than something coupled to `ModelDescriptor`/`Voice`.
  */
@@ -22,7 +22,7 @@ data class Pairing<T>(
  * One contender's place in the final ranking once the bracket completes. [place] uses standard
  * competition ranking (1, 2, 3, 3, 5, ...): contenders eliminated in the same round tie for the
  * same place, and the next distinct place skips past the tied slots. [winsRecorded] counts actual
- * judged wins only — a bye is an automatic advance, not a win, so it is never counted here.
+ * judged wins only - a bye is an automatic advance, not a win, so it is never counted here.
  */
 data class RankedEntry<T>(
     val contender: Contender<T>,
@@ -34,14 +34,14 @@ data class RankedEntry<T>(
  * Deterministic single-elimination bracket engine (issue #11).
  *
  * Given a list of contenders, walks round by round pairing adjacent entries (0v1, 2v3, ...). A
- * round with an odd contender out gives that contender an automatic bye — it advances without a
- * match, exactly like a real single-elimination bracket — so any entry count (not just a power of
+ * round with an odd contender out gives that contender an automatic bye - it advances without a
+ * match, exactly like a real single-elimination bracket - so any entry count (not just a power of
  * two) is handled gracefully. The caller drains matches by repeatedly calling [nextPairing] and
  * [recordWinner] until [isComplete] is true, then reads [ranking] for the final standings.
  *
  * Pure and fully deterministic: the only thing that decides pairing order is the order of
  * [entries] as constructed. This class never calls `Math.random()`/`System.currentTimeMillis()`/
- * any other non-injected source of entropy (forbidden in `:core`, see CLAUDE.md) — a caller that
+ * any other non-injected source of entropy (forbidden in `:core`, see CLAUDE.md) - a caller that
  * wants a BLIND, randomized bracket (so early rounds aren't predictable from input order) shuffles
  * or permutes [entries] itself, with its own seeded `Random`, before construction. That keeps the
  * randomness at the edge (`:app`) and this class exhaustively testable.
@@ -81,14 +81,14 @@ class Tournament<T>(entries: List<Contender<T>>) {
     fun isComplete(): Boolean = championEntry != null
 
     /**
-     * Record [winnerId] — which must be one of [nextPairing]'s two contenders — as the winner of
+     * Record [winnerId] - which must be one of [nextPairing]'s two contenders - as the winner of
      * the current matchup, and advance the bracket. Once every matchup in the current round is
      * resolved, the next round is built automatically (skipping straight to a champion when only
      * one contender remains).
      */
     fun recordWinner(winnerId: String) {
         val queued =
-            roundQueue.removeFirstOrNull() ?: error("no pairing awaiting a winner — call nextPairing() first")
+            roundQueue.removeFirstOrNull() ?: error("no pairing awaiting a winner - call nextPairing() first")
         val pairing = queued.pairing
         require(winnerId == pairing.a.id || winnerId == pairing.b.id) {
             "winnerId '$winnerId' is not a contender in the current pairing"

@@ -10,19 +10,19 @@ import kotlinx.coroutines.flow.first
 // Drives an [AudioSink] from a [GeneratedAudio] buffer, one chunk at a time, and can pause/resume
 // WITHOUT stopping generation (the producer keeps appending to the same buffer while paused). It
 // reads by index from the retained buffer, so pausing simply stops advancing the index and
-// resuming continues from exactly where it left off — no audio is dropped and nothing is
+// resuming continues from exactly where it left off - no audio is dropped and nothing is
 // re-synthesized. Play the same buffer again from the start to replay already-generated audio.
 //
 // Reading strictly one chunk at a time by index is also what keeps GeneratedAudio's long-document
 // spill mode (issue #34) bounded: [GeneratedAudio.chunkAt] may serve a below-live-window index from
 // the scratch file, and because playback never snapshots the whole buffer, only the current chunk
-// is ever resident — a spilled chunk is read from disk, handed to the sink, and released.
+// is ever resident - a spilled chunk is read from disk, handed to the sink, and released.
 class BufferedPlayback {
     private val paused = MutableStateFlow(false)
     private val stopped = MutableStateFlow(false)
 
     // The sink of the in-flight [play] run, so [pause]/[resume] can halt/re-arm the hardware
-    // IMMEDIATELY (mid-chunk) instead of only stopping the read-index advance between chunks — a
+    // IMMEDIATELY (mid-chunk) instead of only stopping the read-index advance between chunks - a
     // chunk is a whole sentence, so index-only pausing meant Pause didn't take effect until the
     // current sentence finished. Null outside a run.
     @Volatile

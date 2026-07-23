@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.Flow
 /**
  * An engine loads weights and runs inference for one model family (spec §5.1).
  * It NEVER references another engine. The text frontend and the runtime it uses are
- * internal details, not part of this interface — those vary hardest between models and
+ * internal details, not part of this interface - those vary hardest between models and
  * are kept out of the seam on purpose (spec §5.2, §5.3).
  */
 interface VoiceEngine {
@@ -45,7 +45,7 @@ interface VoiceEngine {
      * The ONE generation path. Real-time playback and file export both consume this same flow
      * (spec §6.1). Emits audio in chunks so playback/writing can start before the whole utterance
      * is generated. [params] carries the chosen values for the model's declared
-     * [com.phonetts.core.model.ModelDescriptor.parameters] — each routes to the model's native
+     * [com.phonetts.core.model.ModelDescriptor.parameters] - each routes to the model's native
      * parameter (speed → the native duration knob, etc.); output audio is NEVER resampled to change
      * speed (that shifts pitch, spec §1.1.3). An engine reads only the parameters it declared.
      */
@@ -57,7 +57,7 @@ interface VoiceEngine {
 
     /**
      * Convenience for the common "just a speed" call (keeps the many existing call sites terse).
-     * Delegates to the [params] path with only speed set — every other declared parameter takes its
+     * Delegates to the [params] path with only speed set - every other declared parameter takes its
      * default.
      */
     fun synthesize(

@@ -14,8 +14,8 @@ import kotlin.test.assertTrue
  * Seam test for the second, non-ONNX runtime (spec §5.3, the "pluggable second runtime" the design
  * promises). Pure JVM, fakes only: proves a [NativeTtsRuntime] registers in the same
  * [RuntimeRegistry] as the ONNX backend, is retrievable by id, opens a full TTS session that
- * synthesizes audio from a [NativeTtsRequest], exposes the model's baked voice names, and —
- * crucially — is NOT an ONNX [InferenceSession] (its inherited [Runtime.createSession] fails closed
+ * synthesizes audio from a [NativeTtsRequest], exposes the model's baked voice names, and -
+ * crucially - is NOT an ONNX [InferenceSession] (its inherited [Runtime.createSession] fails closed
  * rather than pretend to be one).
  */
 class NativeTtsRuntimeTest {
@@ -78,7 +78,7 @@ class NativeTtsRuntimeTest {
     }
 
     @Test
-    fun `createSession fails closed — a native TTS runtime is not an ONNX InferenceSession`() {
+    fun `createSession fails closed - a native TTS runtime is not an ONNX InferenceSession`() {
         val runtime = FakeNativeTtsRuntime(id = "cosyvoice")
 
         val error =

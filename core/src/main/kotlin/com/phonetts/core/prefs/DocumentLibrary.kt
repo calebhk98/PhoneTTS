@@ -2,7 +2,7 @@ package com.phonetts.core.prefs
 
 /**
  * One saved document in the reading library (issue #19-5): a stable [id] (see
- * [com.phonetts.core.text.DocumentId] — callers use the SAME content-derived id [DocumentMemory]
+ * [com.phonetts.core.text.DocumentId] - callers use the SAME content-derived id [DocumentMemory]
  * keys resume positions by, so opening a library document lines up with any saved resume point for
  * free), a display [title], the full [text], and [savedAtMillis] for ordering. Timestamps are
  * supplied by the caller (`:app` passes `System.currentTimeMillis()`) so this stays deterministic
@@ -19,7 +19,7 @@ data class LibraryDocument(
  * Persists the user's saved documents over an injected [PreferenceStore], mirroring
  * [BlendedVoiceStore]'s pattern: `:core` holds the pure logic, `:app` supplies the
  * SharedPreferences-backed store. Every document is encoded as one delimited record in a single
- * string set — a malformed record (wrong field count, unparseable timestamp) is skipped on read,
+ * string set - a malformed record (wrong field count, unparseable timestamp) is skipped on read,
  * never thrown, so a corrupt entry can't crash the library.
  */
 class DocumentLibrary(private val store: PreferenceStore) {
@@ -30,7 +30,7 @@ class DocumentLibrary(private val store: PreferenceStore) {
     fun get(id: String): LibraryDocument? = allDocuments().firstOrNull { it.id == id }
 
     /**
-     * Save [text] under [id] (adding it, or replacing any existing document with the same id — so
+     * Save [text] under [id] (adding it, or replacing any existing document with the same id - so
      * re-saving the same document, e.g. via [com.phonetts.core.text.DocumentId], updates it in
      * place rather than duplicating it). [title] defaults to a title derived from [text] when the
      * caller doesn't supply one (blank/null).
@@ -76,7 +76,7 @@ class DocumentLibrary(private val store: PreferenceStore) {
             .joinToString(FIELD_SEP.toString())
 
     // limit = FIELD_COUNT so a stray separator inside the TEXT field (the last one) never truncates
-    // the document — only a separator inside id/title (never expected in practice) would corrupt a
+    // the document - only a separator inside id/title (never expected in practice) would corrupt a
     // record, and that record is simply dropped rather than crashing.
     private fun decode(record: String): LibraryDocument? {
         val parts = record.split(FIELD_SEP, limit = FIELD_COUNT)

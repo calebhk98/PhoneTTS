@@ -2,7 +2,7 @@ package com.phonetts.core.audio.transform
 
 // Streaming capability that lets a transform run inside the bounded-memory export path: instead of
 // being handed the whole List<FloatArray> at once (batch `AudioTransform.apply`), it processes the
-// utterance segment by segment and EMITS the parts that are settled — safe to write and forget.
+// utterance segment by segment and EMITS the parts that are settled - safe to write and forget.
 // A transform that cannot work this way (it needs the full buffer, e.g. SilenceTrim's trailing-
 // silence scan) simply does NOT implement this, and the export path falls back to buffering it.
 interface IncrementalTransform {

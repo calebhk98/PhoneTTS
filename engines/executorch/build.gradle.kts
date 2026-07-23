@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // One engine module. Depends ONLY on :core's generic seams + :engines:common, like every other
-// engine module — deleting this directory + its settings include removes it cleanly.
+// engine module - deleting this directory + its settings include removes it cleanly.
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.detekt)

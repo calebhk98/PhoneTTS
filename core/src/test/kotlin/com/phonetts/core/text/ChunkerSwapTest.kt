@@ -35,7 +35,7 @@ class ChunkerSwapTest {
         val wholeResult = WholeTextChunker.intoSentences(text)
 
         // Three implementations of the same interface, three different sentence counts for the
-        // same input—exactly the A/B comparison the abstraction is meant to make trivial.
+        // same input-exactly the A/B comparison the abstraction is meant to make trivial.
         assertEquals(3, defaultResult.size)
         assertEquals(2, lineResult.size)
         assertEquals(1, wholeResult.size)
@@ -46,7 +46,7 @@ class ChunkerSwapTest {
     @Test
     fun anyChunkerCanStandInWhereverTheInterfaceIsExpected() {
         // A caller that only knows about `Chunker` (not any concrete implementation) works
-        // identically no matter which implementation is wired in—the actual "swap" step.
+        // identically no matter which implementation is wired in-the actual "swap" step.
         fun countSentences(
             chunker: Chunker,
             text: String,

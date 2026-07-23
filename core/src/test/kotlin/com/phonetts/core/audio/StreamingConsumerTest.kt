@@ -67,7 +67,7 @@ class StreamingConsumerTest {
     /**
      * Directly targets "last word cut off" / "exported WAV errors at EOF": both symptoms trace back
      * to a consumer that stops one flow element short of the producer. This asserts the FINAL emitted
-     * chunk specifically — not just the aggregate sample count — reaches both consumers byte-for-byte,
+     * chunk specifically - not just the aggregate sample count - reaches both consumers byte-for-byte,
      * using an uneven trailing chunk (smaller than the others, like a short last sentence) so a
      * boundary bug that only drops a short/partial final element would be caught, not masked by
      * uniform chunk sizes.
@@ -79,7 +79,7 @@ class StreamingConsumerTest {
                 listOf(
                     floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f),
                     floatArrayOf(0.5f, 0.6f, 0.7f, 0.8f),
-                    // Short trailing chunk — the one most likely to be silently dropped.
+                    // Short trailing chunk - the one most likely to be silently dropped.
                     floatArrayOf(0.9f),
                 )
             val lastChunkValues = chunks.last().toList()

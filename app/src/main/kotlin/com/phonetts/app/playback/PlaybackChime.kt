@@ -22,7 +22,7 @@ private const val TONE_RELEASE_MILLIS = 400L
  *
  * Uses a [ToneGenerator] beep rather than a bundled sound asset (no `SoundPool` sample to ship) and
  * a one-shot [Vibrator] pulse. Both are best-effort: a device with no vibrator, or a tone generator
- * the platform refuses to allocate, simply produces the other half of the cue (or nothing) — a
+ * the platform refuses to allocate, simply produces the other half of the cue (or nothing) - a
  * missing cue must never crash playback teardown.
  */
 class PlaybackChime(private val context: Context) {

@@ -32,7 +32,7 @@ private class FakeClearableOverrideStore : ClearableOverrideStore {
     }
 }
 
-/** A plain, non-clearable [OverrideStore] double — exercises the "not ClearableOverrideStore" path. */
+/** A plain, non-clearable [OverrideStore] double - exercises the "not ClearableOverrideStore" path. */
 private class PlainOverrideStore : OverrideStore {
     private val overrides = mutableMapOf<String, String>()
 
@@ -64,7 +64,7 @@ class ModelManagerTest {
     }
 
     // Bug #7: a downloaded-but-unresolved bundle (issue #8) still occupies real disk space, so the
-    // "storage used" total must count it too, not just identified models — otherwise a screen full
+    // "storage used" total must count it too, not just identified models - otherwise a screen full
     // of unresolved downloads (bug #6) reads as "0 B used" even though every byte is really there.
     @Test
     fun totalBytesIncludesUnresolvedBundlesAlongsideIdentifiedModels() {
@@ -155,7 +155,7 @@ class ModelManagerTest {
         val manager =
             ModelManager(catalog, dirSizeBytes = { 0L }, deleteModelDir = { true }, overrideStore = overrideStore)
 
-        // No exception, and — since this store can't drop entries — the stale mapping stays;
+        // No exception, and - since this store can't drop entries - the stale mapping stays;
         // that's the documented, safe degradation for a non-Clearable OverrideStore.
         val result = manager.remove("m1")
 
@@ -244,7 +244,7 @@ class ModelManagerTest {
     }
 
     // Bug #1: the manual "pick an engine" fallback must be reachable through ModelManager, the class
-    // the Manage screen's ViewModel actually talks to — not just live in Resolver in isolation.
+    // the Manage screen's ViewModel actually talks to - not just live in Resolver in isolation.
     @Test
     fun selectableEnginesReturnsWhateverTheInjectedProviderReports() {
         val engines = listOf(SelectableEngine("eng-a", "Engine A"), SelectableEngine("eng-b", "Engine B"))
@@ -358,7 +358,7 @@ class ModelManagerTest {
     }
 
     // Rule 4: the callback must see the OLD path exactly as it was before this call overwrote it,
-    // paired with the new one — the app layer needs both to know what to migrate from/to.
+    // paired with the new one - the app layer needs both to know what to migrate from/to.
     @Test
     fun changeStorageLocationPassesThePreviousAndNextPathToTheCallback() {
         val storageLocation =

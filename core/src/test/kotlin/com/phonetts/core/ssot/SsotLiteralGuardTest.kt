@@ -8,17 +8,17 @@ import kotlin.test.assertTrue
  * Automated guard for CLAUDE.md rule 1 (SSOT): "a model constant outside the resolver/descriptor
  * layer is a bug." Today that rule is only loosely protected by
  * [com.phonetts.core.registry.ModelCatalogTest] (registry dynamism) and
- * [com.phonetts.core.model.ModelParametersTest] (parameters are discovered, not assumed) — neither
+ * [com.phonetts.core.model.ModelParametersTest] (parameters are discovered, not assumed) - neither
  * actually scans for a *duplicated* literal creeping into the UI/platform layer. This test does.
  *
  * What it enforces: none of a small, deliberately narrow set of well-known TTS output sample
- * rates (8000/11025/16000/22050/24000/32000/44100/48000 Hz — the values CLAUDE.md calls out by
+ * rates (8000/11025/16000/22050/24000/32000/44100/48000 Hz - the values CLAUDE.md calls out by
  * name as a model fact) may appear as a hardcoded Kotlin integer literal in source outside the
- * "resolver/descriptor layer" CLAUDE.md names: [ALLOWED_ROOTS] below —
+ * "resolver/descriptor layer" CLAUDE.md names: [ALLOWED_ROOTS] below -
  * `core/.../model` (the [com.phonetts.core.model.ModelDescriptor] SSOT itself),
  * `core/.../resolver`, and every engine's own `src/main` tree (each engine is the SSOT for *its own*
- * model's sample rate — see e.g. `KokoroEngine.SAMPLE_RATE`, `PiperVoiceConfig.DEFAULT_SAMPLE_RATE`
- * — CLAUDE.md explicitly scopes the descriptor layer as ":core descriptors / :engines"). Anywhere
+ * model's sample rate - see e.g. `KokoroEngine.SAMPLE_RATE`, `PiperVoiceConfig.DEFAULT_SAMPLE_RATE`
+ * - CLAUDE.md explicitly scopes the descriptor layer as ":core descriptors / :engines"). Anywhere
  * else under `core/src/main` or `app/src/main` (the UI/platform layer, which must read the value
  * from the resolved [com.phonetts.core.model.ModelDescriptor] instead) is forbidden ground: if one
  * of these numbers shows up there as a real code literal, that's a second source of truth and the
@@ -29,7 +29,7 @@ import kotlin.test.assertTrue
  *    sizes, timeouts, version codes...) never trip it.
  *  - Strips `//` line comments and skips KDoc/block-comment decoration lines before
  *    matching, so *documenting* a rate (e.g. "24000 for CosyVoice3" in a KDoc comment, as
- *    `CosyVoiceNative.kt` does today) does not fail the build — only a literal actually compiled
+ *    `CosyVoiceNative.kt` does today) does not fail the build - only a literal actually compiled
  *    into code does.
  *  - Matches on integer-literal boundaries (`(?<!\w)N(?!\w)`, both plain and Kotlin's
  *    underscore-grouped form, e.g. `24000` and `24_000`) so it can't accidentally match inside an
@@ -66,7 +66,7 @@ class SsotLiteralGuardTest {
         assertTrue(
             violations.isEmpty(),
             "hardcoded TTS sample-rate literal(s) found outside the resolver/descriptor layer " +
-                "(CLAUDE.md rule 1 — read this from ModelDescriptor.sampleRate instead):\n" +
+                "(CLAUDE.md rule 1 - read this from ModelDescriptor.sampleRate instead):\n" +
                 violations.joinToString("\n"),
         )
     }
@@ -105,7 +105,7 @@ class SsotLiteralGuardTest {
         /**
          * CLAUDE.md's "resolver/descriptor layer" within the scanned roots: core's descriptor and
          * resolver code. Each engine module (the SSOT for its own model's facts) is exempt
-         * too, but doesn't need listing here — the scan never walks into the engine modules at all, only
+         * too, but doesn't need listing here - the scan never walks into the engine modules at all, only
          * `core/src/main` and `app/src/main`.
          */
         val ALLOWED_ROOTS =
@@ -114,7 +114,7 @@ class SsotLiteralGuardTest {
                 "/core/src/main/kotlin/com/phonetts/core/resolver/",
             )
 
-        /** Well-known TTS output sample rates — the specific model fact CLAUDE.md names by example. */
+        /** Well-known TTS output sample rates - the specific model fact CLAUDE.md names by example. */
         val FORBIDDEN_SAMPLE_RATES = listOf(8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000)
 
         val FORBIDDEN_SAMPLE_RATE_PATTERNS =

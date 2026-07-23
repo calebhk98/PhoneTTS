@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // The F5-TTS engine module (flow-matching DiT + vocoder). Depends ONLY on :core's generic seams
-// + :engines:common, exactly like every other engine module — deleting this directory + its
+// + :engines:common, exactly like every other engine module - deleting this directory + its
 // settings include removes the model cleanly.
 plugins {
     alias(libs.plugins.kotlin.jvm)

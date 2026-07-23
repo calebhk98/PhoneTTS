@@ -8,7 +8,7 @@ import com.phonetts.engines.common.tensorOrError
  * into the synthesizer's input (VALIDATED shapes/order, `kokoro-export`'s
  * `demo/inference_example.py`). Pulled out of [ExecuTorchKokoroEngine] itself (rather than being
  * private methods there) purely to keep that class's own method count under the never-nesting
- * style budget (CLAUDE.md rule 9) — these functions read no engine instance state, only their
+ * style budget (CLAUDE.md rule 9) - these functions read no engine instance state, only their
  * arguments.
  */
 internal object ExecuTorchKokoroTensors {

@@ -2,8 +2,8 @@ package com.phonetts.engines.f5tts
 
 /**
  * Minimal RIFF/WAVE PCM16 decoder for BUNDLED reference-audio clips (`README-io.md` "Voice = a
- * bundled reference clip"). Reads exactly the subset of the WAV format this engine needs —
- * uncompressed 16-bit PCM, any channel count (multi-channel is downmixed by averaging) — into
+ * bundled reference clip"). Reads exactly the subset of the WAV format this engine needs -
+ * uncompressed 16-bit PCM, any channel count (multi-channel is downmixed by averaging) - into
  * normalized `FloatArray` samples in `[-1, 1]`, the convention this app uses everywhere
  * (`core/audio/Pcm16.kt`).
  *

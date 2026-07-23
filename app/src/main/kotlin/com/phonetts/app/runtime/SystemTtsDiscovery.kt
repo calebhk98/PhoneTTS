@@ -11,17 +11,17 @@ import com.phonetts.core.model.ResourceCost
 import java.io.File
 
 /**
- * Discovers the on-device Android `TextToSpeech` engine(s) — Google, Samsung, or whatever else is
- * installed — and builds one [ModelDescriptor] per engine (issue #77): an "always available" model
+ * Discovers the on-device Android `TextToSpeech` engine(s) - Google, Samsung, or whatever else is
+ * installed - and builds one [ModelDescriptor] per engine (issue #77): an "always available" model
  * that needs no download, because it's already on the phone. Runs once at startup, kicked off
- * (non-blockingly — see its kdoc) by [com.phonetts.app.AppGraph.hydrate].
+ * (non-blockingly - see its kdoc) by [com.phonetts.app.AppGraph.hydrate].
  *
- * Every fact on the resulting descriptor — voices, language, sample rate — is read from the real
+ * Every fact on the resulting descriptor - voices, language, sample rate - is read from the real
  * `TextToSpeech` API, never hardcoded (SSOT, CLAUDE.md rule 1); an engine whose facts can't be
  * established with confidence (init fails, no offline-playable voice, no readable sample rate) is
  * skipped rather than guessed at (rule 4's fail-closed spirit).
  *
- * MANIFEST NOTE — not applied by this change, no manifest file is touched here: on Android 11+
+ * MANIFEST NOTE - not applied by this change, no manifest file is touched here: on Android 11+
  * (API 30) seeing another app's installed services via `PackageManager` needs a `<queries>`
  * declaration in `AndroidManifest.xml`:
  * ```xml
@@ -30,7 +30,7 @@ import java.io.File
  * </queries>
  * ```
  * Without it, [installedEngines] silently sees none of Google's/Samsung's TTS services on API 30+
- * (this app's own targetSdk is 35) — a fail-closed "no system voices offered" outcome, not a crash,
+ * (this app's own targetSdk is 35) - a fail-closed "no system voices offered" outcome, not a crash,
  * but the feature is inert until that `<queries>` block is added.
  */
 object SystemTtsDiscovery {
@@ -85,14 +85,14 @@ object SystemTtsDiscovery {
         return ModelDescriptor(
             modelId = SystemTtsEngine.modelIdFor(installed.packageName),
             engineId = engineId,
-            displayName = "System — ${installed.label}",
+            displayName = "System - ${installed.label}",
             // BUILT_IN: it ships with the OS/vendor, never downloaded through this app (rule 7 is
-            // moot here — there are no weights of ours to bundle or fetch).
+            // moot here - there are no weights of ours to bundle or fetch).
             origin = Origin.BUILT_IN,
             sampleRate = sampleRate,
             voices = voices,
             defaultVoiceId = defaultVoice.id,
-            // setSpeechRate is the model's genuine native rate knob (rule 2) — Android's public API
+            // setSpeechRate is the model's genuine native rate knob (rule 2) - Android's public API
             // documents no hard bounds, so this is a conservative practical range, not a literal
             // duplicated elsewhere (the UI reads it from here, same as every other engine).
             parameters = listOf(ModelParameter.speed(SPEED_RANGE, DEFAULT_SPEED)),
@@ -106,7 +106,7 @@ object SystemTtsDiscovery {
     // fully-offline by design (CLAUDE.md), so a voice that needs connectivity or an unfetched voice
     // pack would silently fail (or silently phone home) if offered here.
     //
-    // `TextToSpeech.getVoices()` returns a Set — unordered by contract — so sorted by name at the
+    // `TextToSpeech.getVoices()` returns a Set - unordered by contract - so sorted by name at the
     // end for a stable dropdown order across launches, not because any model fact depends on it.
     private fun offlineVoices(session: TextToSpeech): List<CoreVoice> =
         (session.voices ?: emptySet())
@@ -133,7 +133,7 @@ object SystemTtsDiscovery {
         return voices.firstOrNull { it.id == preferred?.name } ?: voices.first()
     }
 
-    // Rule: never assume a sample rate — synthesize a short probe utterance and read the WAV header
+    // Rule: never assume a sample rate - synthesize a short probe utterance and read the WAV header
     // Android actually wrote, the same way every real per-sentence synthesis call will.
     private suspend fun probeSampleRate(
         context: Context,

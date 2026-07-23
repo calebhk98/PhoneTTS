@@ -6,13 +6,13 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Checks GitHub Releases for a newer PhoneTTS build than the one running, and — if there is one —
+ * Checks GitHub Releases for a newer PhoneTTS build than the one running, and - if there is one -
  * returns where to get it. This only ever *offers* an update; installing is the user's choice
  * (CLAUDE.md / the app never force-updates). Pure JVM and testable against a fake [HttpClient] +
  * fixture JSON; the real transport lives in :app.
  *
  * Fail-closed: any error (no network, bad JSON, no parseable version, no APK asset) yields
- * [UpdateStatus.upToDate] rather than a bogus prompt — an update check must never nag on a hiccup.
+ * [UpdateStatus.upToDate] rather than a bogus prompt - an update check must never nag on a hiccup.
  */
 class UpdateChecker(
     private val http: HttpClient,
@@ -36,7 +36,7 @@ class UpdateChecker(
             }.getOrNull() ?: return UpdateStatus.upToDate(currentVersion)
 
         // Pick the highest parseable, non-draft release that actually ships an installable APK
-        // (prereleases included — the auto-published builds are prereleases).
+        // (prereleases included - the auto-published builds are prereleases).
         val newest =
             releases
                 .asSequence()

@@ -7,7 +7,7 @@ import kotlin.test.assertNull
 class KokoroConfigTest {
     @Test
     fun modelTypeStandsInForFamilyWhenTheFamilyFieldIsAbsent() {
-        // The real onnx-community Kokoro export ships exactly this — no "family" key.
+        // The real onnx-community Kokoro export ships exactly this - no "family" key.
         val parsed = KokoroConfig.parse("""{"model_type": "style_text_to_speech_2"}""")
 
         assertEquals("style_text_to_speech_2", parsed.family)

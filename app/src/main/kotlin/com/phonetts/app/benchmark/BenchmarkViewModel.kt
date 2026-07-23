@@ -3,18 +3,25 @@ package com.phonetts.app.benchmark
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
+import com.phonetts.core.download.hf.ModelSpeedEstimate
 import com.phonetts.core.engine.SynthesisParams
+import com.phonetts.core.metrics.BenchmarkEta
 import com.phonetts.core.metrics.BenchmarkMetrics
+import com.phonetts.core.metrics.BenchmarkProgress
 import com.phonetts.core.metrics.BenchmarkRecord
 import com.phonetts.core.metrics.RtfEstimator
 import com.phonetts.core.metrics.RtfResult
 import com.phonetts.core.metrics.ThermalRegressionDetector
+import com.phonetts.core.metrics.WordCounter
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.registry.ModelUsage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -23,7 +30,7 @@ private const val NANOS_PER_SECOND = 1_000_000_000.0
 /**
  * Drives the Benchmarks screen: measure every downloaded model's real generation speed on the same
  * phrase and lay the numbers side by side. Reuses the metrics seam ([RtfEstimator]) that measures a
- * real `synthesize()` run — never a guessed RTF — and the one-engine-at-a-time [EngineManager], so a
+ * real `synthesize()` run - never a guessed RTF - and the one-engine-at-a-time [EngineManager], so a
  * benchmark run is just the sample loop timed. Model facts (voice, params, sample rate, and now the
  * peak-RAM estimate) all come from each [ModelDescriptor]; nothing here is hardcoded per model.
  *
@@ -36,7 +43,7 @@ private const val NANOS_PER_SECOND = 1_000_000_000.0
  *
  * Issue #14 extends each row with: time to first audio (TTFA), the model-load time paid before
  * synthesis even starts (timed around [com.phonetts.core.registry.EngineManager.switchTo]), and a
- * snapshot of this process's RAM footprint against the device's available RAM at run time — all
+ * snapshot of this process's RAM footprint against the device's available RAM at run time - all
  * carried in [BenchmarkMetrics] (:core, so the derived math is unit-tested, not re-derived here).
  */
 class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
@@ -55,10 +62,24 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         /**
          * TTFA / model-load time / RAM footprint for this run (issue #14), or null on a failed run
          * where nothing beyond the failure itself was measured. All the honesty logic (what counts as
-         * "unknown" rather than a guess) lives in [BenchmarkMetrics] — this only carries the result.
+         * "unknown" rather than a guess) lives in [BenchmarkMetrics] - this only carries the result.
          */
         val metrics: BenchmarkMetrics? = null,
     )
+
+    /** How the results table is ordered (issue #115). Each key maps to a comparable Row field. */
+    enum class SortKey(val label: String) {
+        NAME("Name"),
+        RTF("Speed (RTF)"),
+        RAM("Est. RAM"),
+    }
+
+    /** The chosen sort key and direction (issue #115). */
+    data class Sort(val key: SortKey, val ascending: Boolean) {
+        companion object {
+            val DEFAULT = Sort(SortKey.NAME, ascending = true)
+        }
+    }
 
     data class UiState(
         val running: Boolean = false,
@@ -66,6 +87,12 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         val rows: List<Row> = emptyList(),
         /** OFF by default: the power-user history/regression view is hidden until the user opts in. */
         val showHistory: Boolean = false,
+        /** Live "elapsed / estimated-total, remaining left" for the current run (issue #116); null when idle. */
+        val progress: BenchmarkProgress? = null,
+        /** Sort key/direction for the results table (issue #115). */
+        val sort: Sort = Sort.DEFAULT,
+        /** Case-insensitive name filter for the results table (issue #115); blank shows everything. */
+        val query: String = "",
     )
 
     private val mutableState = MutableStateFlow(UiState())
@@ -76,32 +103,101 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(showHistory = !it.showHistory) }
     }
 
+    /** Choose which column the results table is sorted by (issue #115). */
+    fun setSortKey(key: SortKey) {
+        mutableState.update { it.copy(sort = it.sort.copy(key = key)) }
+    }
+
+    /** Flip the sort between ascending and descending (issue #115). */
+    fun toggleSortDirection() {
+        mutableState.update { it.copy(sort = it.sort.copy(ascending = !it.sort.ascending)) }
+    }
+
+    /** Update the name filter applied to the results table (issue #115). */
+    fun setQuery(query: String) {
+        mutableState.update { it.copy(query = query) }
+    }
+
     /**
      * Benchmark every downloaded model in turn, updating the table as each finishes. Loads one
-     * engine at a time (EngineManager.switchTo unloads the previous — one engine in memory), times a
+     * engine at a time (EngineManager.switchTo unloads the previous - one engine in memory), times a
      * real synthesis of [BENCH_PHRASE], and records the measured RTF. Best-effort: a model that fails
      * to load/generate becomes a failed row, not a fatal error.
      */
     fun run() {
         if (mutableState.value.running) return
-        val models = graph.catalog.list()
+        val models = graph.modelManager.usage()
         if (models.isEmpty()) {
-            mutableState.update { it.copy(status = "No models to benchmark — download one first.") }
+            mutableState.update { it.copy(status = "No models to benchmark - download one first.") }
             return
         }
-        mutableState.update { it.copy(running = true, rows = emptyList(), status = "Benchmarking…") }
-        viewModelScope.launch {
-            val rows = mutableListOf<Row>()
-            models.forEachIndexed { index, descriptor ->
-                mutableState.update {
-                    it.copy(status = "Benchmarking ${index + 1}/${models.size}: ${descriptor.displayName}…")
-                }
-                rows += benchmarkOne(descriptor)
-                mutableState.update { it.copy(rows = rows.toList()) }
-            }
-            val succeeded = rows.count { it.ok }
-            mutableState.update { it.copy(running = false, status = "Done — $succeeded/${models.size} succeeded") }
+        // Issue #116: estimate each model's run time up front (prompt word count + its estimated RTF
+        // + a load allowance) so the screen can show elapsed / estimated-total / predicted-remaining
+        // from the very first tick. All the timing math is the pure, unit-tested [BenchmarkEta] seam.
+        val wordCount = WordCounter.count(BENCH_PHRASE)
+        val perModelSeconds = models.map { estimatedSeconds(wordCount, it) }
+        val startMillis = System.currentTimeMillis()
+        mutableState.update {
+            it.copy(
+                running = true,
+                rows = emptyList(),
+                status = "Benchmarking…",
+                progress = BenchmarkEta.progress(startMillis, startMillis, perModelSeconds, completedModels = 0),
+            )
         }
+        viewModelScope.launch { runBenchmarks(models, perModelSeconds, startMillis) }
+    }
+
+    private suspend fun runBenchmarks(
+        models: List<ModelUsage>,
+        perModelSeconds: List<Double>,
+        startMillis: Long,
+    ) {
+        // A 1s ticker advances the "elapsed / … left" readout between model completions so the time
+        // keeps moving even while one long model is mid-synthesis. Cancelled the moment the run ends.
+        val ticker =
+            viewModelScope.launch {
+                while (isActive) {
+                    publishProgress(perModelSeconds, startMillis)
+                    delay(PROGRESS_TICK_MILLIS)
+                }
+            }
+        val rows = mutableListOf<Row>()
+        models.forEachIndexed { index, model ->
+            val descriptor = model.descriptor
+            mutableState.update {
+                it.copy(status = "Benchmarking ${index + 1}/${models.size}: ${descriptor.displayName}…")
+            }
+            rows += benchmarkOne(descriptor)
+            mutableState.update { it.copy(rows = rows.toList()) }
+            publishProgress(perModelSeconds, startMillis)
+        }
+        ticker.cancel()
+        val succeeded = rows.count { it.ok }
+        mutableState.update { it.copy(running = false, status = "Done - $succeeded/${models.size} succeeded") }
+    }
+
+    // Up-front estimate for one model: its estimated real-time multiple (from the existing
+    // ModelSpeedEstimator, keyed off on-disk size + the model's own asset file names as precision
+    // hints, the same signal InstalledModelFacts uses - no per-model literal) fed into [BenchmarkEta].
+    private fun estimatedSeconds(
+        wordCount: Int,
+        model: ModelUsage,
+    ): Double {
+        val speed = ModelSpeedEstimate.from(model.sizeBytes, model.descriptor.assetPaths.keys.toList())
+        return BenchmarkEta.estimateModelSeconds(wordCount, speed.realtimeMultiple)
+    }
+
+    // Recompute the live progress from the current finished-model count and the wall clock, and push
+    // it into state. The clock is read here and handed to the pure helper (seam style); [BenchmarkEta]
+    // never reads it itself.
+    private fun publishProgress(
+        perModelSeconds: List<Double>,
+        startMillis: Long,
+    ) {
+        val completed = mutableState.value.rows.size
+        val progress = BenchmarkEta.progress(startMillis, System.currentTimeMillis(), perModelSeconds, completed)
+        mutableState.update { it.copy(progress = progress) }
     }
 
     private suspend fun benchmarkOne(descriptor: ModelDescriptor): Row {
@@ -172,7 +268,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         graph.benchmarkHistory.record(BenchmarkRecord(descriptor.engineId, device, System.currentTimeMillis(), rtf))
         val history = graph.benchmarkHistory.history(descriptor.engineId, device)
         val regression = ThermalRegressionDetector.detect(history) ?: return null
-        return "~%.1fx slower than your last benchmark — likely thermal throttling".format(regression.slowdownRatio)
+        return "~%.1fx slower than your last benchmark - likely thermal throttling".format(regression.slowdownRatio)
     }
 
     /** The results as a Markdown table, for the "Copy results" button (paste into an issue/notes). */
@@ -187,7 +283,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     private fun markdownRow(row: Row): String {
         val ramUsed = ramText(row.metrics?.processMemoryBytes)
         val estRam = ramText(row.peakRamBytes)
-        if (!row.ok) return "| ${row.displayName} | failed | — | — | — | — | $ramUsed | $estRam |"
+        if (!row.ok) return "| ${row.displayName} | failed | - | - | - | - | $ramUsed | $estRam |"
         val speed = "${fmt(row.realTimeFactor)} | ${fmt(row.audioSeconds)} | ${fmt(row.wallSeconds)}"
         val ttfa = optionalFmt(row.metrics?.timeToFirstAudioSeconds)
         val load = optionalFmt(row.metrics?.modelLoadSeconds)
@@ -203,7 +299,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     companion object {
         // Multiple sentences on purpose (issue: TTFA == total Gen time): AbstractVoiceEngine emits
         // one Flow<FloatArray> chunk per TextChunker sentence (spec §8), and RtfEstimator measures
-        // TTFA at the FIRST emitted chunk vs total elapsed at the LAST — both correct (see
+        // TTFA at the FIRST emitted chunk vs total elapsed at the LAST - both correct (see
         // RtfEstimatorTest). But a single-sentence phrase can only ever produce one chunk, so TTFA
         // and total generation time are mathematically forced to be identical no matter how correct
         // the measurement code is. Three sentences exercise the actual streaming/chunking path so the
@@ -213,5 +309,32 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
                 "Pack my box with five dozen liquor jugs. " +
                 "The five boxing wizards jump quickly."
         private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
+        private const val PROGRESS_TICK_MILLIS = 1_000L
+
+        /**
+         * The rows to actually show, filtered by [query] (case-insensitive name match) and ordered by
+         * [sort] (issue #115). Failed rows always sink to the bottom regardless of direction - they
+         * have no measured figures to rank meaningfully - so the sort only reorders successful rows.
+         * Pure, so it can be called straight from the composable on the collected state.
+         */
+        fun visibleRows(
+            rows: List<Row>,
+            sort: Sort,
+            query: String,
+        ): List<Row> {
+            val needle = query.trim()
+            val filtered = rows.filter { needle.isEmpty() || it.displayName.contains(needle, ignoreCase = true) }
+            val (ok, failed) = filtered.partition { it.ok }
+            val sorted = ok.sortedWith(rowComparator(sort.key))
+            val ordered = if (sort.ascending) sorted else sorted.reversed()
+            return ordered + failed
+        }
+
+        private fun rowComparator(key: SortKey): Comparator<Row> =
+            when (key) {
+                SortKey.NAME -> compareBy { it.displayName.lowercase() }
+                SortKey.RTF -> compareBy { it.realTimeFactor }
+                SortKey.RAM -> compareBy { it.peakRamBytes ?: Long.MAX_VALUE }
+            }
     }
 }

@@ -6,13 +6,13 @@ import com.phonetts.core.engine.BlendedVoiceSpec
  * Persists the user's saved voice mixes ([BlendedVoiceSpec]s) over an injected [PreferenceStore],
  * mirroring [FavoriteVoices]: `:core` holds the pure logic, `:app` supplies the
  * SharedPreferences-backed store, so this stays unit-testable on a plain JVM. Only the recipe is
- * stored (the two source voice ids + weight), never audio or an embedding — the engine recomputes
+ * stored (the two source voice ids + weight), never audio or an embedding - the engine recomputes
  * the blend from the loaded model each time, so a saved mix survives app restarts and model
  * re-downloads as long as its source voices still exist.
  *
  * Each spec is encoded as one delimited record in a per-model string set keyed by [modelId], so
  * loading a model reads back exactly its mixes and nothing else. A malformed record (wrong field
- * count, unparseable weight) is skipped, not thrown — a corrupt entry can never crash load.
+ * count, unparseable weight) is skipped, not thrown - a corrupt entry can never crash load.
  */
 class BlendedVoiceStore(private val store: PreferenceStore) {
     /** Every saved mix for [modelId], in no particular order. */

@@ -114,7 +114,7 @@ class QuantizationSingleVariantTest {
     // Reproduces issue #9's coqui/XTTS-v2 example: a single-precision model whose auxiliary weight
     // files (dvae.pth, mel_stats.pth) carry no fp16/q8/etc. token. "model" and "dvae" are bare
     // stems (no separator) so they classify FP32; "mel_stats" has a separator but no recognized
-    // token so it classifies UNKNOWN — that must NOT read as "two precisions to choose between".
+    // token so it classifies UNKNOWN - that must NOT read as "two precisions to choose between".
     private val xttsLikeFiles =
         listOf(
             HfTreeEntry(type = "file", path = "config.json", size = 4_000),

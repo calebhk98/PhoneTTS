@@ -9,7 +9,7 @@ import com.phonetts.core.automation.AutomationRequest
  * one object so the manifest action and the parser can't drift, and so the whole contract is
  * documented in a single place a power user can read.
  *
- * These are the automation entry point's own API, not model facts — so naming them here does not
+ * These are the automation entry point's own API, not model facts - so naming them here does not
  * touch the SSOT rule (which governs sample rates / voices / speed bounds, all still read from the
  * descriptor at [AutomationRequest] planning time).
  */
@@ -43,7 +43,7 @@ object AutomationIntent {
             outputUri = intent.getStringExtra(EXTRA_OUTPUT_URI) ?: intent.dataString,
         )
 
-    // Speed may arrive as a string (am --es, Tasker) or a float (am --ef) — accept either, else
+    // Speed may arrive as a string (am --es, Tasker) or a float (am --ef) - accept either, else
     // "unset". String form is tried first: a float extra returns null from getStringExtra so we
     // then read it numerically, avoiding the deprecated Bundle.get.
     private fun Intent.floatExtraOrNull(key: String): Float? {

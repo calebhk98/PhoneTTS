@@ -2,7 +2,7 @@ package com.phonetts.core.prefs
 
 /**
  * Where downloaded/sideloaded model weights live (issue #4/#5): app-private storage by default
- * (wiped on uninstall), or a user-picked folder — internal shared storage or an SD card — so
+ * (wiped on uninstall), or a user-picked folder - internal shared storage or an SD card - so
  * weights SURVIVE an uninstall/reinstall. `:core` only ever remembers a plain absolute path
  * string; all the Storage Access Framework/URI/permission plumbing that produces that path lives
  * in `:app` (spec: `:core` stays Android-free, takes plain `java.io.File`).

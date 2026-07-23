@@ -17,7 +17,7 @@ data class RtfResult(
     val wallClockElapsedSeconds: Double,
     val chunksProduced: Int,
     /**
-     * Wall-clock seconds from generation start to the first emitted [FloatArray] chunk (issue #14) —
+     * Wall-clock seconds from generation start to the first emitted [FloatArray] chunk (issue #14) -
      * a real measurement, taken at the moment the first chunk actually lands. `null` when no chunk
      * ever arrived (nothing to measure), never a guessed value.
      */
@@ -48,7 +48,7 @@ data class RtfResult(
 }
 
 /**
- * Measures an engine's real generation speed by actually running it — never a hardcoded or
+ * Measures an engine's real generation speed by actually running it - never a hardcoded or
  * guessed RTF (this is the metrics seam's whole point). Drains a real `synthesize()` call over
  * [calibrationText] and times it against [now], producing a genuine measured [RtfResult].
  *

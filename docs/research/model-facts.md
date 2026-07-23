@@ -10,14 +10,14 @@
 | Model | Sample Rate | Speed Param | Voices/Speakers | Params/Size | License | Text Frontend |
 |-------|-------------|-------------|-----------------|-------------|---------|---------------|
 | **Piper** | 22050 Hz | `length_scale` | 100+ / separate ONNX files | ~15M per voice | GPL-3.0¹ | espeak-ng |
-| **KittenTTS** | 24000 Hz | `speed` | 8 / single model | 15M–80M² | Apache 2.0 | G2P (misaki) |
+| **KittenTTS** | 24000 Hz | `speed` | 8 / single model | 15M-80M² | Apache 2.0 | G2P (misaki) |
 | **Kokoro-82M** | 24000 Hz | `speed` | 54 / embeddings | 82M | Apache 2.0 | misaki G2P |
 | **MeloTTS** | 44100 Hz | `speed` | 5+ per lang / speaker IDs | UNCONFIRMED | MIT | BERT-based |
-| **CosyVoice2-0.5B** | 24000 Hz | 0.5–1.5 range³ | unlimited (zero-shot) | 0.5B LLM⁴ | Apache 2.0 | WeText/ttsfrd |
+| **CosyVoice2-0.5B** | 24000 Hz | 0.5-1.5 range³ | unlimited (zero-shot) | 0.5B LLM⁴ | Apache 2.0 | WeText/ttsfrd |
 
 ¹ GPL-3.0 for maintained fork (OHF-Voice/piper1-gpl, v1.4.2 April 2026); original rhasspy/piper archived October 2025 as MIT.  
 ² Variants: nano (15M), micro (40M), mini (80M); models include vocoder.  
-³ Dynamic speed control via interpolation (0.5–1.5) or reference prompt inference.  
+³ Dynamic speed control via interpolation (0.5-1.5) or reference prompt inference.  
 ⁴ Main LLM component; includes separate vocoder/flow-matching decoder.
 
 ---
@@ -31,18 +31,18 @@
 **Native Speed Parameter:** `length_scale`
 - Float value; 1.0 = normal speed
 - >1.0 = slower; <1.0 = faster
-- No resampling required—modifies VITS duration directly
+- No resampling required-modifies VITS duration directly
 - Based on VITS/VITS2 architecture
 
 **Voices/Speakers:** 100+ voices across 35+ languages
-- Storage: Each voice is an independent ONNX model file (~10–20 MB per voice)
+- Storage: Each voice is an independent ONNX model file (~10-20 MB per voice)
 - Also available as piper-voices Hugging Face collection
 - Quality levels: `x_low`, `low`, `medium`, `high` (varies by voice and language)
 
 **Approximate Parameters/Footprint:**
 - ~15 million parameters per model (ONNX)
 - Total voice library: tens of GB (if downloading all languages/speakers)
-- Each model: typically 10–20 MB on disk (post-quantization)
+- Each model: typically 10-20 MB on disk (post-quantization)
 
 **License:** **GPL-3.0**
 - **IMPORTANT FORK CAVEAT:** Original rhasspy/piper (MIT) was archived and set read-only in October 2025.
@@ -68,7 +68,7 @@
 **Native Speed Parameter:** `speed`
 - Float multiplier; default 1.0
 - Affects playback speed without resampling
-- Common range: 0.5–1.5 (adjustable per-speaker)
+- Common range: 0.5-1.5 (adjustable per-speaker)
 
 **Voices/Speakers:** 8 distinct voices in single model
 - Names: Bella, Jasper, Luna, Bruno, Rosie, Hugo, Kiki, Leo
@@ -81,7 +81,7 @@
   - **Micro** (v0.8): 40M parameters (~40 MB)
   - **Mini** (v0.8): 80M parameters (~80 MB)
 - Includes embedded vocoder and G2P
-- Total footprint: 25–80 MB depending on variant
+- Total footprint: 25-80 MB depending on variant
 
 **License:** Apache 2.0
 
@@ -160,7 +160,7 @@
 - No separate voice files needed
 
 **Approximate Parameters/Footprint:** UNCONFIRMED
-- Based on VITS/VITS2 architecture, which typically ranges 100M–300M
+- Based on VITS/VITS2 architecture, which typically ranges 100M-300M
 - Requires separate BERT model (bert-base-uncased ~110M or bert-base-multilingual-uncased ~110M)
 - Total inference footprint: CPU real-time capable (estimated ~3GB VRAM for inference on A100)
 - Model produces ~10 seconds of speech in ~2 seconds on A100
@@ -186,15 +186,15 @@
 **Sample Rate:** 24000 Hz (increased from v1.0's 22050 Hz for higher quality)
 
 **Native Speed Parameter:** Multi-method control (not single parameter)
-- **Method 1 (Utterance-level):** Reference speech prompt inference—inherits tempo/duration from reference audio
-- **Method 2 (Word-level):** Dynamic speed control parameter (0.5–1.5 range)
-  - Implemented via prompt token interpolation (0.5–1.0 slows down) or downsampling (>1.0 speeds up)
+- **Method 1 (Utterance-level):** Reference speech prompt inference-inherits tempo/duration from reference audio
+- **Method 2 (Word-level):** Dynamic speed control parameter (0.5-1.5 range)
+  - Implemented via prompt token interpolation (0.5-1.0 slows down) or downsampling (>1.0 speeds up)
   - More fine-grained control than utterance-level
 - **Method 3 (Instruction tokens):** `speed` in instruction string (part of instruct2 mode)
 - No resampling; uses flow-matching decoder
 
 **Voices/Speakers:** Unlimited (zero-shot)
-- No discrete voice set; uses reference audio clip (3–10 seconds) for voice cloning
+- No discrete voice set; uses reference audio clip (3-10 seconds) for voice cloning
 - Supports cross-lingual zero-shot cloning
 - No speaker embedding table needed
 - 18+ Chinese dialects/accents available via instruct mode (e.g., "用四川话说这句话")
@@ -235,10 +235,10 @@
 |-----------|-------|-----------|-----------|---------|-----------------|
 | **Smallest footprint** | ✓ (per-voice ~15MB) | ✓ (nano 25MB) | ✓ (82M single) | ✗ (BERT+model) | ✗ (multi-component) |
 | **Fastest inference (CPU)** | ✓ | ✓ | ✓ | ✓ (real-time) | ✗ (needs GPU for speed) |
-| **Most voices/flexibility** | ✓ (100+ discrete) | ✗ (8 only) | ✓ (54, multilingual) | ✗ (5–10 per lang) | ✓✓ (unlimited zero-shot) |
-| **Best audio quality** | – | – | – | – | ✓✓ (state-of-the-art) |
+| **Most voices/flexibility** | ✓ (100+ discrete) | ✗ (8 only) | ✓ (54, multilingual) | ✗ (5-10 per lang) | ✓✓ (unlimited zero-shot) |
+| **Best audio quality** | - | - | - | - | ✓✓ (state-of-the-art) |
 | **Most permissive license** | ✗ (GPL-3.0) | ✓ (Apache 2.0) | ✓ (Apache 2.0) | ✓ (MIT) | ✓ (Apache 2.0) |
-| **Native speed control** | `length_scale` | `speed` | `speed` | `speed` | 0.5–1.5 or prompt-based |
+| **Native speed control** | `length_scale` | `speed` | `speed` | `speed` | 0.5-1.5 or prompt-based |
 | **Requires external deps** | espeak-ng | misaki (built-in) | misaki + optional espeak-ng | BERT models | WeText/ttsfrd + Qwen2 |
 | **Multilingual** | ✓ (35+ langs) | ✗ (EN only) | ✓ (8 langs) | ✓ (6 langs) | ✓ (9+ langs, 18+ dialects) |
 
@@ -251,17 +251,17 @@
 **Do NOT resample to adjust speed.** All five models support native speed parameters:
 
 - **Piper, KittenTTS, Kokoro, MeloTTS:** Use native `length_scale` or `speed` parameter (preserves prosody).
-- **CosyVoice2:** Use dynamic speed control (0.5–1.5) or reference prompt inference (preserves style).
+- **CosyVoice2:** Use dynamic speed control (0.5-1.5) or reference prompt inference (preserves style).
 
 Resampling after synthesis degrades audio quality and defeats the purpose of fine-grained speed control.
 
-**Explicit, flagged exception (issue #43) — beyond-native tempo, playback-only:** for a user who
+**Explicit, flagged exception (issue #43) - beyond-native tempo, playback-only:** for a user who
 wants faster (or slower) than a model natively allows, the app offers `TempoStretch`, a separate,
-**off-by-default** `AudioTransform` that does a pitch-*preserving* WSOLA time-stretch (0.1x–10x) on
+**off-by-default** `AudioTransform` that does a pitch-*preserving* WSOLA time-stretch (0.1x-10x) on
 the **playback path only** (via `TransformingSink`), never blended with the native Speed parameter
-and never applied to generation/export. This is *not* the resampling forbidden above — resampling
+and never applied to generation/export. This is *not* the resampling forbidden above - resampling
 shifts pitch to fake speed; WSOLA preserves pitch. The native-speed rule for the Speed control is
-unchanged; this is a clearly-labeled, opt-in post-processing step ("Extra tempo boost — post-
+unchanged; this is a clearly-labeled, opt-in post-processing step ("Extra tempo boost - post-
 processed, not native").
 
 ### Text Frontend Dependencies
@@ -289,7 +289,7 @@ processed, not native").
 ## Source References
 
 - [Piper GitHub (Archived Original)](https://github.com/rhasspy/piper)
-- [Piper GitHub (Maintained Fork – OHF-Voice)](https://github.com/OHF-Voice/piper1-gpl)
+- [Piper GitHub (Maintained Fork - OHF-Voice)](https://github.com/OHF-Voice/piper1-gpl)
 - [Piper Voices Hugging Face](https://huggingface.co/rhasspy/piper-voices)
 - [KittenTTS GitHub](https://github.com/KittenML/KittenTTS)
 - [KittenTTS Documentation](https://kittenml-kittentts.mintlify.app/introduction)

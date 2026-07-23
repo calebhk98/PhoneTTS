@@ -17,13 +17,13 @@ import kotlinx.coroutines.flow.Flow
  * blockers, either one fatal on its own:
  *  1. Android's W^X / SELinux policy (enforced from `targetSdk` 29 onward, regardless of
  *     sideloading or root) refuses to execute or `dlopen()` code a non-privileged app downloads
- *     into its own storage at runtime — so "download a Python interpreter on demand" (the design
+ *     into its own storage at runtime - so "download a Python interpreter on demand" (the design
  *     this module started with) cannot work AT ALL, not just poorly.
- *  2. Even ignoring (1), PyTorch publishes no `arm64-Android` wheels — `manylinux` wheels are
- *     glibc-linked and Android is Bionic libc — and Chaquopy's unofficial community `torch` build
+ *  2. Even ignoring (1), PyTorch publishes no `arm64-Android` wheels - `manylinux` wheels are
+ *     glibc-linked and Android is Bionic libc - and Chaquopy's unofficial community `torch` build
  *     is documented as broken. There is no working torch runtime to provision even in principle.
  *
- * So this engine's [inspect] **always** returns null — not a heuristic that sometimes fails, a
+ * So this engine's [inspect] **always** returns null - not a heuristic that sometimes fails, a
  * hard, permanent "no" (CLAUDE.md rule 4: fail closed). It exists at all only so the registry has
  * a documented, harmless placeholder for this model family rather than silence; deleting this
  * module removes it with no other change (CLAUDE.md rule 5), exactly like every other engine.
@@ -42,14 +42,14 @@ internal class PyTorchEngine : VoiceEngine {
     /**
      * Always null (see class kdoc): there is no on-device runtime this engine could hand a match
      * to, so recognizing the bundle's *shape* would only be a lie about runnability. Deliberately
-     * does NOT consult [RawPyTorchBundle.looksLikeRawPyTorch] to decide — that helper answers "does
+     * does NOT consult [RawPyTorchBundle.looksLikeRawPyTorch] to decide - that helper answers "does
      * this look like a raw PyTorch checkpoint", a different question from "can I run it", and
      * conflating the two here is exactly the mistake rule 4 exists to prevent.
      */
     override fun inspect(bundle: ModelBundle): EngineMatch? = null
 
     /**
-     * Always throws (see class kdoc) — there is no runtime to load a match against, so honoring a
+     * Always throws (see class kdoc) - there is no runtime to load a match against, so honoring a
      * forced assignment would hand back a descriptor this engine can never actually [load]. Unlike
      * every other engine's `forcedMatch` (which fills in family defaults for the user's explicit
      * pick), refusing here is the honest behavior: [RawPyTorchBundle.looksLikeRawPyTorch] is
@@ -64,7 +64,7 @@ internal class PyTorchEngine : VoiceEngine {
             }
         throw UnsupportedOperationException(
             "$shapeNote, but PhoneTTS has no on-device PyTorch runtime (no arm64-Android torch build," +
-                " and Android blocks executing downloaded code — see engines/pytorch/INTEGRATION.md)." +
+                " and Android blocks executing downloaded code - see engines/pytorch/INTEGRATION.md)." +
                 " Convert it to ONNX (see :engines:melotts / k2-fsa/sherpa-onnx) or ExecuTorch" +
                 " (:engines:executorch) before using it with PhoneTTS.",
         )
@@ -77,7 +77,7 @@ internal class PyTorchEngine : VoiceEngine {
 
     override fun unload() = Unit
 
-    /** No model is ever loaded (see class kdoc) — honest empty list, never a fabricated default voice. */
+    /** No model is ever loaded (see class kdoc) - honest empty list, never a fabricated default voice. */
     override fun voices(): List<Voice> = emptyList()
 
     override fun synthesize(
@@ -88,9 +88,9 @@ internal class PyTorchEngine : VoiceEngine {
 
     companion object {
         const val ENGINE_ID = "pytorch"
-        private const val DISPLAY_NAME = "PyTorch (raw checkpoint) — unsupported on-device"
+        private const val DISPLAY_NAME = "PyTorch (raw checkpoint) - unsupported on-device"
 
         private const val NO_RUNTIME_MESSAGE =
-            "PyTorchEngine has no on-device runtime to load/synthesize with — see engines/pytorch/INTEGRATION.md"
+            "PyTorchEngine has no on-device runtime to load/synthesize with - see engines/pytorch/INTEGRATION.md"
     }
 }

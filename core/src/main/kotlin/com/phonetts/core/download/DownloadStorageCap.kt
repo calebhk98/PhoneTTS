@@ -2,7 +2,7 @@ package com.phonetts.core.download
 
 /**
  * The per-file download guard. Historically this was a FIXED 2 GB-per-file cap, which wrongly
- * blocked legitimately large models (a >2 GB weights file — e.g. a multi-gigabyte checkpoint — on a
+ * blocked legitimately large models (a >2 GB weights file - e.g. a multi-gigabyte checkpoint - on a
  * phone with plenty of free storage). The real constraint isn't a magic number, it's **free disk
  * space**: allow any file that actually fits, keeping a small margin so a download can't fill the
  * device to 0 bytes (which would wedge the app and the OS). SSOT for that policy lives here so the
@@ -23,7 +23,7 @@ object DownloadStorageCap {
 
     /**
      * True when a file of [fileBytes] cannot fit in [freeBytes] of free storage (keeping the
-     * margin). An unknown size ([fileBytes] null) returns false — we can't pre-judge it, so the
+     * margin). An unknown size ([fileBytes] null) returns false - we can't pre-judge it, so the
      * streaming guard ([capFor]) enforces the limit as the bytes actually arrive.
      */
     fun exceedsFreeStorage(

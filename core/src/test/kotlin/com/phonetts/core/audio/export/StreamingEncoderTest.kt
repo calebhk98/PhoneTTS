@@ -68,11 +68,11 @@ class StreamingEncoderTest {
         }
 
     // Regression guard for a real bug (app issue: WAV export produced a 0-byte / "can not be
-    // played" file): WavEncoder was constructed with NO scratchDir on Android — the default `null`
+    // played" file): WavEncoder was constructed with NO scratchDir on Android - the default `null`
     // falls back to `File.createTempFile`'s platform temp dir, which is writable on the plain JVM
     // these :core tests run under (masking the bug here) but NOT on Android, where openWriter()
-    // threw before a byte was written. This pins that the constructor parameter is actually used —
-    // not ignored — so that mistake can't silently return.
+    // threw before a byte was written. This pins that the constructor parameter is actually used -
+    // not ignored - so that mistake can't silently return.
     @Test
     fun scratchDirIsHonoredNotIgnored() =
         runTest {
@@ -80,10 +80,10 @@ class StreamingEncoderTest {
             try {
                 val out = ByteArrayOutputStream()
                 // WavEncoder.openWriter() creates its scratch temp file in the WavStreamWriter
-                // constructor, before any segment is written — so by the time the first chunk is
+                // constructor, before any segment is written - so by the time the first chunk is
                 // emitted, the scratch file must already exist INSIDE the directory we passed in
                 // (not silently redirected to the platform default temp dir, which is what actually
-                // shipped and broke WAV export on Android — see ExportFormats.kt).
+                // shipped and broke WAV export on Android - see ExportFormats.kt).
                 val probingFlow =
                     flow {
                         assertEquals(

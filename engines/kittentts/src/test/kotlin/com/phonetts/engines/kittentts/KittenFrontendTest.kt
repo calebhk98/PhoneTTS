@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 /**
  * Unit coverage for [KittenFrontend]: phonemize via the shared, injected
  * [com.phonetts.core.text.Phonemizer] seam, then map each IPA character through the fixed
- * StyleTTS2 symbol table and wrap the sequence with the pad id (0) at both ends — the contract
+ * StyleTTS2 symbol table and wrap the sequence with the pad id (0) at both ends - the contract
  * `scripts/model-verify/run_kitten.py` validated against the real model.
  */
 class KittenFrontendTest {

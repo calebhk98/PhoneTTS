@@ -8,7 +8,7 @@ import com.phonetts.core.model.ModelParameter
  * A validated automation job, ready to hand to the ONE generation path: the resolved model
  * [descriptor], the concrete [voiceId] to speak, and the [params] bag (speed routed to the model's
  * native knob, every other declared parameter at its default). This is the single object the
- * Android activity carries from planning into `synthesize(text, voiceId, params)` — no field is
+ * Android activity carries from planning into `synthesize(text, voiceId, params)` - no field is
  * re-derived downstream.
  */
 data class AutomationPlan(
@@ -17,7 +17,7 @@ data class AutomationPlan(
     val params: SynthesisParams,
 )
 
-/** Outcome of planning an [AutomationRequest] against the catalog — either a ready plan or a reason. */
+/** Outcome of planning an [AutomationRequest] against the catalog - either a ready plan or a reason. */
 sealed interface AutomationResult {
     data class Planned(val plan: AutomationPlan) : AutomationResult
 
@@ -29,7 +29,7 @@ sealed interface AutomationResult {
  * Turns a typed [AutomationRequest] plus the current catalog into an [AutomationResult]. Pure and
  * deterministic (no Android, no I/O) so the whole resolve/validate seam is unit-tested in `:core`.
  *
- * This adds NO synthesis logic — it only picks the descriptor/voice/params the existing
+ * This adds NO synthesis logic - it only picks the descriptor/voice/params the existing
  * `synthesize()` flow already consumes. Fail-closed throughout (CLAUDE.md rule 4): a missing field,
  * an unknown engine, or an unknown voice yields [AutomationResult.Invalid] rather than a guess.
  */
@@ -53,8 +53,8 @@ object AutomationPlanner {
         return AutomationResult.Planned(AutomationPlan(descriptor, voiceId, params))
     }
 
-    // Pick the model to speak with: the first descriptor for the requested engine, or — when no
-    // engine was named — the first model in the catalog. Null on no match; caller reports why.
+    // Pick the model to speak with: the first descriptor for the requested engine, or - when no
+    // engine was named - the first model in the catalog. Null on no match; caller reports why.
     private fun selectDescriptor(
         engineId: String?,
         catalog: List<ModelDescriptor>,
@@ -89,7 +89,7 @@ object AutomationPlanner {
 
     // Start from every declared parameter's default, then route the requested speed to the model's
     // native speed knob (coerced into its advertised range). A model with no speed knob ignores
-    // speed entirely — output is NEVER resampled to fake speed (CLAUDE.md rule 2).
+    // speed entirely - output is NEVER resampled to fake speed (CLAUDE.md rule 2).
     private fun buildParams(
         speed: Float?,
         descriptor: ModelDescriptor,

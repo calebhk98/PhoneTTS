@@ -1,14 +1,14 @@
 package com.phonetts.core.model
 
 /**
- * A downloaded model bundle sitting in app-private storage — the raw material an engine
+ * A downloaded model bundle sitting in app-private storage - the raw material an engine
  * inspects. Deliberately Android-free: it is just an id, the set of file names present,
  * and the small text "side files" (config.json, tokenizer, phoneme map, speaker table)
  * read into memory for fingerprinting. Large weights are referenced by name only via
  * [rootPath]; they are never loaded here.
  *
  * This shape is what makes `inspect()` unit-testable on a plain JVM: a test constructs a
- * fake bundle from a name set and a couple of side-file strings — no filesystem needed.
+ * fake bundle from a name set and a couple of side-file strings - no filesystem needed.
  */
 data class ModelBundle(
     val id: String,

@@ -4,19 +4,19 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Decodes a single Kokoro-on-ExecuTorch voice `.bin` file — VERIFIED (Hugging Face
+ * Decodes a single Kokoro-on-ExecuTorch voice `.bin` file - VERIFIED (Hugging Face
  * `software-mansion/react-native-executorch-kokoro`, `voices/<name>.bin`, each 522240 bytes) to be the
  * exact SAME raw layout `:engines:kokoro`'s `KokoroVoiceBinReader` already decodes for the ONNX
  * export: no header, little-endian float32, shape [ROWS, COLS] = [510, 256] flattened row-major.
- * Duplicated here (not shared via `:engines:common`) deliberately — this module depends on
+ * Duplicated here (not shared via `:engines:common`) deliberately - this module depends on
  * nothing but `:core` + `:engines:common`, same as every other engine module, so deleting this
  * directory removes ExecuTorch support cleanly with no cross-engine dependency to unwind.
  *
  * Unlike the ONNX Kokoro engine, which feeds the WHOLE selected row as one `style` input, the
  * ExecuTorch export's two-graph pipeline (VALIDATED: `NorbertKlockiewicz/kokoro-export`,
  * `demo/inference_example.py`) splits the row in two:
- *  - the duration predictor's `v_style` input is [styleSlice] — the LAST [STYLE_COLS] columns.
- *  - the synthesizer's `voice_vec` input is [voiceRow] — the FULL [COLS]-wide row.
+ *  - the duration predictor's `v_style` input is [styleSlice] - the LAST [STYLE_COLS] columns.
+ *  - the synthesizer's `voice_vec` input is [voiceRow] - the FULL [COLS]-wide row.
  *
  * so both are exposed here rather than one `styleRow` accessor like the ONNX reader.
  */

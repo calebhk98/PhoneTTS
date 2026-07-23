@@ -5,7 +5,7 @@ import java.nio.ByteOrder
 
 /**
  * Hand-builds raw little-endian float32 `voices/<name>.bin`-shaped byte layouts for Kokoro
- * voice-table tests — there is no numpy dependency (or a real `voices/<name>.bin` fixture file
+ * voice-table tests - there is no numpy dependency (or a real `voices/<name>.bin` fixture file
  * checked into this module) to read from, so tests construct the exact byte layout
  * [KokoroVoiceBinReader]/[KokoroVoiceTable] are expected to decode.
  */

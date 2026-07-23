@@ -78,7 +78,7 @@ class EngineHelpersTest {
     @Test
     fun singleFloatsOrErrorReadsTheSoleOutputRegardlessOfItsName() {
         // Some ONNX exports auto-number their output (e.g. MeloTTS's acoustic graph), so no fixed
-        // key can be hardcoded — the sole entry must still be readable positionally.
+        // key can be hardcoded - the sole entry must still be readable positionally.
         val outputs = mapOf("14035" to Tensor.floats(floatArrayOf(0.1f, 0.2f)))
         assertEquals(listOf(0.1f, 0.2f), outputs.singleFloatsOrError("X").toList())
     }

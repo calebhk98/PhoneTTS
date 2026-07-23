@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
  * CLAUDE.md rule 2: speed must route to the model's NATIVE parameter and audio must NEVER be
  * resampled to fake it. This shared [com.phonetts.core.runtime.NativeTtsRuntime] seam does not
  * yet carry a per-backend native speed argument (see [GgmlTtsEngine] KDoc "PARAMETERS"), so the
- * only rule-2-compliant behaviour — same as CosyVoice3 — is to advertise a LOCKED speed of 1.0
+ * only rule-2-compliant behaviour - same as CosyVoice3 - is to advertise a LOCKED speed of 1.0
  * (honest-closed) and never time-scale the native output. This proves both.
  */
 class GgmlTtsDescriptorTest {
@@ -34,7 +34,7 @@ class GgmlTtsDescriptorTest {
             engine.load(descriptor)
 
             // Even at a non-1.0 speed the descriptor's locked range would reject anything else, but
-            // 1.0 is the only legal value here — the point is the output length is untouched.
+            // 1.0 is the only legal value here - the point is the output length is untouched.
             val chunk = engine.synthesize("One sentence only.", descriptor.defaultVoiceId, 1.0f).toList().single()
 
             assertEquals(fixedAudio.size, chunk.size, "output length must equal the native audio (no resampling)")

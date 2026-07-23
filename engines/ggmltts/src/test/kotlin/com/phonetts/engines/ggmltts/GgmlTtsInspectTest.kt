@@ -13,7 +13,7 @@ import kotlin.test.assertNotNull
  * pair naming a non-blank backend and a positive sample rate is claimed, and a bundle whose
  * multiple voice manifests disagree is refused rather than guessed at. forcedMatch() never
  * refuses a user's explicit choice except when the bundle has no usable weights+manifest pair at
- * all — but per its own contract it is free to be more permissive about a backend/sample-rate
+ * all - but per its own contract it is free to be more permissive about a backend/sample-rate
  * mismatch than inspect()'s auto-detect is.
  */
 class GgmlTtsInspectTest {

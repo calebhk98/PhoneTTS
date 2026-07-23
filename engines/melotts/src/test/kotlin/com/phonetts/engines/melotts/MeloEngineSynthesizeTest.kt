@@ -17,7 +17,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 9.3/9.4 — synthesize() chunks via TextChunker and, for each chunk, runs the frontend (built
+ * 9.3/9.4 - synthesize() chunks via TextChunker and, for each chunk, runs the frontend (built
  * from the injected [MeloEngine]'s `tokens.txt`/`lexicon.txt` reader seam) then the PROVEN
  * 7-input acoustic contract (`scripts/model-verify/run_melo2.py`): `x`/`x_lengths`/`tones`/`sid`/
  * `noise_scale`/`length_scale`/`noise_scale_w`. Speed routes INVERSELY into `length_scale` (spec

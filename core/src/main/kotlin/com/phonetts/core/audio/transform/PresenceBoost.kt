@@ -2,7 +2,7 @@ package com.phonetts.core.audio.transform
 
 // Lifts the presence band (~3 kHz, where consonant detail and intelligibility live) with a peaking
 // biquad. Tiny phone speakers are weak exactly there, so a gentle boost makes speech cut through
-// without turning up overall volume. Timbre only, per segment, non-destructive — playback speed is
+// without turning up overall volume. Timbre only, per segment, non-destructive - playback speed is
 // never touched (rule 2). Center/gain/Q are this transform's own tuning constants.
 private const val DEFAULT_CENTER_HZ = 3000f
 private const val DEFAULT_GAIN_DB = 5f

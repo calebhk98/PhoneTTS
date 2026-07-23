@@ -8,7 +8,7 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 
 /**
  * Reads a user-picked file (via the Storage Access Framework) and turns it into text for the
- * synthesizer input box. The format logic is entirely the modular [TextExtractorRegistry]'s job —
+ * synthesizer input box. The format logic is entirely the modular [TextExtractorRegistry]'s job -
  * this class only bridges a content Uri to bytes + name + MIME. Adding a new file type is
  * registering one more extractor, nothing here changes.
  */

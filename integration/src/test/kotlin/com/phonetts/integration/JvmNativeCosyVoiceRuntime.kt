@@ -5,7 +5,7 @@ import com.phonetts.core.runtime.NativeTtsRuntime
 import com.phonetts.core.runtime.NativeTtsSession
 import com.phonetts.core.runtime.RuntimeOptions
 
-// Desktop twin of the app's NativeCosyVoiceRuntime — identical Kotlin logic over the JVM JNI binding
+// Desktop twin of the app's NativeCosyVoiceRuntime - identical Kotlin logic over the JVM JNI binding
 // ([JvmCosyVoiceNative]) instead of the Android one. Registered under the same id "cosyvoice" the
 // CosyVoice engine asks for, so the real pipeline resolves and drives it unchanged.
 internal class JvmNativeCosyVoiceRuntime : NativeTtsRuntime {

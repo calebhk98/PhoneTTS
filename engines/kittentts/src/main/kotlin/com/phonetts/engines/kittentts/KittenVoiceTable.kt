@@ -6,14 +6,14 @@ import java.util.zip.ZipInputStream
 
 /**
  * Parses KittenTTS's real voice table, `voices.npz` (docs/research/onnx-io.md, VALIDATED): a
- * plain ZIP archive of 8 `.npy` v1.0 arrays, each `(1, 256)` float32 — one StyleTTS2 style
+ * plain ZIP archive of 8 `.npy` v1.0 arrays, each `(1, 256)` float32 - one StyleTTS2 style
  * embedding per named voice (`expr-voice-2-m`, `expr-voice-2-f`, ...). A voice's id/name is its
  * `.npy` entry name with the suffix stripped; the float payload itself is decoded by [NpyArray].
  *
  * Unlike `com.phonetts.engines.kokoro.KokoroVoiceTable`'s JSON stand-in for Kokoro's own `.npz`,
  * this genuinely parses the binary format: [com.phonetts.core.model.ModelBundle] excludes `.npz`
  * from its text side files (it is weight-shaped binary, not fingerprinting-sized text), so
- * `inspect()`/`forcedMatch()` can only confirm a `voices.npz` file is *present* by name — they
+ * `inspect()`/`forcedMatch()` can only confirm a `voices.npz` file is *present* by name - they
  * cannot read its contents. [KittenEngine.load] is what has real bytes (via its injected
  * `fileReader` seam) to hand this parser.
  */

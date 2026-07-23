@@ -119,7 +119,7 @@ class TournamentTest {
         // 5 entries: round 1 has one bye (e5); the resulting 3 survivors give another bye next round.
         val tournament = Tournament(contenders("e1", "e2", "e3", "e4", "e5"))
 
-        // e5 never appears in a pairing during round 1 — it advances on the bye.
+        // e5 never appears in a pairing during round 1 - it advances on the bye.
         assertEquals(Pairing(1, contender("e1"), contender("e2")), tournament.nextPairing())
         tournament.recordWinner("e1")
         assertEquals(Pairing(1, contender("e3"), contender("e4")), tournament.nextPairing())

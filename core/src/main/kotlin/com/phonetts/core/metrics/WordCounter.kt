@@ -2,7 +2,7 @@ package com.phonetts.core.metrics
 
 /**
  * Exact word counting for whatever text is about to be handed to `synthesize()`. This is a
- * real count of the actual input string — never an estimate or an assumed reading speed —
+ * real count of the actual input string - never an estimate or an assumed reading speed -
  * so anything downstream that treats the result as a "measurement" (e.g. [RtfEstimator],
  * or a caller wiring up [trackGeneration]'s `totalWords`) stays honest.
  */

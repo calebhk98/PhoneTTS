@@ -7,7 +7,7 @@ import com.tom_roush.pdfbox.text.PDFTextStripper
 
 /**
  * The one extractor that needs a library: PDF text extraction via PDFBox-Android (Android has no
- * built-in PDF text API — PdfRenderer only rasterizes). Lives in :app because of that dependency;
+ * built-in PDF text API - PdfRenderer only rasterizes). Lives in :app because of that dependency;
  * the plain-text/Markdown/.docx extractors are pure-JVM and live in :core.
  *
  * Requires `PDFBoxResourceLoader.init(applicationContext)` once at app startup (Application.onCreate)

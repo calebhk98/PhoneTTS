@@ -7,17 +7,17 @@ import com.phonetts.core.runtime.NativeTtsSession
 import com.phonetts.core.runtime.RuntimeOptions
 
 /**
- * The concrete native ggml backend for CosyVoice — the "second, non-ONNX runtime" the spec
+ * The concrete native ggml backend for CosyVoice - the "second, non-ONNX runtime" the spec
  * anticipated (§5.3), registered under the id `"cosyvoice"` that [com.phonetts.engines.cosyvoice2]
  * asks for. It wraps CrispStrobe/CrispASR's self-contained C++/ggml `cosyvoice3_tts` engine (Qwen2
  * LLM + DiT-CFM flow + HiFi-GAN/iSTFT HiFT + native BPE), which does the ENTIRE text→audio pipeline
- * in one call — proven end-to-end in `scripts/model-verify/run_cosy_native.sh`. It therefore
+ * in one call - proven end-to-end in `scripts/model-verify/run_cosy_native.sh`. It therefore
  * implements [NativeTtsRuntime], not the ONNX [com.phonetts.core.runtime.Runtime].
  *
  * NATIVE STATUS: the JNI declarations ([CosyVoiceNative]) and this Kotlin side COMPILE and are
  * wired; the underlying `cosyvoice3_tts` sources are proven on desktop and vendored for the NDK
  * build via `scripts/fetch-cosyvoice-ggml.sh`. The lib is opt-in (`-PwithCosyVoice=true`); when it
- * isn't built, [isAvailable] returns false and CosyVoice is never offered — the rest of the app
+ * isn't built, [isAvailable] returns false and CosyVoice is never offered - the rest of the app
  * assembles and runs unchanged.
  */
 class NativeCosyVoiceRuntime : NativeTtsRuntime {
@@ -30,7 +30,7 @@ class NativeCosyVoiceRuntime : NativeTtsRuntime {
         options: RuntimeOptions,
     ): NativeTtsSession {
         check(CosyVoiceNative.isLibraryLoaded) {
-            "libphonetts_cosyvoice.so is not loaded — build the app with -PwithCosyVoice=true to enable CosyVoice"
+            "libphonetts_cosyvoice.so is not loaded - build the app with -PwithCosyVoice=true to enable CosyVoice"
         }
         val handle =
             CosyVoiceNative.nativeInit(
@@ -59,7 +59,7 @@ class NativeCosyVoiceRuntime : NativeTtsRuntime {
 /**
  * One loaded CosyVoice3 pipeline. [synthesize] runs the entire native text→audio decode for one
  * utterance and hands back finished PCM; [close] frees the native handle. Blocking, like the ONNX
- * [com.phonetts.core.runtime.InferenceSession] — synthesis already runs off the main thread.
+ * [com.phonetts.core.runtime.InferenceSession] - synthesis already runs off the main thread.
  */
 private class NativeCosyVoiceSession(
     private val handle: Long,

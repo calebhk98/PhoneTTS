@@ -9,7 +9,7 @@ import com.phonetts.engines.common.json.asStringOrNull
  * Parses MeloTTS's `metadata.json` companion file (MiaoMint/MeloTTS-ONNX `onnx_exports/en_v2`),
  * e.g. `{"model_type":"melo-vits","language_code":"en","add_blank":1,"n_speakers":5,
  * "sample_rate":44100,"speaker_id":0,"lang_id":2,"tone_start":7,...}`. This is the SSOT for the
- * facts [MeloEngine.inspect] fingerprints the bundle by and builds its descriptor from — the
+ * facts [MeloEngine.inspect] fingerprints the bundle by and builds its descriptor from - the
  * sample rate, voice count, and default speaker come from HERE, never a hardcoded literal.
  */
 object MeloMetadata {
@@ -21,7 +21,7 @@ object MeloMetadata {
         val sampleRate: Int?,
         val speakerId: Int?,
     ) {
-        /** True if this metadata identifies a melo-vits export — the fingerprint [MeloEngine] fails closed on. */
+        /** True if this metadata identifies a melo-vits export - the fingerprint [MeloEngine] fails closed on. */
         fun isMeloVits(): Boolean =
             modelType.equals(MODEL_TYPE_MARKER, ignoreCase = true) ||
                 comment?.contains(COMMENT_MARKER, ignoreCase = true) == true

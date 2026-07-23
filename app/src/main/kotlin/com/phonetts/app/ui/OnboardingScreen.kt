@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.builtin.BuiltInCatalog
 
 // One walkthrough page. Kept as data so the carousel is a list to page through, not a pyramid of
-// conditionals — the last page is the call-to-action that dismisses onboarding.
+// conditionals - the last page is the call-to-action that dismisses onboarding.
 private data class OnboardingPage(
     val title: String,
     val body: String,
@@ -42,11 +42,11 @@ private data class OnboardingPage(
 private fun onboardingPages(): List<OnboardingPage> {
     val smallest = BuiltInCatalog.ALL.minByOrNull { it.approxSizeMb }
     val exampleLine =
-        smallest?.let { "e.g. ${it.displayName} — about ${it.approxSizeMb} MB, downloaded one time." }
+        smallest?.let { "e.g. ${it.displayName} - about ${it.approxSizeMb} MB, downloaded one time." }
     return listOf(
         OnboardingPage(
             title = "Welcome to PhoneTTS",
-            body = "An offline text-to-speech reader. Paste or share text, pick a voice, and listen — " +
+            body = "An offline text-to-speech reader. Paste or share text, pick a voice, and listen - " +
                 "no account, no cloud.",
         ),
         OnboardingPage(
@@ -62,7 +62,7 @@ private fun onboardingPages(): List<OnboardingPage> {
         ),
         OnboardingPage(
             title = "3. Fully offline after that",
-            body = "Once a model is on the phone, every word is synthesized on-device — on a plane, " +
+            body = "Once a model is on the phone, every word is synthesized on-device - on a plane, " +
                 "underground, or in airplane mode. Nothing you read leaves the phone.",
         ),
     )
@@ -72,7 +72,7 @@ private fun onboardingPages(): List<OnboardingPage> {
  * First-run walkthrough: a small static carousel explaining "pick a model → download once → fully
  * offline after that", shown once for a fresh install instead of dropping the user into an empty
  * model list. Purely informational and offline-safe. [onFinish] is called when the user taps
- * through the last page or skips — the caller records that so it never shows again.
+ * through the last page or skips - the caller records that so it never shows again.
  */
 @Composable
 fun OnboardingScreen(onFinish: () -> Unit) {

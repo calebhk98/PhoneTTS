@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * The deterministic, pure-Kotlin slice of the espeak-ng phoneme pipeline (spec §9 — test the
+ * The deterministic, pure-Kotlin slice of the espeak-ng phoneme pipeline (spec §9 - test the
  * plumbing, not the audio). The native call itself (`espeak_jni.cpp` -> [EspeakIpaNormalizer])
  * can't run on a JVM-only CI job; this covers everything downstream of it.
  */
@@ -29,7 +29,7 @@ class EspeakIpaNormalizerTest {
     @Test
     fun leavesStressAndLengthMarksUntouched() {
         // ˈ (primary stress), ˌ (secondary stress), ː (length) are real phoneme-map entries,
-        // not decorations — must survive normalization unchanged.
+        // not decorations - must survive normalization unchanged.
         assertEquals("ˈhɛloʊ ˌwɜːld", EspeakIpaNormalizer.normalize("ˈhɛloʊ ˌwɜːld"))
     }
 

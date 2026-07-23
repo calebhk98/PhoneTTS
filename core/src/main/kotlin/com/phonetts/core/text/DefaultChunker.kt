@@ -11,7 +11,7 @@ package com.phonetts.core.text
  *  - **Abbreviations** ("Mr.", "Dr.", "etc.", "e.g.", ...): a `.` is not a sentence end when the
  *    word immediately before it is a known abbreviation, or when the `.` is immediately followed by
  *    another letter with no intervening space (the pattern inside multi-dot abbreviations like
- *    "e.g." and "i.e." — a genuine sentence-ending `.` is always followed by whitespace or the end
+ *    "e.g." and "i.e." - a genuine sentence-ending `.` is always followed by whitespace or the end
  *    of the text, never glued straight onto the next word).
  *  - **Decimals** ("3.14"): a `.` between two digits is never a sentence end.
  *  - **Max chunk length**: terminator-free (or terminator-sparse) text is still bounded. Once a
@@ -23,14 +23,14 @@ object DefaultChunker : Chunker {
     private val terminators = charArrayOf('.', '!', '?', '\n', '…', ';')
 
     // Abbreviations matched as a whole word immediately before a '.' (case-insensitive). Kept small
-    // and common on purpose—a wrong guess here just merges two sentences, it never drops text.
+    // and common on purpose-a wrong guess here just merges two sentences, it never drops text.
     private val abbreviations =
         setOf(
             "mr", "mrs", "ms", "dr", "prof", "st", "jr", "sr", "gen", "rev", "capt", "sgt", "col",
             "lt", "maj", "vs", "etc", "inc", "ltd", "co", "no", "e.g", "i.e", "u.s", "u.k", "a.m", "p.m",
         )
 
-    // Multi-dot abbreviations matched as a literal suffix ending exactly at the '.' under test —
+    // Multi-dot abbreviations matched as a literal suffix ending exactly at the '.' under test -
     // the letters-only word scan above can't see across their embedded dots (e.g. the "g" before the
     // final '.' in "e.g." isn't a word on its own), so these are checked directly against the text.
     private val dottedAbbreviations = listOf("e.g.", "i.e.", "u.s.", "u.k.", "a.m.", "p.m.")
@@ -97,7 +97,7 @@ object DefaultChunker : Chunker {
 
     // A real sentence-ending '.' is always followed by whitespace or end-of-text. One glued directly
     // to another letter is either an embedded abbreviation dot ("e.g.", "i.e.") or something
-    // domain/identifier-like—either way, not a sentence break.
+    // domain/identifier-like-either way, not a sentence break.
     private fun isGluedToNextLetter(
         text: String,
         index: Int,

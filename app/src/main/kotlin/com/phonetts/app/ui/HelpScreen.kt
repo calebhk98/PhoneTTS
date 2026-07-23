@@ -6,8 +6,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -17,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,7 +28,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.builtin.BuiltInCatalog
@@ -34,7 +40,7 @@ import com.phonetts.core.update.UpdateStatus
 /**
  * In-app help: how to add a voice model, which recommended models exist (read from
  * [BuiltInCatalog] so this can never drift from the actual one-tap list), what a bring-your-own
- * model needs per engine, and troubleshooting. Pure guidance UI — it names no model fact that
+ * model needs per engine, and troubleshooting. Pure guidance UI - it names no model fact that
  * drives another control; the recommended list is the single source of truth it derives from.
  */
 @Composable
@@ -46,6 +52,10 @@ fun HelpScreen(
     repoUrl: String,
     currentTheme: AppTheme,
     onThemeSelected: (AppTheme) -> Unit,
+    // The durable error log's rows, newest-first, already formatted to one line each (see
+    // MainActivity). Surfaced here (issue #109) so the user has a copyable "why" when a model - e.g. a
+    // LiteRT .tflite - fails to load or run.
+    errorLogEntries: List<String> = emptyList(),
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -59,25 +69,25 @@ fun HelpScreen(
             Bullet("Tap Browse models → the Recommended (one-tap) section for a working voice in one tap.")
             Bullet("Or search Hugging Face in Browse models and tap Download on a result.")
             Bullet("Or Sideload folder to add a model you already copied onto the phone.")
-            Bullet("Everything after the download runs fully offline — no network is used to speak.")
+            Bullet("Everything after the download runs fully offline - no network is used to speak.")
         }
 
         Section("Recommended models (one-tap)") {
             BuiltInCatalog.ALL.forEach { model ->
-                Text("• ${model.displayName} — ~${model.approxSizeMb} MB", fontWeight = FontWeight.Medium)
+                Text("• ${model.displayName} - ~${model.approxSizeMb} MB", fontWeight = FontWeight.Medium)
                 model.note?.let { Body("   $it") }
             }
         }
 
         Section("Bringing your own model") {
-            Body("The app auto-detects a model from its files. A lone .onnx usually isn't enough — grab these:")
+            Body("The app auto-detects a model from its files. A lone .onnx usually isn't enough - grab these:")
             Engine("Piper", "rhasspy/piper-voices", "<voice>.onnx + <voice>.onnx.json. Any voice/language works.")
             Engine("KittenTTS", "KittenML/kitten-tts-nano-*", "<model>.onnx + config.json + voices.npz. Tiny, English.")
             Engine(
                 "Kokoro-82M",
                 "onnx-community/Kokoro-82M-v1.0-ONNX",
                 "onnx/model.onnx (fp32) + config.json + tokenizer.json + voices/<name>.bin. " +
-                    "Use fp32 — q8f16 crashes.",
+                    "Use fp32 - q8f16 crashes.",
             )
             Engine(
                 "MeloTTS",
@@ -86,24 +96,95 @@ fun HelpScreen(
             )
         }
 
+        Section("Which model formats work, and which cannot") {
+            Body(
+                "This app runs models on ONNX and a native GGUF/LiteRT backend. A model has to already " +
+                    "be in a format the app's own runtimes read - it cannot run a format by downloading " +
+                    "and executing new code, which Android blocks.",
+            )
+            Bullet("Works now: ONNX (.onnx), and native GGUF stacks (like the recommended CosyVoice3).")
+            Bullet(
+                "Needs converting first: raw PyTorch or safetensors, NVIDIA NeMo (.nemo), and " +
+                    "TensorFlow Lite (.tflite). These can often be converted to ONNX on a computer, then " +
+                    "sideloaded here.",
+            )
+            Bullet(
+                "Cannot run here at all: Apple MLX (Metal) and Apple CoreML (Neural Engine). They only " +
+                    "run on Apple hardware and there is no Android runtime for them - this is not a " +
+                    "'coming soon', they will never run in this app. Look for an ONNX or LiteRT sibling " +
+                    "of the model instead.",
+            )
+        }
+
+        ErrorLogSection(errorLogEntries)
+
         Section("Troubleshooting") {
             Q("No sound, or it's garbled?", "Piper/Kitten/Kokoro need the espeak add-on in the build; MeloTTS doesn't.")
-            Q("Which Kokoro file?", "The fp32 onnx/model.onnx — the q8f16 one crashes the runtime.")
+            Q("Which Kokoro file?", "The fp32 onnx/model.onnx - the q8f16 one crashes the runtime.")
             Q(
                 "MeloTTS won't work?",
                 "Use the MiaoMint sherpa export (with tokens.txt/lexicon.txt), not myshell-ai/MeloTTS.",
             )
             Q(
                 "It asked me to pick an engine?",
-                "It couldn't identify the model — pick the matching engine; it's remembered.",
+                "It couldn't identify the model - pick the matching engine; it's remembered.",
             )
             Q("Freeing space?", "Manage models shows each model's size and lets you delete it.")
         }
     }
 }
 
+// The durable error log (issue #109): survives process death, so a model that failed to load/run on a
+// previous run is still explainable. Only offers the viewer once something is recorded; the dialog is
+// selectable + copyable ("Copy all") so the user can paste a full report rather than screenshot it -
+// mirroring the Browse screen's ErrorLogDialog.
+@Composable
+private fun ErrorLogSection(entries: List<String>) {
+    var showLog by remember { mutableStateOf(false) }
+    Section("Error log") {
+        if (entries.isEmpty()) {
+            Body("No errors recorded yet. If a model fails to load or speak, the reason shows up here.")
+            return@Section
+        }
+        Body("Recorded reasons a model failed to load or run - copy these when reporting a problem.")
+        OutlinedButton(onClick = { showLog = true }) { Text("View error log (${entries.size})") }
+    }
+    if (showLog) {
+        ErrorLogDialog(entries = entries, onDismiss = { showLog = false })
+    }
+}
+
+@Composable
+private fun ErrorLogDialog(
+    entries: List<String>,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    val fullText = remember(entries) { entries.joinToString("\n\n") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+        },
+        title = { Text("Error log") },
+        text = {
+            SelectionContainer {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    entries.forEach { entry ->
+                        Text(entry, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+    )
+}
+
 // Version + a manual update check. The app also checks automatically at launch (silent unless a
-// newer build exists); this button lets the user re-check on demand and always gives feedback —
+// newer build exists); this button lets the user re-check on demand and always gives feedback -
 // "Up to date (v…)", a download offer, or a note when the check couldn't reach GitHub. Installing is
 // always the user's choice (offer, never force): Download only opens the APK URL in the browser.
 @Composable
@@ -143,7 +224,7 @@ private fun ThemeSection(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Section("Appearance") {
-        Body("Pick a color theme — sepia and true-black are tuned for long reading / OLED battery.")
+        Body("Pick a color theme - sepia and true-black are tuned for long reading / OLED battery.")
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
             TextField(
                 value = currentTheme.displayName,

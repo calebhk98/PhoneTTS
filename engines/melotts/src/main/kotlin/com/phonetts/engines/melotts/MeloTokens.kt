@@ -3,7 +3,7 @@ package com.phonetts.engines.melotts
 /**
  * Parses MeloTTS's `tokens.txt` companion file (MiaoMint/MeloTTS-ONNX `onnx_exports/en_v2`,
  * proven end-to-end by `scripts/model-verify/run_melo2.py`): one `"<symbol> <id>"` pair per line,
- * e.g. `_ 0`, `AA 7`. This IS the model's symbol table — read from the bundled model, not a
+ * e.g. `_ 0`, `AA 7`. This IS the model's symbol table - read from the bundled model, not a
  * hardcoded constant (SSOT, spec rule 1). A malformed line is skipped rather than failing the
  * whole parse, so one stray line in a large export can't take down loading.
  */

@@ -26,7 +26,7 @@ import com.phonetts.app.Screen
 import kotlinx.coroutines.launch
 
 // The destination list every drawer (main screen and every sub-page) offers, paired with its
-// label. This is the SSOT for "what can I jump to" — TtsScreen's own drawer and this one both draw
+// label. This is the SSOT for "what can I jump to" - TtsScreen's own drawer and this one both draw
 // from the same [Screen] enum, so registering a new destination is a one-line addition here rather
 // than a per-screen special case (a "Sideload folder" launcher isn't a [Screen], so it stays out of
 // this list and lives only in TtsScreen, which owns that launcher).
@@ -45,7 +45,7 @@ private val NAV_DESTINATIONS: List<Pair<Screen, String>> =
 /**
  * The hamburger-drawer scaffold every sub-page (Browse, Manage, Benchmark, Help, Mix, Library,
  * Compare) uses, matching the main screen's layout: the hamburger lives on the left and there is
- * no back arrow (issue #1) — the same [Screen] destinations TtsScreen's own drawer lists are one
+ * no back arrow (issue #1) - the same [Screen] destinations TtsScreen's own drawer lists are one
  * tap away from anywhere in the app. [current] highlights where you are; [onNavigate] drives the
  * hamburger's destinations. [onBack] is currently unused by this scaffold but stays part of the
  * signature since other screens still pass it.

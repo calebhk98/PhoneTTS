@@ -5,7 +5,7 @@ import com.phonetts.engines.common.json.asIntOrNull
 import com.phonetts.engines.common.json.asObjectOrNull
 
 /**
- * Parses the phoneme vocabulary out of Kokoro's `tokenizer.json` companion file — the REAL table
+ * Parses the phoneme vocabulary out of Kokoro's `tokenizer.json` companion file - the REAL table
  * shipped by `onnx-community/Kokoro-82M-v1.0-ONNX`, PROVEN as the correct recipe by
  * `scripts/model-verify/run_kokoro.py` (`json.load(...)["model"]["vocab"]`). The file's shape is:
  * ```

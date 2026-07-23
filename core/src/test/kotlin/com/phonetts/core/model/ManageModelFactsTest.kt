@@ -23,7 +23,7 @@ class ManageModelFactsTest {
 
     @Test
     fun `a piper voice beyond the curated catalog entry still resolves by its id prefix`() {
-        // Not BuiltInCatalog.PIPER_LESSAC itself (that hits the catalog lookup above) — any other
+        // Not BuiltInCatalog.PIPER_LESSAC itself (that hits the catalog lookup above) - any other
         // voice from the dynamically-fetched PiperVoicesIndex list, recognized purely by its
         // `piper-` id prefix since the full list isn't retained as static data to search.
         assertEquals(PiperVoicesIndex.REPO_ID, InstalledModelFacts.hfRepoId("piper-de_DE-thorsten-medium"))

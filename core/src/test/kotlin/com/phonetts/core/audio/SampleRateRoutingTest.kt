@@ -7,7 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * 9.5 — proves the sample rate flowing into both consumers is the value the caller passed in
+ * 9.5 - proves the sample rate flowing into both consumers is the value the caller passed in
  * (i.e. read from [com.phonetts.core.model.ModelDescriptor.sampleRate]), never a hardcoded
  * constant. Parametrized over two different rates so a hardcoded value cannot pass both.
  */

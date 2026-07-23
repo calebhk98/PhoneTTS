@@ -15,7 +15,7 @@ import com.phonetts.core.text.Phonemizer
 
 /**
  * Records every `run` it is given (so a test can assert the engine placed the right native
- * speed parameter, spec §9.4) and returns [outputs] — configure these to whatever named output
+ * speed parameter, spec §9.4) and returns [outputs] - configure these to whatever named output
  * tensor the engine under test post-processes into audio.
  */
 class FakeSession(
@@ -59,7 +59,7 @@ class FakeRuntime(
 
 /**
  * Records every [NativeTtsRequest] it synthesizes (so a test can assert the engine handed the right
- * text + voice to the native pipeline) and returns audio from [audioFor] — configure these to the
+ * text + voice to the native pipeline) and returns audio from [audioFor] - configure these to the
  * PCM the engine under test emits as one sentence's chunk. [voiceNames]/[sampleRate] stand in for
  * what the real backend reads from the model's voices GGUF.
  */

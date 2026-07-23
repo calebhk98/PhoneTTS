@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 private const val RATE = 24_000
 
 // Seam tests for GeneratedAudio's opt-in long-document spill mode (issue #34). The guarantee under
-// test: spilling older chunks to disk is LOSSLESS — replay/read-back from index 0 returns exactly
+// test: spilling older chunks to disk is LOSSLESS - replay/read-back from index 0 returns exactly
 // what was generated, byte-for-byte, whether a chunk is served from RAM or from the scratch file.
 class GeneratedAudioSpillTest {
     @Test
@@ -25,7 +25,7 @@ class GeneratedAudioSpillTest {
 
         assertEquals(chunks.size, audio.count.value)
         assertTrue(spillFile.length() > 0, "older chunks should have been evicted to the scratch file")
-        // Replay from 0: every index — including the ones now living only on disk — is byte-identical.
+        // Replay from 0: every index - including the ones now living only on disk - is byte-identical.
         chunks.indices.forEach { index -> assertContentEquals(chunks[index], audio.chunkAt(index)) }
         audio.close()
         assertTrue(!spillFile.exists(), "close() should delete the scratch file")

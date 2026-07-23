@@ -2,7 +2,7 @@ package com.phonetts.core.engine
 
 /**
  * A user-defined voice built by blending two of a model's existing voices at a [weight] (issue #42).
- * This is the persisted, model-agnostic description of a mix — the recipe, not the audio: it names
+ * This is the persisted, model-agnostic description of a mix - the recipe, not the audio: it names
  * the two source voices and how far to interpolate between them, so the same in-between timbre can
  * be rebuilt whenever the model is loaded (the actual embedding is recomputed by the engine, never
  * stored). [modelId] scopes a spec to the model whose voices it references, so mixes made for one
@@ -33,7 +33,7 @@ interface BlendableVoices {
     /**
      * Register a new selectable voice whose embedding is [VoiceBlend.blend] of the two source
      * voices named in [spec]. Returns the created [Voice] (now included in [VoiceEngine.voices]),
-     * or null if either source voice id is unknown to the loaded model — fail closed rather than
+     * or null if either source voice id is unknown to the loaded model - fail closed rather than
      * inventing a voice. Must be called after the engine is loaded, when its voice embeddings exist.
      */
     fun addBlendedVoice(spec: BlendedVoiceSpec): Voice?

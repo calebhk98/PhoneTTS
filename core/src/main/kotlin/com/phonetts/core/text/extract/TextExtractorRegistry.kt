@@ -7,7 +7,7 @@ class UnsupportedFileTypeException(fileName: String, mimeType: String?) :
 /**
  * The modular registry of [TextExtractor]s. The file-import UI asks it to turn a picked file into
  * text; it picks the first extractor that claims the file and fails closed if none do. Register an
- * extractor for a new format and it is immediately usable — nothing else changes.
+ * extractor for a new format and it is immediately usable - nothing else changes.
  */
 class TextExtractorRegistry(extractors: List<TextExtractor> = emptyList()) {
     private val extractors = extractors.toMutableList()

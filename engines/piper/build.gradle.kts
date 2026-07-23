@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // A single engine module. It depends ONLY on :core's generic seams (VoiceEngine, the
 // Runtime/InferenceSession/Tensor inference seam, Phonemizer, EngineProvider). It knows
-// nothing about any other model, and nothing outside this module references it — deleting
+// nothing about any other model, and nothing outside this module references it - deleting
 // this directory + its settings include removes the model cleanly (spec §1.1.6).
 plugins {
     alias(libs.plugins.kotlin.jvm)

@@ -6,7 +6,7 @@ import kotlin.test.assertTrue
 
 /**
  * [RawPyTorchBundle.looksLikeRawPyTorch] is a pure shape detector, deliberately decoupled from any
- * claim of runnability (see [PyTorchEngine]'s kdoc) — these tests only exercise the shape logic
+ * claim of runnability (see [PyTorchEngine]'s kdoc) - these tests only exercise the shape logic
  * itself: a recognized weight extension + `config.json`, and never an `.onnx` file (which belongs
  * to a different, actually-runnable engine).
  */
@@ -39,7 +39,7 @@ class RawPyTorchBundleTest {
 
     @Test
     fun `never claims a bundle that also carries an onnx graph`() {
-        // An ONNX-packaged bundle belongs to a different, actually runnable engine — even if it
+        // An ONNX-packaged bundle belongs to a different, actually runnable engine - even if it
         // happens to ship a raw .pth/.ckpt/.bin alongside it (e.g. the original training checkpoint
         // next to its exported graph), this is not "raw PyTorch" for this helper's purposes.
         assertFalse(RawPyTorchBundle.looksLikeRawPyTorch(setOf("checkpoint.pth", "config.json", "model.onnx")))

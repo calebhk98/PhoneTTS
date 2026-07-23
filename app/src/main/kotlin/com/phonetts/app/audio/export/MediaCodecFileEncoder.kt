@@ -12,7 +12,7 @@ import java.io.InputStream
 import java.io.OutputStream
 
 // Shared MediaCodec dequeue/drain plumbing used by both AacAudioEncoder and OpusAudioEncoder.
-// This is plain composition, NOT part of the core AudioEncoder hierarchy — that hierarchy already
+// This is plain composition, NOT part of the core AudioEncoder hierarchy - that hierarchy already
 // eliminates the flow-drain/transform duplication (AudioEncoder.encode is inherited by every
 // child, WavEncoder included). This class exists one level below that: it stops the two
 // MediaCodec-backed children from each re-implementing the same encoder-loop boilerplate.

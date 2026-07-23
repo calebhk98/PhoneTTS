@@ -7,7 +7,7 @@ import com.phonetts.core.engine.Voice
  * the [com.phonetts.core.resolver.Resolver] / [com.phonetts.core.resolver.OverrideStore] split:
  * `:core` holds the pure logic, `:app` supplies the SharedPreferences-backed store).
  *
- * Every method here takes a [Voice], never a bare id string — callers must source that [Voice]
+ * Every method here takes a [Voice], never a bare id string - callers must source that [Voice]
  * from `descriptor.voices` (spec §5.7, SSOT: the descriptor is the sole authority for voices).
  * This class only persists the user's *choice* among those voices; it never invents one.
  */

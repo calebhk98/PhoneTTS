@@ -5,9 +5,9 @@ import com.phonetts.core.engine.TextFrontend
 import com.phonetts.core.text.Phonemizer
 
 /**
- * Piper's text frontend: espeak-ng phonemization (shared, via [EngineContext.phonemizer] —
+ * Piper's text frontend: espeak-ng phonemization (shared, via [EngineContext.phonemizer] -
  * the [phonemizer] injected here) followed by the model's OWN phoneme->id mapping, which is
- * per-voice data ([phonemeIdMap], read from that voice's `.onnx.json` sidecar) — never a
+ * per-voice data ([phonemeIdMap], read from that voice's `.onnx.json` sidecar) - never a
  * shared/global table (spec §5.2).
  *
  * Mirrors Piper's own `phonemes_to_ids`: wrap the phoneme sequence in BOS/EOS markers and

@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 class DirectoryBundleReaderTest {
     private fun tempModelDir(): File {
         val dir = Files.createTempDirectory("bundle").toFile()
-        File(dir, "model.onnx").writeBytes(ByteArray(2048)) // "weights" — name only, not read in
+        File(dir, "model.onnx").writeBytes(ByteArray(2048)) // "weights" - name only, not read in
         File(dir, "config.json").writeText("""{"model_type":"demo"}""")
         File(dir, "tokens.txt").writeText("a b c")
         return dir

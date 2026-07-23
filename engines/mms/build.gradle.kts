@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // The MMS / Facebook-VITS engine module (Xenova/mms-tts-* family). Depends ONLY on :core's
-// generic seams + :engines:common, exactly like every other engine module — deleting this
+// generic seams + :engines:common, exactly like every other engine module - deleting this
 // directory + its settings include removes the model cleanly.
 plugins {
     alias(libs.plugins.kotlin.jvm)

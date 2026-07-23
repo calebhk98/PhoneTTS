@@ -27,7 +27,7 @@ internal val SAMPLE_VOCAB_TEXT = listOf(" ", "!", "a", "b", "c", "h", "i").joinT
 
 /**
  * Builds minimal RIFF/WAVE PCM16 bytes from [interleavedSamples] (frame-major, [channels] samples
- * per frame) — just enough of the format for [F5WavDecoder] to round-trip, used both by
+ * per frame) - just enough of the format for [F5WavDecoder] to round-trip, used both by
  * `F5WavDecoderTest` directly and to fabricate bundled reference clips for engine-level tests.
  */
 internal fun buildWavBytes(

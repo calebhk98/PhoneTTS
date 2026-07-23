@@ -12,7 +12,7 @@ import java.io.File
 /**
  * Android glue for "download a model, then select it and use it" (spec §4 Phase 3).
  *
- * The user picks a folder — e.g. an unzipped Hugging Face model sitting in Downloads — with the
+ * The user picks a folder - e.g. an unzipped Hugging Face model sitting in Downloads - with the
  * Storage Access Framework (`ACTION_OPEN_DOCUMENT_TREE`). We copy it into app-private storage
  * (spec §8: weights live in app-private storage, never bundled) and hand that plain filesystem
  * path to the tested core [ModelImporter], which reads it with `DirectoryBundleReader`, resolves
@@ -21,7 +21,7 @@ import java.io.File
  * NO model-specific code lives here: detection and descriptor building are entirely the core
  * resolver's job, so a new model of a known family works with ZERO changes to this class.
  *
- * NOTE: this is the platform half of Phase 3 and requires the Android SDK to compile/run — it
+ * NOTE: this is the platform half of Phase 3 and requires the Android SDK to compile/run - it
  * is exercised on-device, not by the JVM seam tests. The logic it delegates to (reader → resolve
  * → catalog) is fully covered by :core and :integration tests.
  */
@@ -29,7 +29,7 @@ class SideloadCoordinator(
     private val context: Context,
     private val importer: ModelImporter,
     // Read fresh each import (not cached) so a folder is copied under the CURRENT model-storage base
-    // even after the user relocates storage to an SD card (issues #4/#5) — the same base the
+    // even after the user relocates storage to an SD card (issues #4/#5) - the same base the
     // downloader writes to and Manage sizes/deletes/scans, so a sideloaded model never lands in a
     // stale internal dir where it would size as 0 B and be invisible to the catalog scan.
     private val modelsBaseDir: () -> File,

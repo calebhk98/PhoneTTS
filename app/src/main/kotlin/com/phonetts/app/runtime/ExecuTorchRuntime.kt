@@ -17,17 +17,17 @@ import org.pytorch.executorch.Tensor as EtTensor
  *
  * VERIFIED (Maven Central metadata, `repo1.maven.org/maven2/org/pytorch/executorch-android/
  * maven-metadata.xml`, and the published artifact directory): the coordinate is
- * `org.pytorch:executorch-android`, latest release `1.3.1` — a ~7 MB `.aar`, BSD-3-Clause,
+ * `org.pytorch:executorch-android`, latest release `1.3.1` - a ~7 MB `.aar`, BSD-3-Clause,
  * bundling `libexecutorch.so` for `arm64-v8a` + `x86_64` plus the XNNPACK CPU backend, with
  * transitive runtime deps on `com.facebook.fbjni:fbjni:0.7.0` and
  * `com.facebook.soloader:nativeloader:0.10.5` (Gradle resolves these automatically from the AAR's
- * published `.module` metadata — see `engines/executorch/INTEGRATION.md`).
+ * published `.module` metadata - see `engines/executorch/INTEGRATION.md`).
  *
  * VERIFIED (`extension/android/executorch_android/src/main/java/org/pytorch/executorch/
  * {Module,Tensor,EValue,DType}.java` at tag `v1.3.1`, `raw.githubusercontent.com/pytorch/
  * executorch`): `Module.load(path, loadMode, numThreads)` loads a `.pte`; `Module.execute
  * (methodName, EValue...)` runs a named graph method BY POSITION (`forward` is the common case,
- * but a bounded-dynamic-shape export can expose extra methods like `forward_128` — see
+ * but a bounded-dynamic-shape export can expose extra methods like `forward_128` - see
  * [MODULE_METHOD_EXTRA]); `Tensor.fromBlob(data, shape)` / `Tensor.getDataAs*Array()` cover
  * `float[]`/`long[]`/`int[]` (among others); `EValue.from(Tensor)` / `EValue.toTensor()` wrap and
  * unwrap.
@@ -35,7 +35,7 @@ import org.pytorch.executorch.Tensor as EtTensor
  * KNOWN GAP (flagged, not silently papered over): the public Java `Tensor` API exposes factories
  * for byte/short/int/long/half/float/double, but **not `bool`**, even though [DType.BOOL] exists
  * as an output tag. A `.pte` graph with a `bool`-typed input (e.g. Kokoro-on-ExecuTorch's
- * `text_mask` — see `com.phonetts.engines.executorch.ExecuTorchKokoroEngine`) cannot be fed a true
+ * `text_mask` - see `com.phonetts.engines.executorch.ExecuTorchKokoroEngine`) cannot be fed a true
  * bool tensor through this bridge; such an input is encoded as INT64 instead, UNVALIDATED against
  * the real graph on a device. See `engines/executorch/INTEGRATION.md`.
  *
@@ -73,8 +73,8 @@ class ExecuTorchRuntime : Runtime {
         /**
          * [RuntimeOptions.extras] key an engine sets to run a `.pte` method other than the default
          * `forward` (e.g. a bounded-dynamic-shape export's `forward_128`). A cross-module string
-         * contract — this module (`:app`) cannot depend on an engine module's constant, nor can an
-         * engine module depend back on `:app` — so both sides hardcode the literal `"method"` and
+         * contract - this module (`:app`) cannot depend on an engine module's constant, nor can an
+         * engine module depend back on `:app` - so both sides hardcode the literal `"method"` and
          * must be kept in sync; see `engines/executorch/INTEGRATION.md`.
          */
         const val MODULE_METHOD_EXTRA = "method"

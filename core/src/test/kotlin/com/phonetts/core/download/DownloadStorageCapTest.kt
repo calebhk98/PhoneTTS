@@ -6,7 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * The download guard is free-storage-based, not a fixed 2 GB ceiling — a large model must download
+ * The download guard is free-storage-based, not a fixed 2 GB ceiling - a large model must download
  * whenever it actually fits (this is the SoulX-Singer `model-svc.pt` > 2 GB regression).
  */
 class DownloadStorageCapTest {

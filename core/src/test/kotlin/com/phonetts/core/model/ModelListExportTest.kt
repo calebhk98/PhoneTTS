@@ -21,7 +21,7 @@ class ModelListExportTest {
 
         val text = ModelListExport.build(listOf(resolved), listOf(unresolved))
 
-        assertEquals("Downloaded models (2) — 2.0 MB total", text.lines().first())
+        assertEquals("Downloaded models (2) - 2.0 MB total", text.lines().first())
     }
 
     @Test
@@ -30,7 +30,7 @@ class ModelListExportTest {
 
         val text = ModelListExport.build(listOf(ExportableModel.from(usage, facts = null)), emptyList())
 
-        assertEquals("• Model m1 — Sideloaded · 2.0 KB", text.lines()[1])
+        assertEquals("• Model m1 - Sideloaded · 2.0 KB", text.lines()[1])
     }
 
     @Test
@@ -49,7 +49,7 @@ class ModelListExportTest {
         val text = ModelListExport.build(listOf(ExportableModel.from(usage, facts)), emptyList())
         val line = text.lines()[1]
 
-        assertTrue(line.startsWith("• Model kitten-nano — Built-in · 42.0 MB"))
+        assertTrue(line.startsWith("• Model kitten-nano - Built-in · 42.0 MB"))
         assertTrue(line.contains("Est. RAM ~250.0 MB"))
         assertTrue(line.contains("~15M params"))
         assertTrue(line.contains("~3.2x real-time (measured)"))
@@ -102,7 +102,7 @@ class ModelListExportTest {
 
         val line = ModelListExport.build(emptyList(), listOf(unresolved)).lines()[1]
 
-        assertTrue(line.startsWith("• KittenML_kitten-tts-nano-0.1 — 100 B · no engine yet"))
+        assertTrue(line.startsWith("• KittenML_kitten-tts-nano-0.1 - 100 B · no engine yet"))
         assertTrue(line.contains("https://huggingface.co/KittenML/kitten-tts-nano-0.1"))
         assertTrue(line.contains("(guessed)"))
     }
@@ -113,7 +113,7 @@ class ModelListExportTest {
 
         val line = ModelListExport.build(emptyList(), listOf(unresolved)).lines()[1]
 
-        assertEquals("• somebundle — 100 B · no engine yet", line)
+        assertEquals("• somebundle - 100 B · no engine yet", line)
     }
 
     @Test

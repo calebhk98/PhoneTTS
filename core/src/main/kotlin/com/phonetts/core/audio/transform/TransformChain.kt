@@ -3,7 +3,7 @@ package com.phonetts.core.audio.transform
 // An ordered set of transforms, each individually enabled or disabled. This is the whole reason
 // transforms are non-destructive: the chain is applied to a COPY of the raw audio on demand, so
 // flipping any entry off and re-applying yields the original audio back with zero re-synthesis.
-// The chain is immutable — toggling returns a new chain — so it is safe to hold in UI state.
+// The chain is immutable - toggling returns a new chain - so it is safe to hold in UI state.
 
 /** One transform plus whether it is currently active. */
 data class TransformEntry(
@@ -30,14 +30,14 @@ class TransformChain(entries: List<TransformEntry>) {
 
     fun isEnabled(id: String): Boolean = entries.any { it.transform.id == id && it.enabled }
 
-    /** The enabled transforms, in order — the ones a streaming export actually has to run. */
+    /** The enabled transforms, in order - the ones a streaming export actually has to run. */
     fun enabledTransforms(): List<AudioTransform> = entries.filter { it.enabled }.map { it.transform }
 
     /**
      * Build a bounded-memory streaming [TransformPipeline] over the enabled transforms, terminating
      * at [sink]. Transforms that support streaming (implement [IncrementalTransform]) run
      * incrementally; the rest fall back to a [BufferingStage]. This is the export path's equivalent
-     * of [apply] — same order and result, without ever holding the whole utterance in RAM.
+     * of [apply] - same order and result, without ever holding the whole utterance in RAM.
      */
     fun pipeline(
         sampleRate: Int,

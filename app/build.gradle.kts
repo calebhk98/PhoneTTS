@@ -2,7 +2,7 @@
 // include(":app") commented out) until an Android SDK is available. It hosts the platform
 // side of the app: Compose UI, the AudioTrack sink, ONNX/LLM runtimes, concrete engines, the
 // SharedPreferences-backed OverrideStore, and the downloader. All model facts still come from
-// :core descriptors — never hardcoded here.
+// :core descriptors - never hardcoded here.
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -20,7 +20,7 @@ val buildEspeak = (project.findProperty("withEspeak") as String?)?.toBooleanStri
 // (Qwen2 LLM + flow + HiFT + BPE, all ggml) and is gated the exact same way as espeak: opt-in via
 // -PwithCosyVoice=true after running scripts/fetch-cosyvoice-ggml.sh. When off,
 // libphonetts_cosyvoice.so isn't built, NativeCosyVoiceRuntime.isAvailable() is false, and CosyVoice
-// simply isn't offered — the app still assembles everywhere. See docs/COSYVOICE2.md.
+// simply isn't offered - the app still assembles everywhere. See docs/COSYVOICE2.md.
 val buildCosyVoice = (project.findProperty("withCosyVoice") as String?)?.toBooleanStrictOrNull() ?: false
 
 // Either native bridge pulls in the NDK + CMake externalNativeBuild; configure it if either is on.
@@ -32,7 +32,7 @@ val buildNative = buildEspeak || buildCosyVoice
 // while the branch's own commits sit off the first-parent line and never touch the version. This is
 // why heavy branch work no longer inflates the patch the way the old raw-commit count did.
 // (Caveat: "rebase and merge" replays each branch commit onto main's first-parent line, so it counts
-//  per-commit — prefer "Create a merge commit" or "Squash and merge".)
+//  per-commit - prefer "Create a merge commit" or "Squash and merge".)
 //
 // [VERSION_BASE_MERGES] is the first-parent count at which patch 0 was anchored; patch = merges
 // since then. Bump MAJOR/MINOR by editing VERSION_MAJOR_MINOR and re-anchoring VERSION_BASE_MERGES.
@@ -40,7 +40,7 @@ val buildNative = buildEspeak || buildCosyVoice
 // out full history (fetch-depth: 0) so the count is correct there.
 val VERSION_MAJOR_MINOR = "0.1"
 // Anchored to 2 so the first automated release (main's first-parent count reaches 4 once this lands)
-// is 0.1.2 — clearing the already published 0.1.0/0.1.1. Keep in sync with `base=` in
+// is 0.1.2 - clearing the already published 0.1.0/0.1.1. Keep in sync with `base=` in
 // .github/workflows/android.yml.
 val VERSION_BASE_MERGES = 2
 
@@ -76,7 +76,7 @@ android {
         versionCode = autoVersionCode
         versionName = autoVersionName
 
-        // Ship only the ABIs real target devices use (the Galaxy A16 is arm64-v8a) — keeps the
+        // Ship only the ABIs real target devices use (the Galaxy A16 is arm64-v8a) - keeps the
         // APK from carrying ONNX Runtime's x86 native libs that no phone needs.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -145,14 +145,14 @@ android {
     }
 
     signingConfigs {
-        // A STABLE debug key committed at keystore/phonetts-debug.keystore, so every build — local or
-        // CI, on any machine — signs with the SAME certificate. Without this, each CI runner
+        // A STABLE debug key committed at keystore/phonetts-debug.keystore, so every build - local or
+        // CI, on any machine - signs with the SAME certificate. Without this, each CI runner
         // auto-generates its own throwaway ~/.android/debug.keystore, so consecutive released APKs had
         // DIFFERENT signatures and Android refused to update one over another ("App not installed" /
         // signatures-do-not-match), forcing a full uninstall+reinstall for every update. This is a
         // debug certificate with the well-known "android" password and grants no security, so
         // committing it is safe for a personal, sideloaded app. (A real Play release key would live in
-        // a CI secret instead — see issue #51.)
+        // a CI secret instead - see issue #51.)
         getByName("debug") {
             storeFile = rootProject.file("keystore/phonetts-debug.keystore")
             storePassword = "android"
@@ -203,6 +203,7 @@ dependencies {
     runtimeOnly(project(":engines:ggmltts"))
     runtimeOnly(project(":engines:executorch"))
     runtimeOnly(project(":engines:pytorch"))
+    runtimeOnly(project(":engines:litert"))
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json) // HfCatalog exposes a kotlinx.serialization Json default
@@ -225,5 +226,10 @@ dependencies {
 
     // ONNX Runtime for the Tier-A/B engines (a second, LLM-style runtime is added for CosyVoice2).
     implementation(libs.onnxruntime.android)
-    implementation(libs.executorch.android) // ExecuTorch .pte runtime — ships in the main APK (BSD-3, ~7 MB, no NDK)
+    implementation(libs.executorch.android) // ExecuTorch .pte runtime - ships in the main APK (BSD-3, ~7 MB, no NDK)
+    // LiteRT / TensorFlow-Lite (.tflite) runtime (issue #109) - ships in the main APK via its Maven
+    // AAR, JNI-backed so it only runs on-device (like the two runtimes above). We use the classic Java
+    // Interpreter API artifact: the newer com.google.ai.edge.litert Kotlin API is compiled with Kotlin
+    // metadata newer than this project's compiler (2.0.21) can read. Not in the version catalog yet.
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
 }

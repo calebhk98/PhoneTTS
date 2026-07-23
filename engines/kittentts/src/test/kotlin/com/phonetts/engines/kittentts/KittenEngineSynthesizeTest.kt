@@ -6,6 +6,8 @@ import com.phonetts.core.testing.FakeSession
 import com.phonetts.engines.common.testing.onnxEngineContext
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -15,6 +17,13 @@ import kotlin.test.assertFailsWith
 // 256-dim embeddings so a test can prove the *right* row reaches the session's "style" input.
 private val HEART_EMBEDDING = FloatArray(256) { 0.1f }
 private val EMMA_EMBEDDING = FloatArray(256) { -0.2f }
+
+// A raw little-endian float32 voices/<name>.bin payload (no numpy header) -- the v0.1 bin layout.
+private fun rawFloats(values: FloatArray): ByteArray {
+    val buffer = ByteBuffer.allocate(values.size * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+    values.forEach(buffer::putFloat)
+    return buffer.array()
+}
 
 /**
  * Covers spec §9.4 (speed routing) and the StyleTTS2 voice-selection contract validated in
@@ -151,6 +160,44 @@ class KittenEngineSynthesizeTest {
             assertFailsWith<IllegalStateException> {
                 engine.synthesize("Hi.", "expr-voice-2-m", 1.0f).toList()
             }
+        }
+
+    @Test
+    fun `onnx-community v0-1 bin voices load and the selected 256-dim row reaches the style input`() =
+        runTest {
+            // The voices/<name>.bin layout (onnx-community/kitten-tts-nano-0.1-ONNX): each voice is a
+            // raw little-endian float32 [256] file. Prove the RIGHT voice's row reaches the session.
+            val session = fakeSession()
+            val engine =
+                KittenEngine(
+                    onnxEngineContext(session),
+                    fileReader = { path ->
+                        when {
+                            path.endsWith("expr-voice-2-m.bin") -> rawFloats(HEART_EMBEDDING)
+                            path.endsWith("expr-voice-2-f.bin") -> rawFloats(EMMA_EMBEDDING)
+                            else -> ByteArray(0)
+                        }
+                    },
+                )
+            val bundle =
+                ModelBundle(
+                    id = "kitten-v0.1",
+                    fileNames =
+                        setOf(
+                            "model.onnx",
+                            KittenEngine.CONFIG_FILE,
+                            "voices/expr-voice-2-m.bin",
+                            "voices/expr-voice-2-f.bin",
+                        ),
+                    sideFiles = mapOf(KittenEngine.CONFIG_FILE to """{"model_type":"style_text_to_speech_2"}"""),
+                    rootPath = "/models/kitten-v0.1",
+                )
+            val descriptor = engine.inspect(bundle)!!.descriptor
+            engine.load(descriptor)
+
+            engine.synthesize("Hi.", voiceId = "expr-voice-2-f", speed = 1.0f).toList()
+
+            assertContentEquals(EMMA_EMBEDDING, session.runs[0].getValue(KittenEngine.STYLE_KEY).asFloats())
         }
 
     @Test

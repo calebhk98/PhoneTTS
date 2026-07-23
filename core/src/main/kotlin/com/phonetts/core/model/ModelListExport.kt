@@ -8,9 +8,9 @@ import kotlin.math.pow
 
 /**
  * One identified, downloaded model to include in the "Copy list" export (issue #98). Every field
- * is read straight from the same SSOT the Manage screen already shows — [ModelUsage] for the
+ * is read straight from the same SSOT the Manage screen already shows - [ModelUsage] for the
  * descriptor/size, [ManageModelFacts] for the derived link/RAM/param/RTF facts (CLAUDE.md rule 1)
- * — never a re-hardcoded model literal.
+ * - never a re-hardcoded model literal.
  */
 data class ExportableModel(
     val modelId: String,
@@ -19,7 +19,7 @@ data class ExportableModel(
     val sizeBytes: Long,
     /** This model's HF repo id (e.g. "owner/name"), or null if none could be recovered. */
     val hfRepoId: String?,
-    /** Peak RAM in bytes — measured if available, else the descriptor's a-priori estimate; null if unknown. */
+    /** Peak RAM in bytes - measured if available, else the descriptor's a-priori estimate; null if unknown. */
     val peakRamBytes: Long?,
     /** Estimated parameter count, or null if the on-disk size couldn't yield one. */
     val paramCount: Long?,
@@ -31,7 +31,7 @@ data class ExportableModel(
     companion object {
         /**
          * Builds one export row from the exact data the Manage screen already computed for this
-         * model — [facts] is optional so a model still exports (name/origin/size only) even mid-
+         * model - [facts] is optional so a model still exports (name/origin/size only) even mid-
          * refresh, before [ManageModelFacts] has been derived for it.
          */
         fun from(
@@ -55,11 +55,11 @@ data class ExportableModel(
 /**
  * Builds the plain-text "Copy list" export for the Manage-models screen (issue #98): a header with
  * the count and grand total size, one line per identified model (origin, size, HF link, est. RAM,
- * param count, measured/estimated RTF — whichever are known), then one line per downloaded-but-
+ * param count, measured/estimated RTF - whichever are known), then one line per downloaded-but-
  * unidentified bundle (issue #8) so the reason it didn't resolve AND, wherever the id allows it, a
  * link to what it probably is are both visible.
  *
- * Pure and deterministic — no Android types, no I/O, no clock — so it is fully unit-testable on a
+ * Pure and deterministic - no Android types, no I/O, no clock - so it is fully unit-testable on a
  * plain JVM (spec §9). Every field is read from what it's handed; a field unknown for a given row
  * is simply OMITTED from that row's line, never shown as a fabricated placeholder (CLAUDE.md rule 1).
  */
@@ -70,7 +70,7 @@ object ModelListExport {
     ): String {
         val totalBytes = resolved.sumOf { it.sizeBytes } + unresolved.sumOf { it.sizeBytes }
         val count = resolved.size + unresolved.size
-        val lines = mutableListOf("Downloaded models ($count) — ${formatBytes(totalBytes)} total")
+        val lines = mutableListOf("Downloaded models ($count) - ${formatBytes(totalBytes)} total")
         resolved.forEach { lines += resolvedLine(it) }
         unresolved.forEach { lines += unresolvedLine(it) }
         return lines.joinToString("\n")
@@ -82,13 +82,13 @@ object ModelListExport {
         model.paramCount?.let { facts += "~${formatParamCount(it)} params" }
         realtimeFact(model.realtimeMultiple, model.realtimeIsMeasured)?.let { facts += it }
         repoLink(model.hfRepoId, model.modelId)?.let { facts += it }
-        return "• ${model.displayName} — ${facts.joinToString(" · ")}"
+        return "• ${model.displayName} - ${facts.joinToString(" · ")}"
     }
 
     private fun unresolvedLine(unresolved: UnresolvedModelUsage): String {
         val facts = mutableListOf("${formatBytes(unresolved.sizeBytes)} · no engine yet")
         repoLink(authoritativeRepoId = null, idToGuessFrom = unresolved.bundleId)?.let { facts += it }
-        return "• ${unresolved.bundleId} — ${facts.joinToString(" · ")}"
+        return "• ${unresolved.bundleId} - ${facts.joinToString(" · ")}"
     }
 
     private fun realtimeFact(
@@ -100,7 +100,7 @@ object ModelListExport {
         return "~${formatRealtimeMultiple(multiple)}x real-time ($label)"
     }
 
-    // Prefers the authoritative repo id (curated catalog / Piper index — see InstalledModelFacts)
+    // Prefers the authoritative repo id (curated catalog / Piper index - see InstalledModelFacts)
     // when one is known; otherwise falls back to a best-effort guess from the bundle/model id
     // itself, clearly labeled "(guessed)" so an ambiguous split is never mistaken for a verified
     // link. Returns null (never a broken link) when neither yields anything usable.
@@ -117,7 +117,7 @@ object ModelListExport {
      * Best-effort "owner/name" recovered from a sanitized bundle/model id (issue #98): downloaded
      * folders are named by sanitizing the HF repo id, which replaces its one '/' with '_'
      * ([com.phonetts.app.ModelStorage.sanitize] in :app). Reversing that is ambiguous whenever
-     * either segment itself contains an underscore, so this only ever splits at the FIRST '_' —
+     * either segment itself contains an underscore, so this only ever splits at the FIRST '_' -
      * good enough to be useful, never claimed as certain (callers label it "(guessed)"). Returns
      * null when there's no '_' to split on, or either side would be empty.
      */

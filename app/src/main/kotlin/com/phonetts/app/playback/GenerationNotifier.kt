@@ -11,18 +11,18 @@ import com.phonetts.core.metrics.GenerationStats
 
 /**
  * Shows a system notification with live progress WHILE [TtsViewModel][com.phonetts.app.ui.TtsViewModel]
- * is generating (Play/Generate) — a generation over more than a few sentences is easily long enough
+ * is generating (Play/Generate) - a generation over more than a few sentences is easily long enough
  * that the user switches away from the app, and the in-screen [GenerationStats] readout alone gives
  * them no way to check progress without returning to this exact screen.
  *
  * Mirrors the existing notification pattern in [PlaybackNotificationFactory] /
  * [com.phonetts.app.hf.DownloadNotifier]: a single low-importance channel created once in [init],
  * reused by every notification this class posts. Deliberately its OWN channel and notification id
- * ([GENERATION_NOTIFICATION_ID], distinct from [PLAYBACK_NOTIFICATION_ID]) — generation and playback
+ * ([GENERATION_NOTIFICATION_ID], distinct from [PLAYBACK_NOTIFICATION_ID]) - generation and playback
  * are related but separate states (generation keeps running ahead of/behind playback, spec §6.1's
  * dual-consumer buffer), so they get separate rows instead of one clobbering the other.
  *
- * Reuses the `POST_NOTIFICATIONS` permission already declared in AndroidManifest.xml for playback —
+ * Reuses the `POST_NOTIFICATIONS` permission already declared in AndroidManifest.xml for playback -
  * no new permission or manifest change needed. Fails closed exactly like [PlaybackNotificationFactory]
  * and [com.phonetts.app.hf.DownloadNotifier]: every method checks
  * [NotificationManagerCompat.areNotificationsEnabled] first, so a denied permission (or notifications
@@ -38,16 +38,16 @@ class GenerationNotifier(context: Context) {
 
     /**
      * Start (or restart) the progress row for a fresh generation of [totalChunks] sentences.
-     * [totalChunks] <= 0 means the total isn't known yet — shown as an indeterminate bar rather than
+     * [totalChunks] <= 0 means the total isn't known yet - shown as an indeterminate bar rather than
      * a fabricated fraction, same fallback [applyProgress] uses per-update.
      */
     fun start(totalChunks: Int) = post(chunksDone = 0, totalChunks = totalChunks)
 
-    /** Update the row from a live [GenerationStats] snapshot — the ONE generation path's own progress
+    /** Update the row from a live [GenerationStats] snapshot - the ONE generation path's own progress
      * signal (spec §6.1), never a separately computed number. */
     fun update(stats: GenerationStats) = post(chunksDone = stats.chunksDone, totalChunks = stats.totalChunks ?: 0)
 
-    /** Dismiss the row — call on generation completion, stop/barge-in, or failure alike, so nothing
+    /** Dismiss the row - call on generation completion, stop/barge-in, or failure alike, so nothing
      * lingers claiming a generation is still in progress once it definitely isn't. */
     fun clear() = manager.cancel(GENERATION_NOTIFICATION_ID)
 
@@ -74,7 +74,7 @@ class GenerationNotifier(context: Context) {
         totalChunks: Int,
     ) {
         if (totalChunks <= 0) {
-            builder.setProgress(0, 0, true) // indeterminate — the sentence count isn't known yet
+            builder.setProgress(0, 0, true) // indeterminate - the sentence count isn't known yet
             return
         }
         builder.setProgress(totalChunks, chunksDone.coerceIn(0, totalChunks), false)

@@ -13,7 +13,7 @@ class ManifestParserTest {
               "models": [
                 {
                   "modelId": "piper-en-amy",
-                  "displayName": "Piper — Amy (en)",
+                  "displayName": "Piper - Amy (en)",
                   "engineId": "piper",
                   "files": [
                     { "name": "amy.onnx", "url": "https://example/amy.onnx", "sha256": "abcd", "sizeBytes": 1234 }

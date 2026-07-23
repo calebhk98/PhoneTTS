@@ -3,7 +3,7 @@ package com.phonetts.core.download.hf
 import java.net.URLEncoder
 
 /**
- * Builds Hugging Face Hub URLs. Kept pure and testable — no HTTP here. The transport lives behind
+ * Builds Hugging Face Hub URLs. Kept pure and testable - no HTTP here. The transport lives behind
  * [HttpClient] (implemented in :app).
  */
 object HfEndpoints {
@@ -13,7 +13,7 @@ object HfEndpoints {
 
     /**
      * Search text-to-speech models, most-downloaded first. Blank [query] lists top TTS models.
-     * [skip] pages past the first [skip] results of that same ordering — the Hub's `/api/models`
+     * [skip] pages past the first [skip] results of that same ordering - the Hub's `/api/models`
      * list endpoint accepts a plain `skip` offset alongside `limit` (verified against the live API:
      * `limit=N&skip=M` returns exactly the same slice as the tail of a single `limit=N+M` call, for
      * the same query/sort), so "load more" is just a bigger offset, never a second query mechanism.
@@ -43,7 +43,7 @@ object HfEndpoints {
      */
     fun modelInfoUrl(modelId: String): String = "$API_BASE/models/${encodePathSegments(modelId)}"
 
-    /** The model's Hugging Face page (its README/model card + files) — for an "open in browser" link. */
+    /** The model's Hugging Face page (its README/model card + files) - for an "open in browser" link. */
     fun modelPageUrl(modelId: String): String = "$RESOLVE_BASE/${encodePathSegments(modelId)}"
 
     /** The download URL for one file. Owner/name and the file path keep their '/'; each segment is encoded. */

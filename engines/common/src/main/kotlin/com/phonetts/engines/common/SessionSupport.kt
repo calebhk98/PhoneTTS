@@ -6,7 +6,7 @@ import com.phonetts.core.runtime.InferenceSession
 import com.phonetts.core.runtime.Runtime
 
 // Leaf helpers for the session-lifecycle boilerplate every engine's load()/unload() repeats.
-// All parameterized by caller-supplied ids/keys/labels — they encode no model fact themselves.
+// All parameterized by caller-supplied ids/keys/labels - they encode no model fact themselves.
 
 /** The runtime registered under [runtimeId], or a clear failure naming [engineLabel]. */
 fun requireRuntime(
@@ -29,7 +29,7 @@ fun requireAssetPath(
 /**
  * Open several sessions with all-or-nothing cleanup: the block adds each session it creates to
  * [opened] as it goes; if any `createSession` throws part-way, every already-opened session is
- * closed before the failure propagates — so a partial `load()` never leaks native sessions (which
+ * closed before the failure propagates - so a partial `load()` never leaks native sessions (which
  * matters on a 4 GB device where a corrupt/oversized model fails mid-load).
  */
 @Suppress("TooGenericExceptionCaught") // rolling back on ANY failure is the whole point

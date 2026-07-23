@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 
 /**
  * Seam test for the automation entry point (issue #41). Proves the request-object parsing and the
- * fail-closed resolve/validate the Android activity relies on — all pure `:core`, no Android SDK.
+ * fail-closed resolve/validate the Android activity relies on - all pure `:core`, no Android SDK.
  */
 class AutomationPlannerTest {
     private val piper =

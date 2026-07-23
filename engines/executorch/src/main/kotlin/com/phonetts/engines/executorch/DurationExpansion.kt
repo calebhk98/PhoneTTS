@@ -3,9 +3,9 @@ package com.phonetts.engines.executorch
 import com.phonetts.core.runtime.Tensor
 
 /**
- * Pure tensor-shape math bridging the duration predictor's output to the synthesizer's input —
+ * Pure tensor-shape math bridging the duration predictor's output to the synthesizer's input -
  * VALIDATED shape/order, ASSUMED constant (`kokoro-export`'s `demo/inference_example.py`,
- * https://github.com/NorbertKlockiewicz/kokoro-export — the [MAX_DURATION] bound in particular is
+ * https://github.com/NorbertKlockiewicz/kokoro-export - the [MAX_DURATION] bound in particular is
  * copied from that script and not independently reverified against the real `.pte`'s export
  * metadata). Free functions with no engine/session dependency, so they are unit-testable without
  * any fake runtime.
@@ -51,7 +51,7 @@ object DurationExpansion {
 
 /**
  * Reads an integer-valued session output as an [IntArray] regardless of whether the runtime
- * decoded it as INT64 or FLOAT — ExecuTorch duration/count outputs commonly come back as either,
+ * decoded it as INT64 or FLOAT - ExecuTorch duration/count outputs commonly come back as either,
  * depending on the export, and :core's [Tensor] seam only ever carries the two. Mirrors
  * ExecuTorchRuntime's own try-one-then-the-other bridging, just for reading a single output
  * instead of writing an input tensor.

@@ -9,8 +9,8 @@ private const val TILE_IDLE_LABEL = "Resume reading"
 
 /**
  * Quick Settings tile (issue #27): toggles play/pause on whatever was last loaded without opening
- * the app. A tap fires [PLAYBACK_ACTION_PLAY_PAUSE] at [PlaybackService] — the same action the
- * notification and the home-screen widget use — so it routes to the attached [PlaybackController]
+ * the app. A tap fires [PLAYBACK_ACTION_PLAY_PAUSE] at [PlaybackService] - the same action the
+ * notification and the home-screen widget use - so it routes to the attached [PlaybackController]
  * with no second control path. The tile's active/inactive look and its subtitle come from the
  * [PlaybackStateStore] snapshot the service keeps current, so the shade reflects real playback
  * state even when the app UI isn't running.

@@ -25,13 +25,13 @@ import kotlin.time.Duration.Companion.minutes
 
 /**
  * Answers "can a user download a RANDOM CosyVoice model from Hugging Face and it just works?" by
- * driving PhoneTTS's OWN code — real [DirectoryBundleReader] -> [Resolver] -> `CosyVoice2Engine`'s
- * real `inspect()` -> [ModelImporter] -> [EngineManager] -> real `synthesize()` — never a
+ * driving PhoneTTS's OWN code - real [DirectoryBundleReader] -> [Resolver] -> `CosyVoice2Engine`'s
+ * real `inspect()` -> [ModelImporter] -> [EngineManager] -> real `synthesize()` - never a
  * re-implementation. The only swap is the platform backend: [JvmNativeCosyVoiceRuntime] binds the
  * SAME `cosyvoice3_tts` C ABI the app's `NativeCosyVoiceRuntime` does, on the desktop JDK.
  *
  * The honest finding this encodes: unlike Piper (any `.onnx`+`.json` voice works), CosyVoice
- * packaging on the Hub is FRAGMENTED and mutually incompatible — the four-file split GGUF
+ * packaging on the Hub is FRAGMENTED and mutually incompatible - the four-file split GGUF
  * (`cstr/cosyvoice3-0.5b-2512-GGUF`: `cosyvoice3-{llm,flow,hift,voices}-*.gguf`) is the one our
  * runtime handles; a single-combined-GGUF repo (e.g. `Lourdle/Fun-CosyVoice3-0.5B-2512-GGUF`:
  * `CosyVoice3-2512_Q4_K_M.gguf` + `frontend-onnx/`) is a DIFFERENT format our `inspect()` correctly
@@ -40,14 +40,14 @@ import kotlin.time.Duration.Companion.minutes
  */
 class RealCosyVoiceAutoLoadTest {
     /**
-     * PURE JVM, no weights/native needed — runs in the normal suite. A "random" CosyVoice model in
+     * PURE JVM, no weights/native needed - runs in the normal suite. A "random" CosyVoice model in
      * the WRONG (single-combined-GGUF) packaging must NOT auto-load: the real resolver falls through
      * to the user-pick path rather than guess. This is the fail-closed guarantee, proven with our code.
      */
     @Test
     fun aRandomlyPackagedCosyVoiceModelIsNotSilentlyGuessed() {
         val dir = Files.createTempDirectory("random-combined-cosy").toFile()
-        // The Lourdle repo layout: one combined GGUF + an onnx frontend dir — NOT our 4-file split.
+        // The Lourdle repo layout: one combined GGUF + an onnx frontend dir - NOT our 4-file split.
         File(dir, "CosyVoice3-2512_Q4_K_M.gguf").writeBytes(byteArrayOf(0))
         File(dir, "frontend-onnx").mkdirs()
         File(dir, "frontend-onnx/speech_tokenizer.onnx").writeBytes(byteArrayOf(0))
@@ -81,7 +81,7 @@ class RealCosyVoiceAutoLoadTest {
 
             val dir = obtainCstrStack()
 
-            // THE CLICK — import the folder through the app's real resolver/importer chain.
+            // THE CLICK - import the folder through the app's real resolver/importer chain.
             val registry = cosyRegistry(dir)
             val resolver =
                 Resolver(registry.list(), InMemoryOverrideStore()) {
@@ -93,7 +93,7 @@ class RealCosyVoiceAutoLoadTest {
             assertEquals("cosyvoice2", descriptor.engineId, "the 4-file GGUF stack must auto-detect as CosyVoice")
             assertEquals(listOf(descriptor.modelId), catalog.list().map { it.modelId }, "must appear in the catalog")
 
-            // THE USER PLAYS IT — select + synthesize through the engine's real generation path. The
+            // THE USER PLAYS IT - select + synthesize through the engine's real generation path. The
             // engine reads its voice list from the loaded model (SSOT); use whatever it exposes.
             val manager = EngineManager(registry)
             manager.switchTo(descriptor.engineId, descriptor)

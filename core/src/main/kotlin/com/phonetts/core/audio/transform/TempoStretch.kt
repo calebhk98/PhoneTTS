@@ -27,7 +27,7 @@ class TempoStretch(
     private val factor: Float = factor.coerceIn(MIN_FACTOR, MAX_FACTOR)
 
     override val id: String = ID
-    override val displayName: String = "Extra tempo boost — post-processed, not native"
+    override val displayName: String = "Extra tempo boost - post-processed, not native"
 
     override fun apply(
         segments: List<FloatArray>,

@@ -20,10 +20,10 @@ import com.phonetts.engines.common.requireVoiceIndex
 import java.io.File
 
 /**
- * The MMS / Facebook-VITS engine (spec Phase 2, `Xenova/mms-tts-*` family) — Meta's Massively
+ * The MMS / Facebook-VITS engine (spec Phase 2, `Xenova/mms-tts-*` family) - Meta's Massively
  * Multilingual Speech VITS exports, ~1,100 languages, each its own single-speaker ONNX bundle.
  *
- * ONNX GRAPH I/O — VALIDATED, not assumed (unlike a purely-documented "ASSUMPTION" comment,
+ * ONNX GRAPH I/O - VALIDATED, not assumed (unlike a purely-documented "ASSUMPTION" comment,
  * this was checked directly): `onnx/model_quantized.onnx` was downloaded from the real
  * `Xenova/mms-tts-eng` repo and loaded with `onnx.load(..., load_external_data=False)`
  * (2026-07-22). The graph reports:
@@ -36,17 +36,17 @@ import java.io.File
  * Confirmed by the transformers.js `VitsModel`/`sessionRun` source (`packages/transformers/src/
  * models/vits/modeling_vits.js`, `huggingface/transformers.js`): callers read back `waveform`.
  * This engine feeds `input_ids` + an all-ones `attention_mask` of the same length (batch size is
- * always 1 — one sentence per [InferenceSession.run] call, spec rule 8) and reads `waveform`;
+ * always 1 - one sentence per [InferenceSession.run] call, spec rule 8) and reads `waveform`;
  * `spectrogram` is an intermediate the end-to-end flow-based vocoder produces and is unused here.
  *
- * SPEED — **no native knob, so none is advertised** (CLAUDE.md rule 2): the graph above has
+ * SPEED - **no native knob, so none is advertised** (CLAUDE.md rule 2): the graph above has
  * exactly two inputs, neither a length/duration/speed scalar. `config.json`'s `speaking_rate`
  * field is a Python-side generation-config default baked into the export at convert time, not a
- * runtime input — there is nothing to route a UI speed value onto. [buildDescriptor] therefore
+ * runtime input - there is nothing to route a UI speed value onto. [buildDescriptor] therefore
  * declares `parameters = emptyList()`, which makes [ModelDescriptor.speedRange] lock to `1.0..1.0`
  * automatically (never resampling output to fake speed, rule 2's "never" case).
  *
- * VOICES — one per bundle (every real `Xenova/mms-tts-<lang>` repo is single-speaker,
+ * VOICES - one per bundle (every real `Xenova/mms-tts-<lang>` repo is single-speaker,
  * `config.json`'s `num_speakers` is always `1`), so unlike Piper's per-file-or-per-speaker fan-out
  * this engine loads exactly one [InferenceSession] and exposes exactly one [Voice].
  */
@@ -142,7 +142,7 @@ internal class MmsEngine(
     /**
      * Picks the ONE `.onnx` weights file this bundle loads, preferring the smallest/most
      * budget-hardware-friendly variant a real `Xenova/mms-tts-*` repo ships (`onnx/model.onnx`,
-     * `onnx/model_fp16.onnx`, `onnx/model_quantized.onnx` — nested path, matches the real layout):
+     * `onnx/model_fp16.onnx`, `onnx/model_quantized.onnx` - nested path, matches the real layout):
      * quantized > fp16 > full fp32 > whatever else ends in `.onnx` (picked deterministically by
      * name so tests are stable). Null only if the bundle has no `.onnx` file at all.
      */

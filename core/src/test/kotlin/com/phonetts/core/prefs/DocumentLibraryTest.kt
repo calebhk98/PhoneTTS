@@ -141,7 +141,7 @@ class DocumentLibraryTest {
     @Test
     fun `text containing many lines and unusual characters round-trips exactly`() {
         val library = DocumentLibrary(InMemoryPreferenceStore())
-        val text = "Line one.\nLine two — with an em dash.\n\nLine four, after a blank line."
+        val text = "Line one.\nLine two - with an em dash.\n\nLine four, after a blank line."
 
         library.add(id = "doc-1", text = text, savedAtMillis = 1L, title = "Multi-line")
 

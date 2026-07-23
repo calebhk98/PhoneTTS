@@ -2,18 +2,18 @@ package com.phonetts.core.metrics
 
 /**
  * A snapshot of generation progress, computed entirely from MEASURED audio output and
- * MEASURED wall-clock time — never a hardcoded or guessed number (this is the metrics seam's
+ * MEASURED wall-clock time - never a hardcoded or guessed number (this is the metrics seam's
  * whole point). [audioSecondsProduced] and [wallClockElapsedSeconds] are facts: they come from
  * an actual accumulated sample count and actual `now()` deltas, taken by [trackGeneration] (or
  * [RtfEstimator] for a standalone calibration) as chunks really arrive.
  *
- * Every derived property below is a pure function of those facts, plus — optionally — the
+ * Every derived property below is a pure function of those facts, plus - optionally - the
  * caller-supplied [totalChunks]/[totalWords] targets. Each one degrades to a safe default
  * (`0.0` or `null`) rather than fabricating a number when there isn't yet enough signal to
  * compute it: dividing by zero elapsed time, or extrapolating a total nobody told us.
  *
  * [totalChunks] is the number of upstream `Flow<FloatArray>` emissions the caller expects in
- * total — e.g. the size of the [com.phonetts.core.text.TextChunker] sentence list it is driving
+ * total - e.g. the size of the [com.phonetts.core.text.TextChunker] sentence list it is driving
  * through `synthesize()`. It is what lets [progressFraction] (and therefore [wordsPerSecond] and
  * [estimatedRemainingSeconds]) be computed without this class needing to know how many words
  * live inside any individual audio chunk, which a pure `Flow<FloatArray>` cannot tell it.
@@ -47,7 +47,7 @@ data class GenerationStats(
         }
 
     /**
-     * Measured throughput of the source text, in words per wall-clock second — [totalWords]
+     * Measured throughput of the source text, in words per wall-clock second - [totalWords]
      * scaled by how far through [totalChunks] generation has progressed. Requires both totals;
      * without them there is nothing to scale words by, so this safely reports `0.0`.
      */
@@ -63,7 +63,7 @@ data class GenerationStats(
      * Estimated remaining wall-clock time, extrapolated from the elapsed-time-per-chunk
      * observed so far (i.e. `elapsed / progressFraction` gives a projected total, minus what has
      * already elapsed). `null` until at least one chunk has completed and [totalChunks] is
-     * known — zero chunks done gives no rate to extrapolate from.
+     * known - zero chunks done gives no rate to extrapolate from.
      */
     val estimatedRemainingSeconds: Double?
         get() {

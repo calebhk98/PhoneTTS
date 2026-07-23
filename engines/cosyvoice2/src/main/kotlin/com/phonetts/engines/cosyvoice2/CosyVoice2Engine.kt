@@ -17,24 +17,24 @@ import com.phonetts.engines.common.requireAssetPath
 import com.phonetts.engines.common.requireRuntime
 
 /**
- * CosyVoice — the hardest model in the registry (see CLAUDE.md build order). It exists to prove the
+ * CosyVoice - the hardest model in the registry (see CLAUDE.md build order). It exists to prove the
  * seams are right, and it is the one engine whose runtime is NOT ONNX.
  *
- * The deployable on-device model is **CosyVoice3-0.5B** (Apache-2.0, GGUF-native — the sibling of
+ * The deployable on-device model is **CosyVoice3-0.5B** (Apache-2.0, GGUF-native - the sibling of
  * the CosyVoice2 model proven in PyTorch), and its runtime is CrispStrobe/CrispASR's self-contained
  * C++/ggml `cosyvoice3_tts` engine: a Qwen2-0.5B LLM (speech-token head) → DiT-CFM flow →
  * HiFi-GAN/iSTFT HiFT, with a native Qwen2 BPE tokenizer and a baked voice bank, all in one library
  * (docs/COSYVOICE2.md; proven end-to-end in `scripts/model-verify/run_cosy_native.sh`).
  *
  * Because that native library does the *entire* text→audio pipeline in one call, this engine is a
- * thin delegate over the [NativeTtsRuntime] seam (id [NATIVE_RUNTIME_ID]) — there is deliberately no
+ * thin delegate over the [NativeTtsRuntime] seam (id [NATIVE_RUNTIME_ID]) - there is deliberately no
  * Kotlin [com.phonetts.core.engine.TextFrontend], speech-token stage, or ONNX flow/HiFT graph here
  * (the earlier skeleton's Qwen2 token-id placeholder frontend and separate ONNX graphs are gone).
  * The voice list is the SSOT-clean set the native session reads from the model's voices GGUF.
  *
  * Parameters: the CrispASR synth C ABI exposes no speed (or any other) knob, and CLAUDE.md rule 2
  * forbids resampling output audio to fake one (that shifts pitch). So this engine declares **no
- * tunable parameters** — the descriptor's parameter list is empty, the UI shows no speed control,
+ * tunable parameters** - the descriptor's parameter list is empty, the UI shows no speed control,
  * and [ModelDescriptor.speedRange] resolves to a locked `1.0..1.0`. Honest-closed: a speed knob will
  * appear only if/when the native path genuinely routes one.
  *
@@ -59,7 +59,7 @@ internal class CosyVoice2Engine(
     override fun forcedMatch(bundle: ModelBundle): EngineMatch {
         require(hasAnyComponent(bundle)) {
             "bundle '${bundle.id}' has none of CosyVoice's GGUF components (an LLM/flow/HiFT/voices" +
-                " '$GGUF_SUFFIX') — cannot force-assign it to the CosyVoice engine"
+                " '$GGUF_SUFFIX') - cannot force-assign it to the CosyVoice engine"
         }
         return EngineMatch(id, buildDescriptor(bundle, Origin.SIDELOADED))
     }
@@ -101,7 +101,7 @@ internal class CosyVoice2Engine(
     ): FloatArray {
         val loaded = checkNotNull(state) { "$engineLabel.synthesizeSentence called before load()" }
         // params is intentionally unused: this engine declares NO tunable parameters (the native
-        // synth has no speed/other knob — see buildDescriptor), so there is nothing to route and
+        // synth has no speed/other knob - see buildDescriptor), so there is nothing to route and
         // audio is never resampled (CLAUDE.md rule 2).
         val voiceName = loaded.voices.firstOrNull { it.id == voiceId }?.id ?: loaded.voices.first().id
         return loaded.session.synthesize(NativeTtsRequest(text = sentence, voiceName = voiceName))
@@ -121,7 +121,7 @@ internal class CosyVoice2Engine(
 
     /**
      * Fail-closed recognition (spec §9.1): confident only when ALL FOUR GGUF stages of the native
-     * CosyVoice3 pipeline are present — an LLM, flow, HiFT and voices GGUF, matched by their
+     * CosyVoice3 pipeline are present - an LLM, flow, HiFT and voices GGUF, matched by their
      * conventional `cosyvoice3-<stage>-*.gguf` names. That four-file set is itself the signature;
      * anything less returns false so [inspect] refuses to guess.
      */
@@ -149,13 +149,13 @@ internal class CosyVoice2Engine(
             sampleRate = SAMPLE_RATE_HZ,
             voices = listOf(DEFAULT_VOICE),
             defaultVoiceId = DEFAULT_VOICE.id,
-            // No tunable parameters: introspected fact — the CrispASR synth C ABI exposes no speed
+            // No tunable parameters: introspected fact - the CrispASR synth C ABI exposes no speed
             // (or any other) knob, so the descriptor advertises none and the UI shows no speed
             // control (rather than a fake one that would need resampling, CLAUDE.md rule 2).
             parameters = emptyList(),
             assetPaths = buildAssetPaths(bundle),
             // Approximate peak-RAM estimate (issue #38): the 0.5B ggml LLM plus flow/hift stages are
-            // the heaviest model here. A-priori only — the app refines it from observed peak RAM.
+            // the heaviest model here. A-priori only - the app refines it from observed peak RAM.
             resourceCost = ResourceCost.peakRamMebibytes(PEAK_RAM_MIB),
         )
 
@@ -185,7 +185,7 @@ internal class CosyVoice2Engine(
 
         private const val SAMPLE_RATE_HZ = 24_000
 
-        // Approximate peak resident RAM (MiB) while loaded + generating — the largest model here.
+        // Approximate peak resident RAM (MiB) while loaded + generating - the largest model here.
         private const val PEAK_RAM_MIB = 1800L
 
         // CosyVoice3 is multilingual and reads any language directly, so this default is cosmetic

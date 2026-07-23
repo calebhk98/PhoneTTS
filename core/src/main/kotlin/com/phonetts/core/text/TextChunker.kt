@@ -3,19 +3,19 @@ package com.phonetts.core.text
 /**
  * The app's sentence chunker. This is a thin facade over a swappable [Chunker] (see that
  * interface's docs for how to drop in an alternative implementation) plus the paragraph/offset
- * utilities built on top of it. It is itself a valid [Chunker]—`TextChunker.intoSentences(text)`
+ * utilities built on top of it. It is itself a valid [Chunker]-`TextChunker.intoSentences(text)`
  * is exactly `chunker.intoSentences(text)` for the active [chunker], which defaults to
  * [DefaultChunker]. Swapping the whole app onto a different splitting strategy is a one-line change
  * to that default; every method below (paragraph indices, offset mapping) stays correct because
  * they're derived from whatever [chunker] actually returns, not from a second copy of its rules.
  */
 object TextChunker : Chunker {
-    // The single point of truth for "how do we split a sentence"—change this to try an
+    // The single point of truth for "how do we split a sentence"-change this to try an
     // alternative Chunker app-wide. See [Chunker]'s docs for how to A/B two implementations instead.
     private val chunker: Chunker = DefaultChunker
 
     // A paragraph break: a blank line (one newline, optional whitespace, another newline). Because
-    // '\n' is itself a sentence terminator, splitting on this never falls mid-sentence — the sentences
+    // '\n' is itself a sentence terminator, splitting on this never falls mid-sentence - the sentences
     // of each paragraph are exactly a contiguous slice of [intoSentences]'s flat result, so their
     // counts sum back to it. That alignment is what lets [paragraphStartSentenceIndices] map paragraph
     // boundaries onto sentence indices the one generation path already understands.
@@ -69,12 +69,12 @@ object TextChunker : Chunker {
 
     /**
      * The index into [intoSentences]'s result of the sentence that contains character [charOffset]
-     * of the original [text] — the mapping "Read from here" needs to turn a tap position into a
+     * of the original [text] - the mapping "Read from here" needs to turn a tap position into a
      * starting sentence. Fails soft: an offset before the first sentence maps to 0, and an offset
      * past the last one (or in trailing whitespace) maps to the last sentence; empty text maps to 0.
      *
      * The chunk boundaries are located by re-finding each of [intoSentences]'s sentences inside the
-     * original (untrimmed) [text], in order, rather than by re-running the splitting rule — so this
+     * original (untrimmed) [text], in order, rather than by re-running the splitting rule - so this
      * always agrees with [intoSentences] no matter which [Chunker] is active, by construction.
      */
     fun sentenceIndexAt(

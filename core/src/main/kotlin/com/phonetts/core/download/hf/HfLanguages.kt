@@ -2,17 +2,17 @@ package com.phonetts.core.download.hf
 
 /**
  * Interprets the Hugging Face Hub's own language tags into a language filter for the browse screen
- * (issue: add a language filter — many TTS models are multilingual and the user mostly wants
+ * (issue: add a language filter - many TTS models are multilingual and the user mostly wants
  * English). The Hub publishes a model's languages as **bare ISO 639-1 codes** in its `tags` array
- * (e.g. `en`, `es`, `zh`) plus a `multilingual` marker — verified against the live `/api/models`
- * response — mixed in among unrelated tags (`onnx`, `tts`, `safetensors`) and namespaced boilerplate
+ * (e.g. `en`, `es`, `zh`) plus a `multilingual` marker - verified against the live `/api/models`
+ * response - mixed in among unrelated tags (`onnx`, `tts`, `safetensors`) and namespaced boilerplate
  * (`region:us`, `license:…`, `arxiv:…`).
  *
  * The available languages are always derived from the current result set (never a hardcoded catalog
- * — spec rule 1's SSOT discipline), so a language the Hub starts tagging tomorrow shows up as a
+ * - spec rule 1's SSOT discipline), so a language the Hub starts tagging tomorrow shows up as a
  * filter choice with no code change. [NAMES] is not a model fact: it is a generic ISO code → English
  * display-name table (the same category as a locale label), used only to render a friendlier menu.
- * A code present in the results but absent from [NAMES] simply isn't offered as a filter — graceful
+ * A code present in the results but absent from [NAMES] simply isn't offered as a filter - graceful
  * degradation, never a guess.
  */
 object HfLanguages {
@@ -41,13 +41,13 @@ object HfLanguages {
             "hy" to "Armenian", "az" to "Azerbaijani", "kk" to "Kazakh", "mn" to "Mongolian",
         )
 
-    /** The language codes this app recognizes on [summary] — the [MULTILINGUAL] marker and any bare
+    /** The language codes this app recognizes on [summary] - the [MULTILINGUAL] marker and any bare
      * ISO code in [NAMES]. Order preserves the model's own tag order. */
     fun codesOf(summary: HfModelSummary): List<String> = summary.tags.filter { it == MULTILINGUAL || it in NAMES }
 
     /**
      * The distinct languages present across [results], as the actual choices for a "filter by
-     * language" menu — derived from the data, not a fixed list. Specific languages come first,
+     * language" menu - derived from the data, not a fixed list. Specific languages come first,
      * sorted by display name; [MULTILINGUAL] (a catch-all, not a single language) sorts last so it
      * doesn't crowd out the specific choice the user is scanning for.
      */
@@ -58,7 +58,7 @@ object HfLanguages {
         return specific + multilingual
     }
 
-    /** A friendly label for a language [code] — its English name where known (e.g. `en` → English),
+    /** A friendly label for a language [code] - its English name where known (e.g. `en` → English),
      * a capitalized "Multilingual" for the marker, else the raw code so nothing is ever dropped. */
     fun displayName(code: String): String =
         when (code) {
@@ -68,7 +68,7 @@ object HfLanguages {
 
     /**
      * Keeps only results in language [code]; a blank/null [code] means "no filter". Selecting a
-     * specific language also keeps [MULTILINGUAL]-tagged models — a multilingual model covers that
+     * specific language also keeps [MULTILINGUAL]-tagged models - a multilingual model covers that
      * language, and a user who "mostly wants English" still wants the multilingual models that speak
      * it. Selecting [MULTILINGUAL] itself keeps only the models explicitly marked that way.
      */

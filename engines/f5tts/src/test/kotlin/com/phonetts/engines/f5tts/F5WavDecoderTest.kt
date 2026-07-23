@@ -6,7 +6,7 @@ import kotlin.test.assertFailsWith
 
 /**
  * `F5WavDecoder` reads the reference clips this engine bundles as `<voice>.reference.wav`
- * (README-io.md) — this pins its normalization convention (`[-1, 1]` floats, matching
+ * (README-io.md) - this pins its normalization convention (`[-1, 1]` floats, matching
  * `core/audio/Pcm16.kt`) and the RIFF/WAVE chunk parsing against bytes this module itself builds.
  */
 class F5WavDecoderTest {
