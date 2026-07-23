@@ -27,6 +27,12 @@ import com.phonetts.engines.common.json.asStringOrNull
  *    an EXTRA required `sid` input, so [PiperEngine] must feed one — see [speakers] and
  *    [isMultiSpeaker]. Without it the ONNX session rejects the run, which is exactly why the
  *    multi-speaker Piper voices previously failed to synthesize.
+ *  - `phoneme_type` / `num_languages` / `language_id_map` / `prosody_id_map` — the piper-plus
+ *    multilingual markers (issue #110). A piper-plus graph needs EXTRA `language_id` and `prosody`
+ *    inputs on top of the sid this engine already knows how to feed; this engine feeds only the
+ *    fixed input/input_lengths/scales[/sid] VITS contract, so such a graph crashes at
+ *    `session.run`. These markers set [declaresUnfedGraphInputs] so [PiperEngine.inspect] fails
+ *    closed on them (CLAUDE.md rule 4) instead of claiming-then-crashing.
  */
 internal data class PiperVoiceConfig(
     val sampleRate: Int,
@@ -37,6 +43,7 @@ internal data class PiperVoiceConfig(
     val noiseW: Float,
     val numSpeakers: Int,
     val speakerIdMap: Map<String, Int>,
+    val declaresUnfedGraphInputs: Boolean = false,
 ) {
     /** True when this voice graph carries more than one speaker and therefore needs a `sid` input. */
     val isMultiSpeaker: Boolean get() = numSpeakers > 1
@@ -80,6 +87,16 @@ internal data class PiperVoiceConfig(
         private const val KEY_SPEAKER_ID_MAP = "speaker_id_map"
         private const val SINGLE_SPEAKER = 1
 
+        // issue #110 piper-plus multilingual markers: a graph carrying any of these needs a
+        // language_id and/or prosody input this engine does not feed (see [declaresUnfedGraphInputs]).
+        private const val KEY_PHONEME_TYPE = "phoneme_type"
+        private const val PHONEME_TYPE_MULTILINGUAL = "multilingual"
+        private const val KEY_NUM_LANGUAGES = "num_languages"
+        private const val KEY_LANGUAGE_ID_MAP = "language_id_map"
+        private const val KEY_PROSODY_ID_MAP = "prosody_id_map"
+        private const val KEY_PROSODY_NUM_SYMBOLS = "prosody_num_symbols"
+        private const val SINGLE_LANGUAGE = 1
+
         /**
          * Parses a Piper sidecar. Returns null (never throws) if [json] is malformed OR is
          * missing either field that makes a sidecar recognizably Piper's: `audio.sample_rate`
@@ -101,7 +118,22 @@ internal data class PiperVoiceConfig(
                 noiseW = inferenceFloat(root, KEY_NOISE_W) ?: DEFAULT_NOISE_W,
                 numSpeakers = root[KEY_NUM_SPEAKERS]?.asIntOrNull() ?: SINGLE_SPEAKER,
                 speakerIdMap = parseSpeakerIdMap(root),
+                declaresUnfedGraphInputs = declaresUnfedGraphInputs(root),
             )
+        }
+
+        // True when the sidecar declares graph inputs this engine cannot feed (issue #110): the
+        // piper-plus multilingual family adds a language_id and/or prosody input on top of the
+        // input/input_lengths/scales[/sid] contract this engine feeds, so such a graph is rejected
+        // at inspect() rather than claimed-then-crashed. Any one marker is enough — an OR, so a
+        // future variant that adds just one of them is still caught.
+        private fun declaresUnfedGraphInputs(root: Map<String, JsonValue>): Boolean {
+            val phonemeType = root[KEY_PHONEME_TYPE]?.asStringOrNull()
+            if (phonemeType == PHONEME_TYPE_MULTILINGUAL) return true
+            if ((root[KEY_NUM_LANGUAGES]?.asIntOrNull() ?: SINGLE_LANGUAGE) > SINGLE_LANGUAGE) return true
+            if (root[KEY_LANGUAGE_ID_MAP]?.asObjectOrNull()?.isNotEmpty() == true) return true
+            if (root[KEY_PROSODY_ID_MAP]?.asObjectOrNull()?.isNotEmpty() == true) return true
+            return (root[KEY_PROSODY_NUM_SYMBOLS]?.asIntOrNull() ?: 0) > 0
         }
 
         /** Best-effort defaults for [PiperEngine.forcedMatch] when a sidecar is absent/unparsable. */

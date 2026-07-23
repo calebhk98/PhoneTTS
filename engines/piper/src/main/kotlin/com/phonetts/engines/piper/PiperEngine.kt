@@ -123,7 +123,12 @@ internal class PiperEngine(
         // output audio. length_scale is INVERSE to speed: larger = slower. Anchor on the voice's
         // own config default (normally 1.0) so speed=1.0 reproduces the model's natural pace.
         val lengthScale = loadedVoice.config.defaultLengthScale / speed
-        val outputs = loadedVoice.session.run(sessionInputs(input.tokenIds, loadedVoice, lengthScale))
+        val inputs = sessionInputs(input.tokenIds, loadedVoice, lengthScale)
+        // Synthesize-time half of the issue #110 verification: a graph that opened cleanly can still
+        // reject our fixed input contract on the first run() (an fp16 export refusing float32 scales,
+        // a non-standard export whose real inputs differ) — surface it as the same clear, named error.
+        val graph = voiceId.substringBefore(SPEAKER_SEPARATOR)
+        val outputs = requireSupportedGraph(graph) { loadedVoice.session.run(inputs) }
         return outputs.floatsOrError(OUTPUT_TENSOR, engineLabel)
     }
 
@@ -168,7 +173,10 @@ internal class PiperEngine(
         val onnxPath = requireAssetPath(descriptor, assetKey(base, ONNX_SUFFIX), engineLabel)
         val configPath = descriptor.assetPaths[assetKey(base, SIDECAR_SUFFIX)]
         val config = configPath?.let(sidecarReader)?.let(PiperVoiceConfig::parse) ?: PiperVoiceConfig.fallback()
-        return LoadedFile(runtime.createSession(onnxPath), config)
+        // Load-time verification (issue #110): a variant that slipped past inspect() but the graph
+        // fails to even open (a tiny non-standard "medium" export) becomes a clear, named error
+        // instead of an uncaught crash. See [requireSupportedGraph].
+        return LoadedFile(requireSupportedGraph(base) { runtime.createSession(onnxPath) }, config)
     }
 
     // A public voice id is either a whole single-speaker graph (id == the graph's base name) or one
@@ -196,6 +204,7 @@ internal class PiperEngine(
         if (!bundle.hasFile(sidecarName)) return null
         val sidecarText = bundle.sideFile(sidecarName) ?: return null
         val config = PiperVoiceConfig.parse(sidecarText) ?: return null
+        if (isUnsupportedPiperVariant(onnxFile, config)) return null
         return PiperVoiceEntry(onnxFile.removeSuffix(ONNX_SUFFIX), onnxFile, sidecarName, config)
     }
 
@@ -215,6 +224,10 @@ internal class PiperEngine(
         if (!bundle.hasFile(CONFIG_JSON_NAME)) return null
         val configText = bundle.sideFile(CONFIG_JSON_NAME) ?: return null
         val config = PiperVoiceConfig.parse(configText) ?: return null
+        // Same fail-closed guard as [validVoiceEntry]: the plain-config.json path is exactly how a
+        // piper-plus multilingual bundle ships (a single fp16 .onnx + config.json), so it must be
+        // rejected here too, not just on the "<voice>.onnx.json" sidecar path (issue #110).
+        if (isUnsupportedPiperVariant(onnxFile, config)) return null
         return PiperVoiceEntry(onnxFile.removeSuffix(ONNX_SUFFIX), onnxFile, CONFIG_JSON_NAME, config)
     }
 
@@ -352,8 +365,57 @@ private data class PiperVoiceEntry(
     val config: PiperVoiceConfig,
 )
 
+/**
+ * Thrown when a bundle claimed as Piper (or force-loaded) turns out to use an ONNX graph this
+ * engine cannot drive with its fixed input/input_lengths/scales[/sid] VITS contract (issue #110).
+ * A clear, named failure at load/synthesize time instead of an uncaught backend crash — the
+ * refusal is the feature (CLAUDE.md rule 4), for variants no inspect()-time signal could catch.
+ */
+internal class PiperUnsupportedVariantException(
+    message: String,
+    cause: Throwable? = null,
+) : IllegalStateException(message, cause)
+
 private fun readSidecarFile(path: String): String? {
     val file = File(path)
     if (!file.exists()) return null
     return file.readText()
 }
+
+// issue #110: fp16 exports advertise their precision in the file name (e.g.
+// "tsukuyomi-chan-6lang-fp16.onnx"). PiperEngine always builds float32 scales and int64 ids, so an
+// fp16 graph is a guaranteed dtype mismatch — rejected at inspect() (matched lowercased).
+private const val FP16_MARKER = "fp16"
+
+// issue #110 inspect()-time guard: a bundle can be Piper-shaped enough to pass the sidecar gate yet
+// use a graph this engine cannot drive, so it must fail closed (rule 4) rather than claim-then-crash:
+//  - piper-plus multilingual — the sidecar declares language_id/prosody inputs this engine never
+//    feeds ([PiperVoiceConfig.declaresUnfedGraphInputs]);
+//  - fp16 exports — the graph wants fp16 tensors this engine's float32/int64 tensors cannot satisfy.
+// Tiny non-standard "medium" exports carry no such signal and are caught at load/synthesize time
+// instead (see [requireSupportedGraph]).
+private fun isUnsupportedPiperVariant(
+    onnxFile: String,
+    config: PiperVoiceConfig,
+): Boolean = config.declaresUnfedGraphInputs || onnxFile.lowercase().contains(FP16_MARKER)
+
+// issue #110 load/synthesize-time verification. The InferenceSession seam is name-tensor-in/out and
+// does NOT expose a graph's real input names/dtypes (that durable fix is tracked in
+// docs/research/onnx-io.md "Follow-up"), so a variant this engine cannot drive but that slipped past
+// inspect() can only be caught by actually loading and running it. Any backend failure to open the
+// graph or to run our fixed input/input_lengths/scales[/sid] contract is turned into a clear, named
+// [PiperUnsupportedVariantException] instead of an uncaught crash.
+@Suppress("TooGenericExceptionCaught") // any backend failure here means the graph rejected our contract
+private inline fun <T> requireSupportedGraph(
+    graph: String,
+    block: () -> T,
+): T =
+    try {
+        block()
+    } catch (failure: Exception) {
+        throw PiperUnsupportedVariantException(
+            "Piper graph '$graph' is not supported by this app: its ONNX contract does not match the " +
+                "expected input/input_lengths/scales[/sid] Piper VITS signature.",
+            failure,
+        )
+    }
