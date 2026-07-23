@@ -35,6 +35,7 @@ import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.prefs.DocumentPosition
 import com.phonetts.core.prefs.LastUsedSelection
 import com.phonetts.core.prefs.ReadingTextPreferences
+import com.phonetts.core.store.FavoriteVoiceRef
 import com.phonetts.core.text.DocumentId
 import com.phonetts.core.text.TextChunker
 import com.phonetts.core.update.UpdateStatus
@@ -114,6 +115,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // the voice picker reads this to star/sort — the voices themselves still come from
         // descriptor.voices (SSOT).
         val favoriteVoiceIds: Set<String> = emptySet(),
+        // Cross-model favorite voices (issue #119): (modelId, voiceId) pairs from the shared
+        // FavoritesStore, DISTINCT from [favoriteVoiceIds] (the older per-language default-voice
+        // preference). The Home quick-pick resolves these against [models] into [favoriteVoiceOptions],
+        // skipping any whose model/voice is no longer in the catalog (fail closed).
+        val favoriteVoiceRefs: List<FavoriteVoiceRef> = emptyList(),
         // Set when a newer APK is available on GitHub Releases; drives the dismissible update banner.
         val update: UpdateStatus? = null,
         // Transient result line for a manual "Check for updates" tap ("Checking…", "Up to date (v…)",
@@ -146,6 +152,30 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             get() = selected?.let { BlendedVoiceCatalog.merge(it.voices, blendedVoices) } ?: emptyList()
 
         /**
+         * Whether the currently selected model+voice is starred as a cross-model favorite (issue
+         * #119) — drives the "Favorite this voice" toggle. False when no model/voice is selected.
+         */
+        val currentVoiceIsFavorite: Boolean
+            get() {
+                val modelId = selected?.modelId ?: return false
+                val voice = voiceId ?: return false
+                return FavoriteVoiceRef(modelId, voice) in favoriteVoiceRefs
+            }
+
+        /**
+         * The cross-model favorites (issue #119) resolved to display labels against the catalog
+         * [models] (SSOT for names). A ref whose model or voice no longer exists is dropped, so the
+         * Home quick-pick never offers a favorite that can't be selected (fail closed).
+         */
+        val favoriteVoiceOptions: List<FavoriteVoiceOption>
+            get() =
+                favoriteVoiceRefs.mapNotNull { ref ->
+                    val model = models.firstOrNull { it.modelId == ref.modelId } ?: return@mapNotNull null
+                    val voice = model.voices.firstOrNull { it.id == ref.voiceId } ?: return@mapNotNull null
+                    FavoriteVoiceOption(ref.modelId, ref.voiceId, "${voice.name} (${model.displayName})")
+                }
+
+        /**
          * Estimated time to *listen* to the current text at the current speed (issue #23), from a real
          * [WordCounter] count — not a measurement of the engine (that's [GenerationStats]). Recomputes
          * for free whenever the text or speed changes, so the UI updates without any synthesis. Zero
@@ -154,6 +184,13 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val estimatedListeningSeconds: Double
             get() = ListeningTimeEstimator.estimateSeconds(WordCounter.count(text), params.speed)
     }
+
+    /** One cross-model favorite voice (issue #119) resolved to a display [label] for the Home quick-pick. */
+    data class FavoriteVoiceOption(
+        val modelId: String,
+        val voiceId: String,
+        val label: String,
+    )
 
     /** The export encoders available on this device (WAV always; AAC always; Opus on API 29+). */
     val exportFormats: List<AudioEncoder> = graph.exportFormats
@@ -307,6 +344,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                         else -> defaultParamValues(selected)
                     },
                 favoriteVoiceIds = graph.favoriteVoices.favoriteIds(),
+                favoriteVoiceRefs = graph.favoritesStore.favoriteVoices(),
             )
         }
         // If the selected model is the loaded one, re-surface its saved mixes — this is what makes a
@@ -394,6 +432,36 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             graph.favoriteVoices.toggleFavorite(voice)
             it.copy(favoriteVoiceIds = graph.favoriteVoices.favoriteIds())
         }
+
+    /**
+     * Star/unstar the currently selected model+voice as a cross-model favorite (issue #119) via the
+     * shared FavoritesStore, which persists on change. DISTINCT from [toggleFavoriteVoice] (the older
+     * per-language default-voice preference). A no-op until a model+voice is actually selected.
+     */
+    fun toggleFavoriteCurrentVoice() {
+        val s = mutableState.value
+        val descriptor = s.selected ?: return
+        val voiceId = s.voiceId ?: return
+        graph.favoritesStore.toggleFavoriteVoice(descriptor.modelId, voiceId)
+        mutableState.update { it.copy(favoriteVoiceRefs = graph.favoritesStore.favoriteVoices()) }
+    }
+
+    /**
+     * Jump to a favorite voice (issue #119) that may live in ANY model: switch the active model (only
+     * when it differs) then the voice, in one tap, without hunting through each model's list. Fails
+     * closed — a ref whose model/voice is no longer in the catalog is ignored (the quick-pick resolves
+     * against the same catalog, so it never offers one anyway). Reuses the existing barge-in/save
+     * discipline of [selectModel]/[setVoice].
+     */
+    fun selectFavoriteVoice(
+        modelId: String,
+        voiceId: String,
+    ) {
+        val descriptor = mutableState.value.models.firstOrNull { it.modelId == modelId } ?: return
+        if (descriptor.voices.none { it.id == voiceId }) return
+        if (mutableState.value.selected?.modelId != descriptor.modelId) selectModel(descriptor)
+        setVoice(voiceId)
+    }
 
     // Prefer the saved per-language default among THIS descriptor's own voices (SSOT — never a
     // voice the descriptor didn't offer), falling back to the descriptor's own default voice id.

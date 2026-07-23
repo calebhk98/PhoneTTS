@@ -144,6 +144,7 @@ fun TtsScreen(
                 onSideload = { navigate { sideloadLauncher.launch(null) } },
                 onBenchmarks = { navigate(onBenchmarks) },
                 onHelp = { navigate(onHelp) },
+                onHome = { navigate {} },
                 onMixVoices = { navigate(onMixVoices) },
                 onLibrary = { navigate(onLibrary) },
                 onCompare = { navigate(onCompare) },
@@ -240,6 +241,7 @@ private fun AppDrawer(
     onSideload: () -> Unit,
     onBenchmarks: () -> Unit,
     onHelp: () -> Unit,
+    onHome: () -> Unit = {},
     onMixVoices: () -> Unit = {},
     onLibrary: () -> Unit = {},
     onCompare: () -> Unit = {},
@@ -255,6 +257,10 @@ private fun AppDrawer(
         }
         HorizontalDivider()
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // This IS the Home screen, so Home stays listed and highlighted as the current page,
+            // matching how every other page's drawer marks its own entry (issue #118). Tapping it
+            // just closes the drawer.
+            DrawerLink("Home", onHome, selected = true)
             DrawerLink("Browse models", onBrowseModels)
             DrawerLink("Manage models", onManageModels)
             DrawerLink("Sideload folder", onSideload)
@@ -271,10 +277,11 @@ private fun AppDrawer(
 private fun DrawerLink(
     label: String,
     onClick: () -> Unit,
+    selected: Boolean = false,
 ) {
     NavigationDrawerItem(
         label = { Text(label) },
-        selected = false,
+        selected = selected,
         onClick = onClick,
         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
     )
@@ -300,6 +307,21 @@ private fun VoiceCard(
             favoriteVoiceIds = state.favoriteVoiceIds,
             onSelect = viewModel::setVoice,
             onToggleFavorite = viewModel::toggleFavoriteVoice,
+        )
+        // Star the currently selected model+voice as a cross-model favorite (issue #119) — a separate
+        // concept from the picker's per-voice stars above (which only re-order the current model's list).
+        FavoriteVoiceToggle(
+            isFavorite = state.currentVoiceIsFavorite,
+            enabled = state.voiceId != null,
+            onToggle = viewModel::toggleFavoriteCurrentVoice,
+        )
+        // Quick-pick of every starred voice across ALL models (issue #119): tap one to switch straight
+        // to it. Absent when there are no resolvable favorites.
+        FavoriteVoicesQuickPick(
+            options = state.favoriteVoiceOptions,
+            selectedModelId = descriptor.modelId,
+            selectedVoiceId = state.voiceId,
+            onSelect = viewModel::selectFavoriteVoice,
         )
         ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
     }
@@ -743,6 +765,60 @@ private fun FavoriteStar(
         text = if (isFavorite) "★" else "☆", // filled / outline star
         modifier = Modifier.clickable(onClick = onToggle),
     )
+}
+
+/**
+ * Star/unstar the currently selected model+voice as a cross-model favorite (issue #119). Separate
+ * from the voice picker's own per-voice stars (which only re-order the current model's list): this
+ * feeds the [FavoriteVoicesQuickPick] below, which surfaces starred voices across ALL models.
+ */
+@Composable
+private fun FavoriteVoiceToggle(
+    isFavorite: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Favorite this voice", modifier = Modifier.weight(1f))
+        OutlinedButton(onClick = onToggle, enabled = enabled) {
+            Text(if (isFavorite) "★ Favorited" else "☆ Favorite")
+        }
+    }
+}
+
+/**
+ * Cross-model favorite voices (issue #119): a quick-pick of every voice the user starred, in ANY
+ * model, so switching to a favorite never means hunting through each model's list. The options are
+ * resolved against the catalog (SSOT) in the ViewModel — a ref whose model/voice no longer exists is
+ * already dropped there (fail closed), so this is simply absent when there is nothing to offer.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FavoriteVoicesQuickPick(
+    options: List<TtsViewModel.FavoriteVoiceOption>,
+    selectedModelId: String?,
+    selectedVoiceId: String?,
+    onSelect: (String, String) -> Unit,
+) {
+    if (options.isEmpty()) return
+    Text("Favorites", style = MaterialTheme.typography.bodyMedium)
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { option ->
+            val isCurrent = option.modelId == selectedModelId && option.voiceId == selectedVoiceId
+            if (isCurrent) {
+                Button(onClick = { onSelect(option.modelId, option.voiceId) }) { Text(option.label) }
+            } else {
+                OutlinedButton(onClick = { onSelect(option.modelId, option.voiceId) }) { Text(option.label) }
+            }
+        }
+    }
 }
 
 // Offer (never force) an update: a dismissible banner that opens the new APK's download URL in the
