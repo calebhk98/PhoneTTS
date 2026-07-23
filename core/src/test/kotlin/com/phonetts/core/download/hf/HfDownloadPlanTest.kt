@@ -51,11 +51,59 @@ class HfDownloadPlanTest {
         assertTrue(".gitattributes" !in paths, "root .gitattributes must be excluded")
         assertTrue(".gitignore" !in paths, ".gitignore must be excluded")
         assertTrue("subdir/.gitattributes" !in paths, "nested .gitattributes must be excluded")
-        assertEquals(6, items.size, "only the 6 real model/config/readme files should remain")
+        assertTrue("README.md" !in paths, "README docs are not a runnable payload and must be excluded")
+        assertEquals(5, items.size, "only the 5 real model/config files should remain")
         assertTrue("model.safetensors" in paths, "safetensors weights must be kept for future engine support")
         assertTrue("pytorch_model.bin" in paths, "pytorch .bin weights must be kept")
         assertTrue("weights.pt" in paths, ".pt weights must be kept")
         assertTrue("model.gguf" in paths, ".gguf weights must be kept")
         assertTrue("config.json" in paths, "config.json must be kept")
+    }
+
+    @Test
+    fun dropsDocsSourceAndMediaButKeepsRequiredCompanionFiles() {
+        val repo =
+            listOf(
+                // non-payload: docs, source (at depth), media, training/CI bookkeeping
+                HfTreeEntry(type = "file", path = "README.md", size = 2000),
+                HfTreeEntry(type = "file", path = "matcha/utils/audio.py", size = 3000),
+                HfTreeEntry(type = "file", path = "demo.ipynb", size = 4000),
+                HfTreeEntry(type = "file", path = "assets/banner.png", size = 50_000),
+                HfTreeEntry(type = "file", path = "LICENSE", size = 1000),
+                HfTreeEntry(type = "file", path = "requirements.txt", size = 100),
+                HfTreeEntry(type = "file", path = "training_args.bin", size = 2000),
+                HfTreeEntry(type = "file", path = "events.out.tfevents.123", size = 9000),
+                HfTreeEntry(type = "file", path = ".github/workflows/ci.yml", size = 800),
+                // required companion/payload files that share ambiguous extensions — must be kept
+                HfTreeEntry(type = "file", path = "config.json", size = 1200),
+                HfTreeEntry(type = "file", path = "tokens.txt", size = 1200),
+                HfTreeEntry(type = "file", path = "vocab.txt", size = 1200),
+                HfTreeEntry(type = "file", path = "hparams.yaml", size = 1200),
+                HfTreeEntry(type = "file", path = "voices/af.bin", size = 500_000),
+                HfTreeEntry(type = "file", path = "alice.reference.wav", size = 300_000),
+                HfTreeEntry(type = "file", path = "alice.reference.txt", size = 100),
+                HfTreeEntry(type = "file", path = "model.onnx", size = 8_400_000),
+            )
+
+        val paths = HfDownloadPlan.forFiles("owner/repo", repo).map { it.relativePath }.toSet()
+
+        // dropped
+        listOf(
+            "README.md", "matcha/utils/audio.py", "demo.ipynb", "assets/banner.png",
+            "LICENSE", "requirements.txt", "training_args.bin", "events.out.tfevents.123",
+            ".github/workflows/ci.yml",
+        ).forEach { assertTrue(it !in paths, "$it must be dropped as non-payload") }
+
+        // kept
+        listOf(
+            "config.json",
+            "tokens.txt",
+            "vocab.txt",
+            "hparams.yaml",
+            "voices/af.bin",
+            "alice.reference.wav",
+            "alice.reference.txt",
+            "model.onnx",
+        ).forEach { assertTrue(it in paths, "$it is a required payload/companion file and must be kept") }
     }
 }
