@@ -18,10 +18,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -138,6 +143,12 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
         val listState = rememberLazyListState()
         LaunchedEffect(state.sort) { listState.animateScrollToItem(0) }
 
+        // Display names collide (several "KittenTTS", two "Kokoro"); the rows sharing a name get their
+        // unique folder id shown underneath to tell them apart (issue #123). Computed once over the
+        // whole visible set so a name is "duplicated" consistently regardless of scroll position.
+        val duplicateNames =
+            visibleUsage.groupingBy { it.descriptor.displayName }.eachCount().filterValues { it > 1 }.keys
+
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(visibleUsage, key = { it.descriptor.modelId }) { usage ->
                 ModelUsageRow(
@@ -145,6 +156,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
                     peakRamBytes = state.peakRamByModelId[usage.descriptor.modelId],
                     totalRamBytes = state.totalRamBytes,
                     facts = state.factsByModelId[usage.descriptor.modelId],
+                    disambiguate = usage.descriptor.displayName in duplicateNames,
                     isDeleting = state.deletingId == usage.descriptor.modelId,
                     onDelete = { viewModel.delete(usage.descriptor.modelId) },
                 )
@@ -184,9 +196,11 @@ private fun ManageControls(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+        // Both the sort key and the direction use the same outlined-button style (issue #123: they
+        // were mismatched - an outlined button next to bare text).
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             ManageSortKeyMenu(sort.key, onSortKey)
-            TextButton(onClick = onToggleDirection) {
+            OutlinedButton(onClick = onToggleDirection) {
                 Text(if (sort.ascending) "Ascending" else "Descending")
             }
         }
@@ -215,50 +229,160 @@ private fun ManageSortKeyMenu(
     }
 }
 
+/**
+ * One downloaded model, as a two-line row: name, then "Origin - size - ~RAM" (issue #123 - four
+ * lines of metadata per row meant only ~3 models fit a screen). A "won't fit this device" warning
+ * stays always-visible (it is safety info, not a detail). Everything else - parameter count, RTF,
+ * the Open-on-Hugging-Face link - moves behind the row's overflow menu / an expandable Details
+ * section, and Delete (the one destructive action) lives in that menu in the error color behind a
+ * confirmation dialog rather than as a same-colored button that is the easiest thing to hit.
+ */
 @Composable
 private fun ModelUsageRow(
     usage: ModelUsage,
     peakRamBytes: Long?,
     totalRamBytes: Long,
     facts: ManageModelFacts?,
+    disambiguate: Boolean,
     isDeleting: Boolean,
     onDelete: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold)
-            Text(originLabel(usage.descriptor.origin) + " · " + formatBytes(usage.sizeBytes))
-            Text(ramHint(peakRamBytes, totalRamBytes), style = MaterialTheme.typography.bodySmall)
-            ModelFactsBlock(facts)
+    var showDetails by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val uriHandler = LocalUriHandler.current
+
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    metadataLine(usage, peakRamBytes),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Only shown for a name that collides with another row: the unique folder id tells them apart.
+                if (disambiguate) {
+                    Text(
+                        usage.descriptor.modelId,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (isDeleting) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            } else {
+                ModelRowOverflow(
+                    repoId = facts?.hfRepoId,
+                    detailsShown = showDetails,
+                    onToggleDetails = { showDetails = !showDetails },
+                    onOpenHf = { facts?.hfRepoId?.let { uriHandler.openUri(HfEndpoints.modelPageUrl(it)) } },
+                    onDelete = { confirmDelete = true },
+                )
+            }
         }
-        DeleteControl(isDeleting, onDelete)
+        wontFitWarning(peakRamBytes, totalRamBytes)?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        if (showDetails) ModelFactsBlock(facts)
+    }
+
+    if (confirmDelete) {
+        DeleteConfirmDialog(
+            name = usage.descriptor.displayName,
+            onConfirm = {
+                confirmDelete = false
+                onDelete()
+            },
+            onDismiss = { confirmDelete = false },
+        )
     }
 }
 
+// The compact second line: "Origin - size" plus the estimated RAM when known. RAM sits here so the
+// row stays two lines; the won't-fit warning is separate (and always shown) because it is safety info.
+private fun metadataLine(
+    usage: ModelUsage,
+    peakRamBytes: Long?,
+): String =
+    listOfNotNull(
+        originLabel(usage.descriptor.origin),
+        formatBytes(usage.sizeBytes),
+        peakRamBytes?.let { "~${formatBytes(it)} RAM" },
+    ).joinToString(" · ")
+
+/** The row's overflow menu: Details toggle, Open on Hugging Face (when a repo id is known), Delete. */
+@Composable
+private fun ModelRowOverflow(
+    repoId: String?,
+    detailsShown: Boolean,
+    onToggleDetails: () -> Unit,
+    onOpenHf: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "More actions")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(if (detailsShown) "Hide details" else "Details") },
+                onClick = {
+                    expanded = false
+                    onToggleDetails()
+                },
+            )
+            if (repoId != null) {
+                DropdownMenuItem(
+                    text = { Text("Open on Hugging Face") },
+                    onClick = {
+                        expanded = false
+                        onOpenHf()
+                    },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                onClick = {
+                    expanded = false
+                    onDelete()
+                },
+            )
+        }
+    }
+}
+
+/** Confirm before deleting - the destructive action should not fire on a single stray tap (issue #123). */
+@Composable
+private fun DeleteConfirmDialog(
+    name: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete model?") },
+        text = { Text("Remove \"$name\" and its files from this device? You can download it again later.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 /**
- * The per-downloaded-model info block: an "Open on Hugging Face" link (only when a repo id could
- * be recovered - fail-closed, never a guessed URL), plus RTF and parameter-count lines, each
- * labeled "measured" or "estimated" so the user never mistakes a formula guess for a real
- * benchmark. Nothing here is a per-model literal - every value comes from [ManageModelFacts]
- * ([com.phonetts.core.model.InstalledModelFacts], CLAUDE.md rule 1). Renders nothing extra when
- * [facts] isn't available yet (e.g. mid-refresh).
+ * The expandable per-model detail block: RTF and parameter-count lines, each labeled "measured" or
+ * "estimated" so the user never mistakes a formula guess for a real benchmark. Nothing here is a
+ * per-model literal - every value comes from [ManageModelFacts]
+ * ([com.phonetts.core.model.InstalledModelFacts], CLAUDE.md rule 1). Renders nothing when [facts]
+ * isn't available yet (e.g. mid-refresh). Open-on-Hugging-Face moved to the row overflow menu.
  */
 @Composable
 private fun ModelFactsBlock(facts: ManageModelFacts?) {
     if (facts == null) return
-    val uriHandler = LocalUriHandler.current
-
     paramCountLine(facts)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     realtimeLine(facts)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-    facts.hfRepoId?.let { repoId ->
-        TextButton(onClick = { uriHandler.openUri(HfEndpoints.modelPageUrl(repoId)) }) {
-            Text("Open on Hugging Face ↗")
-        }
-    }
 }
 
 private fun paramCountLine(facts: ManageModelFacts): String? {
@@ -361,16 +485,15 @@ private fun EngineAssignmentControl(
     }
 }
 
-// Inline, non-blocking hint (issue #38, fixed per maintainer): shows the estimated peak RAM and,
-// ONLY when the model genuinely can't physically fit this device - its peak exceeds TOTAL RAM, not
-// merely whatever happens to be free right now - a "won't fit" warning. A tight-but-possible fit
-// (e.g. a 3.5 GB model on a 4 GB phone) never warns; [DeviceRamFit] is the single source of truth
-// for that call, no "tight"/tier language here or anywhere else. "unknown" when no estimate exists.
-private fun ramHint(peakRamBytes: Long?, totalRamBytes: Long): String {
-    if (peakRamBytes == null) return "Est. RAM: unknown"
-    val base = "Est. RAM: ~${formatBytes(peakRamBytes)}"
-    if (DeviceRamFit.modelExceedsDeviceRam(peakRamBytes, totalRamBytes)) return "$base · won't fit this device"
-    return base
+// A warning shown ONLY when the model genuinely can't physically fit this device - its estimated peak
+// exceeds TOTAL RAM, not merely whatever happens to be free right now (a tight-but-possible 3.5 GB
+// model on a 4 GB phone never warns). [DeviceRamFit] is the single source of truth for that call, no
+// "tight"/tier language here. null (no warning) when it fits or no estimate exists. The estimate
+// itself is shown compactly in the row's metadata line.
+private fun wontFitWarning(peakRamBytes: Long?, totalRamBytes: Long): String? {
+    if (peakRamBytes == null) return null
+    if (!DeviceRamFit.modelExceedsDeviceRam(peakRamBytes, totalRamBytes)) return null
+    return "May not fit this device - needs ~${formatBytes(peakRamBytes)} RAM"
 }
 
 @Composable
