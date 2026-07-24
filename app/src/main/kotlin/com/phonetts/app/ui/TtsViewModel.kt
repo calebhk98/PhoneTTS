@@ -784,6 +784,21 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         startPlaybackFrom((currentPlaybackSentenceIndex() - 1).coerceAtLeast(0))
     }
 
+    /**
+     * Seek to an absolute sentence [index] (the playback seek slider, issue #123). The same
+     * restart-the-one-generation-flow-from-an-index mechanism the per-sentence skips use, just to an
+     * arbitrary sentence. Clamped into the document's range; a no-op on blank text.
+     */
+    fun seekToSentence(index: Int) {
+        val text = mutableState.value.text
+        if (text.isBlank()) return
+        val lastIndex = (TextChunker.intoSentences(text).size - 1).coerceAtLeast(0)
+        startPlaybackFrom(index.coerceIn(0, lastIndex))
+    }
+
+    /** Total sentences in the current text - the seek slider's upper bound. Zero for blank text. */
+    fun sentenceCount(): Int = TextChunker.intoSentences(mutableState.value.text).size
+
     // The absolute sentence playback is at now: where this flow started + the chunks (== sentences)
     // already delivered to the sink. The paragraph/sentence-skip math reasons in these whole-document
     // indices.

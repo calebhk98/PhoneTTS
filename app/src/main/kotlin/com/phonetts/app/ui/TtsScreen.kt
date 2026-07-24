@@ -3,6 +3,7 @@ package com.phonetts.app.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -83,6 +84,7 @@ import com.phonetts.core.text.TextChunker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 /**
  * The main screen. Model list, voice list and speed bounds are read entirely from the
@@ -218,8 +220,8 @@ private fun TtsBody(
 
         VoiceCard(state, viewModel)
         TextCard(state, viewModel, onImport)
-        PlaybackCard(state, viewModel)
-        OutputCard(state, viewModel, sleepTimer, onExport, onSampleAll)
+        PlaybackCard(state, viewModel, sleepTimer)
+        OutputCard(state, viewModel, onExport, onSampleAll)
     }
 }
 
@@ -495,6 +497,7 @@ private val TEXT_FIELD_MAX_HEIGHT = 280.dp
 private fun PlaybackCard(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
+    sleepTimer: SleepTimerHandle,
 ) {
     SectionCard("Playback") {
         val selected = state.selected
@@ -506,13 +509,18 @@ private fun PlaybackCard(
         // prev/next/stop act only during playback (a per-sentence restart-from-index for skip).
         TransportBar(state, viewModel)
 
+        // Playback position as a sentence-level seek bar (issue #123). Only while playing.
+        if (state.playing) SentenceSeekBar(state, viewModel)
+
         // Live playback state, and the synthesis-free listening estimate ("~6 min at 1.25x", issue
-        // #23) when idle. Centered under the transport, secondary to it.
+        // #23) when idle. The estimate is suppressed once real generation stats exist, so the rough
+        // "~4 sec" estimate and the measured "Generated 2.6s" never sit on screen contradicting each
+        // other (issue #123). Centered under the transport, secondary to it.
         val statusLine =
             when {
                 state.playing && state.paused -> "Paused"
                 state.playing -> "Playing…"
-                state.estimatedListeningSeconds > 0 ->
+                state.estimatedListeningSeconds > 0 && state.stats == null ->
                     formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed)
                 else -> null
             }
@@ -566,10 +574,58 @@ private fun PlaybackCard(
             }
         }
 
-        if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        // Generation progress, labeled and SEPARATE from the playback position above (issue #123):
+        // shown whenever a synthesis is running, including generating ahead during playback.
+        if (state.busy) {
+            Text("Generating…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        // Measured generation stats behind a Details toggle - useful, but diagnostic, not for every glance.
         state.stats?.let { GenerationStatsView(it) }
         state.status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+
+        // Sleep timer sits with the transport now (issue #123: someone using it in the dark shouldn't
+        // have to scroll to the bottom of the app to find it).
+        HorizontalDivider()
+        SleepTimerControls(sleepTimer)
     }
+}
+
+/**
+ * Playback position as a sentence-level seek bar. Time/duration isn't plumbed through, but this
+ * reader navigates by sentence anyway (that's what skip does), so the slider seeks to a sentence and
+ * reads "Sentence X of N". Absent when there's nothing to move between (one sentence or blank). Seeks
+ * on release, not mid-drag, so dragging across a long document doesn't re-trigger synthesis at every
+ * step (each seek restarts the one generation flow from that sentence).
+ */
+@Composable
+private fun SentenceSeekBar(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    val sentenceCount = remember(state.text) { TextChunker.intoSentences(state.text).size }
+    if (sentenceCount <= 1) return
+    val lastIndex = sentenceCount - 1
+    val current = (state.currentSentenceIndex ?: 0).coerceIn(0, lastIndex)
+    var dragValue by remember { mutableStateOf<Float?>(null) }
+    val value = (dragValue ?: current.toFloat()).coerceIn(0f, lastIndex.toFloat())
+    Slider(
+        value = value,
+        onValueChange = { dragValue = it },
+        onValueChangeFinished = {
+            dragValue?.let { viewModel.seekToSentence(it.roundToInt()) }
+            dragValue = null
+        },
+        valueRange = 0f..lastIndex.toFloat(),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        "Sentence ${value.roundToInt() + 1} of $sentenceCount",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 // The central button's (icon, label, action) for the current state: Play when idle, Pause while
@@ -643,7 +699,6 @@ private val TRANSPORT_PRIMARY_ICON_SIZE = 36.dp
 private fun OutputCard(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
-    sleepTimer: SleepTimerHandle,
     onExport: () -> Unit,
     onSampleAll: () -> Unit,
 ) {
@@ -665,10 +720,8 @@ private fun OutputCard(
         if (viewModel.exportFormats.size > 1) {
             ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
         }
-        HorizontalDivider()
-        // Post-processing toggles + font size moved to the Settings screen (issue #123), so the Output
-        // card stays about export + sleep timer.
-        SleepTimerControls(sleepTimer)
+        // Post-processing toggles + font size moved to Settings, and the sleep timer moved up next to
+        // the transport (issue #123), so the Output card is now just export + format.
     }
 }
 
@@ -705,16 +758,29 @@ private fun ExportFormatPicker(
     }
 }
 
-/** Live, measured generation stats (spec: RTF is calculated, never guessed). */
+/**
+ * Live, measured generation stats (spec: RTF is calculated, never guessed). This is diagnostic
+ * detail - RTF, words/s, ETA - so it hides behind a tap rather than sitting on screen for every
+ * casual listen (issue #123: it read as developer telemetry). Collapsed by default.
+ */
 @Composable
 private fun GenerationStatsView(stats: com.phonetts.core.metrics.GenerationStats) {
+    var expanded by remember { mutableStateOf(false) }
+    Text(
+        if (expanded) "Hide generation details" else "Generation details",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.clickable { expanded = !expanded },
+    )
+    if (!expanded) return
     val rtf = "%.2f".format(stats.realTimeFactor)
     val audio = "%.1f".format(stats.audioSecondsProduced)
     val eta = stats.estimatedRemainingSeconds?.let { " · ETA ${"%.0f".format(it)}s" } ?: ""
     val wps = if (stats.wordsPerSecond > 0) " · ${"%.1f".format(stats.wordsPerSecond)} words/s" else ""
     Text(
-        "Generated ${audio}s audio · ${rtf}x real-time$wps$eta",
+        "Generated ${audio}s of audio · ${rtf}x real-time$wps$eta",
         style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
