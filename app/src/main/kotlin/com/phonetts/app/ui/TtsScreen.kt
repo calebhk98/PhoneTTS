@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DrawerValue
@@ -54,6 +55,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -703,6 +705,7 @@ private fun OutputCard(
     onSampleAll: () -> Unit,
 ) {
     SectionCard("Output") {
+        var confirmSampleAll by remember { mutableStateOf(false) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             // "Export audio", not "Export WAV" - the format selector below can change the format, so
             // naming the button after one format contradicted it (issue #123). The chosen format still
@@ -712,10 +715,32 @@ private fun OutputCard(
                 enabled = state.selected != null && !state.busy,
             ) { Text("Export audio") }
             // Audition every downloaded model at once: one sample clip per model, saved to a folder.
+            // Confirmed first (issue #123): with many models this loads and runs each one in turn - a
+            // long, battery-heavy job - so it shouldn't fire from a single tap next to Export.
             OutlinedButton(
-                onClick = onSampleAll,
+                onClick = { confirmSampleAll = true },
                 enabled = state.models.isNotEmpty() && !state.busy && !state.playing,
             ) { Text("Sample every model") }
+        }
+        if (confirmSampleAll) {
+            val count = state.models.size
+            AlertDialog(
+                onDismissRequest = { confirmSampleAll = false },
+                title = { Text("Sample every model?") },
+                text = {
+                    Text(
+                        "This loads and generates a clip for all $count installed models, one at a time. " +
+                            "It can take a while and use noticeable battery.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmSampleAll = false
+                        onSampleAll()
+                    }) { Text("Sample all $count") }
+                },
+                dismissButton = { TextButton(onClick = { confirmSampleAll = false }) { Text("Cancel") } },
+            )
         }
         if (viewModel.exportFormats.size > 1) {
             ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)

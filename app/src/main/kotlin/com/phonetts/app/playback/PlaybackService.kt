@@ -1,13 +1,18 @@
 package com.phonetts.app.playback
 
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
+import androidx.core.content.ContextCompat
 import androidx.media.session.MediaButtonReceiver
 import com.phonetts.app.PrefsPreferenceStore
 import com.phonetts.core.prefs.PlaybackCuePreferences
@@ -57,6 +62,13 @@ class PlaybackService : Service() {
     // real playing→stopped edge, so a spurious "not playing" (e.g. the initial bound state) is silent.
     private var wasPlaying = false
     private var userStopRequested = false
+
+    // Pause when the audio output route goes "noisy" - headphones unplugged or Bluetooth audio
+    // disconnected - so speech doesn't suddenly blast from the phone speaker. This is the standard
+    // media-app behavior and is separate from audio focus (which does not fire on an unplug).
+    // Registered only while playing (below); NOT_EXPORTED since ACTION_AUDIO_BECOMING_NOISY is a
+    // protected system broadcast.
+    private var becomingNoisyReceiver: BroadcastReceiver? = null
 
     /** Binder surface the owner of a playback (e.g. `TtsViewModel`) binds to. */
     inner class LocalBinder : Binder() {
@@ -115,6 +127,7 @@ class PlaybackService : Service() {
     override fun onDestroy() {
         sleepTimer.cancel()
         audioFocus.abandon()
+        unregisterBecomingNoisy()
         mediaSession?.release()
         mediaSession = null
         super.onDestroy()
@@ -160,9 +173,36 @@ class PlaybackService : Service() {
         // natural completion of THIS run is still classified correctly and can fire the cue.
         userStopRequested = false
         audioFocus.request()
+        registerBecomingNoisy()
         updateSession(paused, title)
         val notification = notifications.build(paused, title, mediaSession?.sessionToken, controller?.progress)
         startForeground(PLAYBACK_NOTIFICATION_ID, notification)
+    }
+
+    // Registered when playback starts, torn down when it stops. Idempotent (guards double-register).
+    private fun registerBecomingNoisy() {
+        if (becomingNoisyReceiver != null) return
+        val receiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(
+                    context: Context?,
+                    intent: Intent?,
+                ) {
+                    if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) controller?.pause()
+                }
+            }
+        ContextCompat.registerReceiver(
+            this,
+            receiver,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        becomingNoisyReceiver = receiver
+    }
+
+    private fun unregisterBecomingNoisy() {
+        becomingNoisyReceiver?.let { runCatching { unregisterReceiver(it) } }
+        becomingNoisyReceiver = null
     }
 
     // Mirror the latest state to the widget/tile surfaces, which read a persisted snapshot rather
@@ -194,6 +234,7 @@ class PlaybackService : Service() {
     private fun stopPlaybackForeground() {
         sleepTimer.cancel()
         audioFocus.abandon()
+        unregisterBecomingNoisy()
         stopForegroundCompat()
         stopSelf()
     }
