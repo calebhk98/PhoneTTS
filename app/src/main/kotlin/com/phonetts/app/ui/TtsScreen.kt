@@ -10,14 +10,11 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -32,10 +29,9 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DropdownMenuItem
@@ -77,6 +73,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
@@ -522,23 +519,14 @@ private fun PlaybackCard(
         val selected = state.selected
         val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
 
-        // Primary action is always the single full-width filled button: Play when idle, and a live
-        // Pause/Resume toggle while a session is active (issue #123 - the primary control stays usable
-        // during playback instead of turning into a dead "Playing..." bar; state moves to the label
-        // below). Pause halts immediately at the hardware level (BufferedPlayback -> AudioTrackSink).
-        val (primaryIcon, primaryLabel, primaryAction) = primaryPlaybackAction(state, viewModel)
-        Button(
-            onClick = primaryAction,
-            enabled = selected != null && (state.playing || !state.busy),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(primaryIcon, contentDescription = null)
-            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-            Text(primaryLabel)
-        }
+        // Standard audio-player transport, always visible: previous, a large central play/pause, next,
+        // stop (issue #123 / follow-up). The central button plays when idle and toggles Pause/Resume
+        // while active (halting immediately at the hardware level, BufferedPlayback -> AudioTrackSink);
+        // prev/next/stop act only during playback (a per-sentence restart-from-index for skip).
+        TransportBar(state, viewModel)
 
         // Live playback state, and the synthesis-free listening estimate ("~6 min at 1.25x", issue
-        // #23) when idle. onSurfaceVariant keeps them secondary to the button above.
+        // #23) when idle. Centered under the transport, secondary to it.
         val statusLine =
             when {
                 state.playing && state.paused -> "Paused"
@@ -548,7 +536,13 @@ private fun PlaybackCard(
                 else -> null
             }
         statusLine?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
         // "Resume from where it stopped" (issue #28): shown only when a prior run left a resume point,
@@ -559,21 +553,6 @@ private fun PlaybackCard(
                 enabled = selected != null && !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Resume from where it stopped") }
-        }
-
-        // Transport (prev / next / stop), only mid-playback, as equal-width tonal icon buttons (the
-        // play/pause toggle is the full-width primary above). Prev/next are the same per-sentence
-        // restart-from-index the lock-screen skip uses.
-        if (state.playing) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TransportButton(Icons.Filled.SkipPrevious, "Previous sentence", viewModel::skipBackSentence)
-                TransportButton(Icons.Filled.SkipNext, "Next sentence", viewModel::skipForwardSentence)
-                TransportButton(Icons.Filled.Stop, "Stop", viewModel::stop)
-            }
         }
 
         // Secondary/manual actions. "Model loaded" is a status line (below), not a greyed-out pill
@@ -612,8 +591,8 @@ private fun PlaybackCard(
     }
 }
 
-// The primary button's (icon, label, action) for the current state: Play when idle, Pause while
-// playing, Resume while paused. Kept as one place so the full-width button and its label never disagree.
+// The central button's (icon, label, action) for the current state: Play when idle, Pause while
+// playing, Resume while paused. One place so the button and its TalkBack label never disagree.
 private fun primaryPlaybackAction(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
@@ -624,17 +603,58 @@ private fun primaryPlaybackAction(
         else -> Triple(Icons.Filled.Pause, "Pause", viewModel::pausePlayback)
     }
 
-/** One equal-width tonal transport button: an icon with a TalkBack content description. */
+/**
+ * A standard media-player transport row - previous, a large central play/pause, next, stop - centered
+ * like an MP3 player. The centre is a prominent filled circular button (the primary action, usable
+ * with a model selected); prev/next/stop are plain icon buttons enabled only while something is
+ * playing. Every icon carries a TalkBack description, and each button meets the 48dp touch target.
+ */
 @Composable
-private fun RowScope.TransportButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    description: String,
-    onClick: () -> Unit,
+private fun TransportBar(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
 ) {
-    FilledTonalButton(onClick = onClick, modifier = Modifier.weight(1f)) {
-        Icon(icon, contentDescription = description)
+    val (playIcon, playLabel, playAction) = primaryPlaybackAction(state, viewModel)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = viewModel::skipBackSentence,
+            enabled = state.playing,
+            modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
+        ) {
+            Icon(Icons.Filled.SkipPrevious, "Previous sentence", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+        }
+        FilledIconButton(
+            onClick = playAction,
+            enabled = state.selected != null && (state.playing || !state.busy),
+            modifier = Modifier.size(TRANSPORT_PRIMARY_SIZE),
+        ) {
+            Icon(playIcon, contentDescription = playLabel, modifier = Modifier.size(TRANSPORT_PRIMARY_ICON_SIZE))
+        }
+        IconButton(
+            onClick = viewModel::skipForwardSentence,
+            enabled = state.playing,
+            modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
+        ) {
+            Icon(Icons.Filled.SkipNext, "Next sentence", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+        }
+        IconButton(
+            onClick = viewModel::stop,
+            enabled = state.playing,
+            modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
+        ) {
+            Icon(Icons.Filled.Stop, "Stop", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+        }
     }
 }
+
+private val TRANSPORT_BUTTON_SIZE = 48.dp
+private val TRANSPORT_ICON_SIZE = 32.dp
+private val TRANSPORT_PRIMARY_SIZE = 64.dp
+private val TRANSPORT_PRIMARY_ICON_SIZE = 36.dp
 
 /** Export + the non-destructive post-processing toggles + the sleep timer - the "on the way out" knobs. */
 @OptIn(ExperimentalLayoutApi::class)
