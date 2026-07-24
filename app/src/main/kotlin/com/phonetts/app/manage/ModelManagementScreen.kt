@@ -310,7 +310,9 @@ private fun metadataLine(
     listOfNotNull(
         originLabel(usage.descriptor.origin),
         formatBytes(usage.sizeBytes),
-        peakRamBytes?.let { "~${formatBytes(it)} RAM" },
+        // Always an estimate now (the a-priori per-engine figure), so it says so - the previous number
+        // was silently a whole-process measurement for benchmarked models (issue #123).
+        peakRamBytes?.let { "~${formatBytes(it)} RAM est." },
     ).joinToString(" · ")
 
 /** The row's overflow menu: Details toggle, Open on Hugging Face (when a repo id is known), Delete. */
