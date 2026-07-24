@@ -3,7 +3,6 @@ package com.phonetts.app.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -11,15 +10,33 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -157,9 +174,7 @@ fun TtsScreen(
                     title = { Text("PhoneTTS") },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            // The repo avoids the material-icons dependency (see back arrow / stars),
-                            // so the menu affordance is the "trigram for heaven" hamburger glyph.
-                            Text("☰", style = MaterialTheme.typography.titleLarge)
+                            Icon(Icons.Filled.Menu, contentDescription = "Open navigation menu")
                         }
                     },
                 )
@@ -226,7 +241,9 @@ private fun SectionCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            // titleMedium in near-white (onSurface), not a small saturated label - a real section
+            // header in the type hierarchy rather than an HTML fieldset legend (issue #123).
+            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             content()
         }
     }
@@ -452,6 +469,9 @@ private fun KaraokeText(
         val target = scrollState.maxValue.toFloat() * index / sentences.size
         scrollState.animateScrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
     }
+    // Label it so the highlighted echo of the text below the field reads as "the sentence being
+    // spoken now", not an unexplained duplicate of what was typed (issue #123).
+    FieldLabel("Now reading")
     Column(
         modifier =
             Modifier
@@ -502,20 +522,33 @@ private fun PlaybackCard(
         val selected = state.selected
         val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
 
+        // Primary action is always the single full-width filled button: Play when idle, and a live
+        // Pause/Resume toggle while a session is active (issue #123 - the primary control stays usable
+        // during playback instead of turning into a dead "Playing..." bar; state moves to the label
+        // below). Pause halts immediately at the hardware level (BufferedPlayback -> AudioTrackSink).
+        val (primaryIcon, primaryLabel, primaryAction) = primaryPlaybackAction(state, viewModel)
         Button(
-            onClick = viewModel::play,
-            enabled = selected != null && !state.playing,
+            onClick = primaryAction,
+            enabled = selected != null && (state.playing || !state.busy),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (state.playing) "Playing…" else "Play") }
+        ) {
+            Icon(primaryIcon, contentDescription = null)
+            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+            Text(primaryLabel)
+        }
 
-        // Estimated listening time (issue #23): a synthesis-free "~6 min at 1.25×" that updates live
-        // as the text or speed changes. Hidden for empty text (estimate is zero then).
-        if (state.estimatedListeningSeconds > 0) {
-            Text(
-                formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        // Live playback state, and the synthesis-free listening estimate ("~6 min at 1.25x", issue
+        // #23) when idle. onSurfaceVariant keeps them secondary to the button above.
+        val statusLine =
+            when {
+                state.playing && state.paused -> "Paused"
+                state.playing -> "Playing…"
+                state.estimatedListeningSeconds > 0 ->
+                    formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed)
+                else -> null
+            }
+        statusLine?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         // "Resume from where it stopped" (issue #28): shown only when a prior run left a resume point,
@@ -528,31 +561,30 @@ private fun PlaybackCard(
             ) { Text("Resume from where it stopped") }
         }
 
-        // Standard media transport (prev · play/pause · next · stop), only mid-playback. Play/Pause
-        // is the prominent central control and toggles in place - pause now halts immediately at the
-        // hardware level (BufferedPlayback→AudioTrackSink), not only at the next sentence boundary.
-        // Prev/next are the same per-sentence restart-from-index mechanism the lock-screen skip uses.
+        // Transport (prev / next / stop), only mid-playback, as equal-width tonal icon buttons (the
+        // play/pause toggle is the full-width primary above). Prev/next are the same per-sentence
+        // restart-from-index the lock-screen skip uses.
         if (state.playing) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedButton(onClick = viewModel::skipBackSentence, modifier = Modifier.weight(1f)) { Text("⏮") }
-                Button(
-                    onClick = if (state.paused) viewModel::resumePlayback else viewModel::pausePlayback,
-                    modifier = Modifier.weight(1.6f),
-                ) { Text(if (state.paused) "▶  Resume" else "⏸  Pause") }
-                OutlinedButton(onClick = viewModel::skipForwardSentence, modifier = Modifier.weight(1f)) { Text("⏭") }
-                OutlinedButton(onClick = viewModel::stop, modifier = Modifier.weight(1f)) { Text("⏹") }
+                TransportButton(Icons.Filled.SkipPrevious, "Previous sentence", viewModel::skipBackSentence)
+                TransportButton(Icons.Filled.SkipNext, "Next sentence", viewModel::skipForwardSentence)
+                TransportButton(Icons.Filled.Stop, "Stop", viewModel::stop)
             }
         }
 
+        // Secondary/manual actions. "Model loaded" is a status line (below), not a greyed-out pill
+        // that reads as broken (issue #123).
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = viewModel::loadModel,
-                enabled = selected != null && !state.busy && !state.playing && !isModelLoaded,
-            ) { Text(if (isModelLoaded) "Model loaded" else "Load model") }
+            if (!isModelLoaded) {
+                OutlinedButton(
+                    onClick = viewModel::loadModel,
+                    enabled = selected != null && !state.busy && !state.playing,
+                ) { Text("Load model") }
+            }
             OutlinedButton(
                 onClick = viewModel::generateAudio,
                 enabled = selected != null && !state.busy && !state.playing,
@@ -562,10 +594,45 @@ private fun PlaybackCard(
                 enabled = selected != null && !state.busy,
             ) { Text("Sample voice") }
         }
+        if (isModelLoaded) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("Model loaded", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
 
         if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         state.stats?.let { GenerationStatsView(it) }
         state.status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+// The primary button's (icon, label, action) for the current state: Play when idle, Pause while
+// playing, Resume while paused. Kept as one place so the full-width button and its label never disagree.
+private fun primaryPlaybackAction(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+): Triple<androidx.compose.ui.graphics.vector.ImageVector, String, () -> Unit> =
+    when {
+        !state.playing -> Triple(Icons.Filled.PlayArrow, "Play", viewModel::play)
+        state.paused -> Triple(Icons.Filled.PlayArrow, "Resume", viewModel::resumePlayback)
+        else -> Triple(Icons.Filled.Pause, "Pause", viewModel::pausePlayback)
+    }
+
+/** One equal-width tonal transport button: an icon with a TalkBack content description. */
+@Composable
+private fun RowScope.TransportButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit,
+) {
+    FilledTonalButton(onClick = onClick, modifier = Modifier.weight(1f)) {
+        Icon(icon, contentDescription = description)
     }
 }
 
@@ -581,10 +648,13 @@ private fun OutputCard(
 ) {
     SectionCard("Output") {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // "Export audio", not "Export WAV" - the format selector below can change the format, so
+            // naming the button after one format contradicted it (issue #123). The chosen format still
+            // shows in the picker underneath.
             OutlinedButton(
                 onClick = onExport,
                 enabled = state.selected != null && !state.busy,
-            ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
+            ) { Text("Export audio") }
             // Audition every downloaded model at once: one sample clip per model, saved to a folder.
             OutlinedButton(
                 onClick = onSampleAll,
@@ -778,11 +848,11 @@ private fun TwoLineItem(
     }
 }
 
-/** A check glyph shown only on the currently-selected dropdown row, so the pick is obvious in a long list. */
+/** A check icon shown only on the currently-selected dropdown row, so the pick is obvious in a long list. */
 @Composable
 private fun SelectedCheck(selected: Boolean) {
     if (!selected) return
-    Text("✓", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+    Icon(Icons.Filled.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
 }
 
 /**
@@ -844,10 +914,13 @@ private fun FavoriteStar(
     isFavorite: Boolean,
     onToggle: () -> Unit,
 ) {
-    Text(
-        text = if (isFavorite) "★" else "☆", // filled / outline star
-        modifier = Modifier.clickable(onClick = onToggle),
-    )
+    IconButton(onClick = onToggle, modifier = Modifier.size(32.dp)) {
+        Icon(
+            imageVector = if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+            tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 /**

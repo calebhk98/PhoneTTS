@@ -221,6 +221,9 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    // Vector icons (Material Symbols) so the UI uses real icons + content descriptions instead of
+    // text/emoji glyphs (issue #123: no icon set, emoji transport). R8 strips unused icons in release.
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
 
