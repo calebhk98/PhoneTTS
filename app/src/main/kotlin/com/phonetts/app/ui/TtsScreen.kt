@@ -52,7 +52,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
@@ -77,13 +76,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
-import com.phonetts.core.audio.transform.BassCut
-import com.phonetts.core.audio.transform.DeEsser
-import com.phonetts.core.audio.transform.PresenceBoost
-import com.phonetts.core.audio.transform.TempoStretch
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
-import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.text.TextChunker
 import kotlinx.coroutines.delay
@@ -110,6 +104,7 @@ fun TtsScreen(
     onMixVoices: () -> Unit = {},
     onLibrary: () -> Unit = {},
     onCompare: () -> Unit = {},
+    onSettings: () -> Unit = {},
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
@@ -162,6 +157,7 @@ fun TtsScreen(
                 onMixVoices = { navigate(onMixVoices) },
                 onLibrary = { navigate(onLibrary) },
                 onCompare = { navigate(onCompare) },
+                onSettings = { navigate(onSettings) },
             )
         },
     ) {
@@ -259,6 +255,7 @@ private fun AppDrawer(
     onMixVoices: () -> Unit = {},
     onLibrary: () -> Unit = {},
     onCompare: () -> Unit = {},
+    onSettings: () -> Unit = {},
 ) {
     ModalDrawerSheet {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -282,6 +279,7 @@ private fun AppDrawer(
             DrawerLink("Reading library", onLibrary)
             DrawerLink("Compare voices (A/B)", onCompare)
             DrawerLink("Benchmarks", onBenchmarks)
+            DrawerLink("Settings", onSettings)
             DrawerLink("Help", onHelp)
         }
     }
@@ -421,25 +419,8 @@ private fun TextCard(
                 onClick = viewModel::saveToLibrary,
                 enabled = state.text.isNotBlank(),
             ) { Text("Save to library") }
-            FontSizeControls(state, viewModel)
         }
     }
-}
-
-/** A− / A+ reading font size (issue #29); bounds come from [ReadingTextPreferences] (SSOT for them). */
-@Composable
-private fun FontSizeControls(
-    state: TtsViewModel.UiState,
-    viewModel: TtsViewModel,
-) {
-    OutlinedButton(
-        onClick = viewModel::decreaseTextScale,
-        enabled = state.readingScale > ReadingTextPreferences.MIN_SCALE,
-    ) { Text("A−") }
-    OutlinedButton(
-        onClick = viewModel::increaseTextScale,
-        enabled = state.readingScale < ReadingTextPreferences.MAX_SCALE,
-    ) { Text("A+") }
 }
 
 /**
@@ -685,8 +666,8 @@ private fun OutputCard(
             ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
         }
         HorizontalDivider()
-        TransformToggles(state, viewModel)
-        HorizontalDivider()
+        // Post-processing toggles + font size moved to the Settings screen (issue #123), so the Output
+        // card stays about export + sleep timer.
         SleepTimerControls(sleepTimer)
     }
 }
@@ -721,69 +702,6 @@ private fun ExportFormatPicker(
                 )
             }
         }
-    }
-}
-
-/** Non-destructive post-processing toggles (spec: applied to export, raw audio never altered). */
-@Composable
-private fun TransformToggles(
-    state: TtsViewModel.UiState,
-    viewModel: TtsViewModel,
-) {
-    ToggleRow("Trim silence", state.trimSilence, viewModel::setTrimSilence)
-    ToggleRow("Normalize volume", state.normalizeVolume, viewModel::setNormalizeVolume)
-    ToggleRow("Crossfade joins", state.crossfadeJoins, viewModel::setCrossfadeJoins)
-    // EQ clarity presets (issue #40): timbre-only biquads, same non-destructive export chain.
-    ToggleRow(BassCut().displayName, state.bassCut, viewModel::setBassCut)
-    ToggleRow(PresenceBoost().displayName, state.presenceBoost, viewModel::setPresenceBoost)
-    ToggleRow(DeEsser().displayName, state.deEss, viewModel::setDeEss)
-    TempoBoostControl(state, viewModel)
-    // Long-document mode (issue #34): opt-in memory ceiling - older audio spills to disk during a
-    // book-length synthesis. Off by default; when off, generation is unchanged.
-    ToggleRow("Long-document mode (spill audio to disk)", state.longDocumentMode, viewModel::setLongDocumentMode)
-}
-
-/**
- * Opt-in, PLAYBACK-ONLY beyond-native tempo (issue #43). Deliberately separate from the native
- * "Speed" control: this is a post-processed, pitch-preserving WSOLA time-stretch that never touches
- * the model's own speed parameter and never resamples for it (rule 2). Off by default; the factor
- * slider only appears once enabled.
- */
-@Composable
-private fun TempoBoostControl(
-    state: TtsViewModel.UiState,
-    viewModel: TtsViewModel,
-) {
-    ToggleRow("Playback speed (post-processed)", state.tempoBoost, viewModel::setTempoBoost)
-    if (!state.tempoBoost) return
-    Text(
-        "Playback tempo ${"%.1f".format(state.tempoFactor)}x (pitch-preserving, not the model's Speed)",
-        style = MaterialTheme.typography.bodySmall,
-    )
-    Slider(
-        value = state.tempoFactor,
-        onValueChange = viewModel::setTempoFactor,
-        valueRange = TempoStretch.MIN_FACTOR..TempoStretch.MAX_FACTOR,
-    )
-}
-
-@Composable
-private fun ToggleRow(
-    label: String,
-    checked: Boolean,
-    onChecked: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        // weight(1f) lets a long label (e.g. "Long-document mode (spill audio to disk)") wrap onto
-        // a second line within its own share of the row instead of pushing the fixed-size Switch
-        // past the row's bound - without it, a long label and the Switch fight over unbounded width
-        // and the Switch ends up overlapped or shoved off-screen (issues #20/#21).
-        Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChecked)
     }
 }
 

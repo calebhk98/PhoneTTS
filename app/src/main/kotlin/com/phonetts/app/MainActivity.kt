@@ -54,6 +54,7 @@ import com.phonetts.app.ui.MixVoicesScreen
 import com.phonetts.app.ui.MixVoicesViewModel
 import com.phonetts.app.ui.NavDrawerScaffold
 import com.phonetts.app.ui.OnboardingScreen
+import com.phonetts.app.ui.SettingsScreen
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
@@ -62,7 +63,7 @@ import com.phonetts.core.prefs.AppTheme
 
 // Not private: shared with NavDrawerScaffold (app/ui), which every sub-page uses to list every
 // destination in its own hamburger drawer (issue #1) - the same enum TtsScreen's drawer navigates.
-enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE }
+enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE, SETTINGS }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -228,6 +229,7 @@ private fun AppNav(
                 onMixVoices = { screen = Screen.MIX },
                 onLibrary = { screen = Screen.LIBRARY },
                 onCompare = { screen = Screen.COMPARE },
+                onSettings = { screen = Screen.SETTINGS },
                 appVersion = BuildConfig.VERSION_NAME,
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
@@ -346,6 +348,11 @@ private fun AppNav(
                 compareViewModel.stop()
                 screen = target
             }) { CompareScreen(compareViewModel) }
+        }
+        Screen.SETTINGS -> {
+            BackScaffold(title = "Settings", current = Screen.SETTINGS, onNavigate = { screen = it }) {
+                SettingsScreen(ttsViewModel)
+            }
         }
         Screen.HELP -> {
             val ttsState by ttsViewModel.state.collectAsState()

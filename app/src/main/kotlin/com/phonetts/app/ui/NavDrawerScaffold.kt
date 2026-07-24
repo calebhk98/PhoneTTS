@@ -42,6 +42,7 @@ private val NAV_DESTINATIONS: List<Pair<Screen, String>> =
         Screen.LIBRARY to "Reading library",
         Screen.COMPARE to "Compare voices (A/B)",
         Screen.BENCHMARK to "Benchmarks",
+        Screen.SETTINGS to "Settings",
         Screen.HELP to "Help",
     )
 
