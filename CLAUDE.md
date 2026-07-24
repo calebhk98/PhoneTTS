@@ -251,3 +251,10 @@ UI recompute themselves from the new descriptor - no `when(model)` switch, no sh
 touched. Removing an engine is deleting its module and that one `include` line. A native-runtime
 engine additionally documents its opt-in native wiring in an `INTEGRATION.md` (see
 `engines/ggmltts/INTEGRATION.md`) rather than editing shared app/build files directly.
+
+**Kotlin gotcha - block comments nest, so a literal `/*` inside a comment breaks the build.** Engine
+KDoc references paths and globs constantly; writing one like `voice_styles/*.json` or `onnx/*.onnx`
+in a comment puts a `/*` inside it, which *opens a nested comment* - the intended `*/` then closes
+only the inner level and the compiler swallows everything to end-of-file (`Syntax error: Unclosed
+comment`). Write such paths as `voice_styles/<name>.json`, or otherwise never let a literal `/*`
+appear inside a comment or KDoc.
