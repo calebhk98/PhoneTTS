@@ -2,10 +2,13 @@ package com.phonetts.app.playback
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.phonetts.app.MainActivity
 import com.phonetts.app.R
 import com.phonetts.core.metrics.GenerationStats
 
@@ -64,9 +67,21 @@ class GenerationNotifier(context: Context) {
                 .setOnlyAlertOnce(true)
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
+                // Tapping the row reopens the app. Without this the notification was inert - the one
+                // thing a user naturally does with a progress notification did nothing at all.
+                // Mirrors PlaybackNotificationFactory.openAppPendingIntent().
+                .setContentIntent(openAppPendingIntent())
         applyProgress(builder, chunksDone, totalChunks)
         manager.notify(GENERATION_NOTIFICATION_ID, builder.build())
     }
+
+    private fun openAppPendingIntent(): PendingIntent =
+        PendingIntent.getActivity(
+            appContext,
+            OPEN_APP_REQUEST_CODE,
+            Intent(appContext, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     private fun applyProgress(
         builder: NotificationCompat.Builder,
@@ -107,5 +122,9 @@ class GenerationNotifier(context: Context) {
         // Distinct from PLAYBACK_NOTIFICATION_ID (1, see PlaybackNotificationFactory) so the two
         // states never clobber each other's row in the shade.
         const val GENERATION_NOTIFICATION_ID = 2
+
+        // Distinct from PlaybackNotificationFactory's own open-app request code so the two
+        // PendingIntents stay separate entries rather than overwriting one another.
+        const val OPEN_APP_REQUEST_CODE = 2
     }
 }

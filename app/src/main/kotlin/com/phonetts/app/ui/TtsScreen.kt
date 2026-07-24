@@ -79,6 +79,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.phonetts.app.Screen
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.engine.Voice
@@ -101,14 +102,9 @@ import kotlin.math.roundToInt
 @Composable
 fun TtsScreen(
     viewModel: TtsViewModel,
-    onBrowseModels: () -> Unit,
-    onManageModels: () -> Unit,
-    onBenchmarks: () -> Unit,
-    onHelp: () -> Unit,
-    onMixVoices: () -> Unit = {},
-    onLibrary: () -> Unit = {},
-    onCompare: () -> Unit = {},
-    onSettings: () -> Unit = {},
+    // One navigation callback, not one per destination. The drawer renders NAV_ITEMS and hands back
+    // whichever Screen was tapped, so adding a destination needs no new parameter here.
+    onNavigate: (Screen) -> Unit,
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
@@ -150,18 +146,23 @@ fun TtsScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            AppDrawer(
+            // The SAME drawer every other screen renders (NAV_ITEMS) - Home no longer keeps its own
+            // copy, so the menu is identical wherever you open it from.
+            NavDrawerContent(
+                current = Screen.MAIN,
                 appVersion = appVersion,
-                onBrowseModels = { navigate(onBrowseModels) },
-                onManageModels = { navigate(onManageModels) },
-                onSideload = { navigate { sideloadLauncher.launch(null) } },
-                onBenchmarks = { navigate(onBenchmarks) },
-                onHelp = { navigate(onHelp) },
-                onHome = { navigate {} },
-                onMixVoices = { navigate(onMixVoices) },
-                onLibrary = { navigate(onLibrary) },
-                onCompare = { navigate(onCompare) },
-                onSettings = { navigate(onSettings) },
+                // MAIN is where we already are, so it just closes the drawer (matching how every
+                // other screen's drawer marks its own entry).
+                onNavigate = { destination ->
+                    navigate { if (destination != Screen.MAIN) onNavigate(destination) }
+                },
+                onAction = { action ->
+                    navigate {
+                        when (action) {
+                            NavAction.IMPORT_MODEL_FOLDER -> sideloadLauncher.launch(null)
+                        }
+                    }
+                },
             )
         },
     ) {
@@ -250,63 +251,6 @@ private fun SectionCard(
             content()
         }
     }
-}
-
-/** Navigation destinations, tucked behind the hamburger so the main screen isn't a button wall. */
-@Composable
-private fun AppDrawer(
-    appVersion: String?,
-    onBrowseModels: () -> Unit,
-    onManageModels: () -> Unit,
-    onSideload: () -> Unit,
-    onBenchmarks: () -> Unit,
-    onHelp: () -> Unit,
-    onHome: () -> Unit = {},
-    onMixVoices: () -> Unit = {},
-    onLibrary: () -> Unit = {},
-    onCompare: () -> Unit = {},
-    onSettings: () -> Unit = {},
-) {
-    ModalDrawerSheet {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("PhoneTTS", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                appVersion?.let { "Offline text-to-speech · v$it" } ?: "Offline text-to-speech",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        HorizontalDivider()
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // This IS the Home screen, so Home stays listed and highlighted as the current page,
-            // matching how every other page's drawer marks its own entry (issue #118). Tapping it
-            // just closes the drawer.
-            DrawerLink("Home", onHome, selected = true)
-            DrawerLink("Browse models", onBrowseModels)
-            DrawerLink("Manage models", onManageModels)
-            DrawerLink("Sideload folder", onSideload)
-            DrawerLink("Mix voices", onMixVoices)
-            DrawerLink("Reading library", onLibrary)
-            DrawerLink("Compare voices (A/B)", onCompare)
-            DrawerLink("Benchmarks", onBenchmarks)
-            DrawerLink("Settings", onSettings)
-            DrawerLink("Help", onHelp)
-        }
-    }
-}
-
-@Composable
-private fun DrawerLink(
-    label: String,
-    onClick: () -> Unit,
-    selected: Boolean = false,
-) {
-    NavigationDrawerItem(
-        label = { Text(label) },
-        selected = selected,
-        onClick = onClick,
-        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-    )
 }
 
 /** Model + voice + tunable parameters - everything about *what* voice speaks. */

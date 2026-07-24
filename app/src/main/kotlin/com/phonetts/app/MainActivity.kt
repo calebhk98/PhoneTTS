@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -52,6 +54,7 @@ import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.ui.HelpScreen
 import com.phonetts.app.ui.MixVoicesScreen
 import com.phonetts.app.ui.MixVoicesViewModel
+import com.phonetts.app.ui.NavAction
 import com.phonetts.app.ui.NavDrawerScaffold
 import com.phonetts.app.ui.OnboardingScreen
 import com.phonetts.app.ui.SettingsScreen
@@ -222,14 +225,7 @@ private fun AppNav(
         Screen.MAIN ->
             TtsScreen(
                 viewModel = ttsViewModel,
-                onBrowseModels = { screen = Screen.BROWSE },
-                onManageModels = { screen = Screen.MANAGE },
-                onBenchmarks = { screen = Screen.BENCHMARK },
-                onHelp = { screen = Screen.HELP },
-                onMixVoices = { screen = Screen.MIX },
-                onLibrary = { screen = Screen.LIBRARY },
-                onCompare = { screen = Screen.COMPARE },
-                onSettings = { screen = Screen.SETTINGS },
+                onNavigate = { screen = it },
                 appVersion = BuildConfig.VERSION_NAME,
                 sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
             )
@@ -390,11 +386,26 @@ private fun BackScaffold(
     onNavigate: (Screen) -> Unit,
     content: @Composable () -> Unit,
 ) {
+    // "Import model from folder" is a drawer entry like any other now, so EVERY screen that uses
+    // this scaffold can start an import - including Downloaded models, where wanting to add a model
+    // is most obvious and where it previously wasn't offered at all. The launcher is owned here so
+    // each screen doesn't need its own.
+    val ttsViewModel: TtsViewModel = viewModel(LocalContext.current as ComponentActivity)
+    val importLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            uri?.let(ttsViewModel::sideloadFolder)
+        }
     NavDrawerScaffold(
         title = title,
         current = current,
         onNavigate = onNavigate,
         onBack = { onNavigate(Screen.MAIN) },
+        onAction = { action ->
+            when (action) {
+                NavAction.IMPORT_MODEL_FOLDER -> importLauncher.launch(null)
+            }
+        },
+        appVersion = BuildConfig.VERSION_NAME,
         content = content,
     )
 }

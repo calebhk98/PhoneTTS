@@ -192,18 +192,18 @@ dependencies {
     implementation(project(":core"))
 
     // The built-in engines. Present on the classpath = discovered by ServiceLoader at startup.
-    // This is the aggregation point; no code here names or branches on any specific model.
-    runtimeOnly(project(":engines:cosyvoice2"))
-    runtimeOnly(project(":engines:melotts"))
-    runtimeOnly(project(":engines:piper"))
-    runtimeOnly(project(":engines:kittentts"))
-    runtimeOnly(project(":engines:kokoro"))
-    runtimeOnly(project(":engines:mms"))
-    runtimeOnly(project(":engines:f5tts"))
-    runtimeOnly(project(":engines:ggmltts"))
-    runtimeOnly(project(":engines:executorch"))
-    runtimeOnly(project(":engines:pytorch"))
-    runtimeOnly(project(":engines:litert"))
+    // This block names NO engine: it wires up every :engines:* module settings.gradle.kts found on
+    // disk, so a new engines/<name>/ directory ships in the APK with zero edits here.
+    //
+    // It used to be a hand-written list, and the list was already wrong - neutts, outetts,
+    // pockettts and supertonic existed as modules but were missing from it, so ServiceLoader never
+    // saw them and four engines silently were not in the app at all. Deriving the list is what
+    // makes rule 5 ("adding a model = registering it") actually true instead of aspirational.
+    rootProject.subprojects
+        .map { it.path }
+        .filter { it.startsWith(":engines:") && it != ":engines:common" } // common is plumbing, not an engine
+        .sorted()
+        .forEach { path -> runtimeOnly(project(path)) }
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json) // HfCatalog exposes a kotlinx.serialization Json default
