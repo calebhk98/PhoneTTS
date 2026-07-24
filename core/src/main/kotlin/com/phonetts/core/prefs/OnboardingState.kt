@@ -2,7 +2,7 @@ package com.phonetts.core.prefs
 
 /**
  * A one-shot "has the first-run walkthrough been seen?" flag over an injected [PreferenceStore]
- * (same `:core` logic / `:app` SharedPreferences split as [FavoriteVoices]). The app gates its
+ * (same `:core` logic / `:app` SharedPreferences split as [DefaultVoicePreference]). The app gates its
  * onboarding carousel on this: shown once for a brand-new install, then never again after
  * [markSeen]. Fails safe toward *not* nagging - any stored value other than the explicit
  * "not yet seen" state counts as seen.

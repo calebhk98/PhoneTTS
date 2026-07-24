@@ -2,7 +2,7 @@ package com.phonetts.core.prefs
 
 /**
  * The user's opt-in for long-document mode, over an injected [PreferenceStore] (mirrors
- * [PlaybackCuePreferences] / [FavoriteVoices]: `:core` holds the pure toggle, `:app` supplies the
+ * [PlaybackCuePreferences] / [DefaultVoicePreference]: `:core` holds the pure toggle, `:app` supplies the
  * SharedPreferences-backed store and the actual scratch file).
  *
  * When enabled, the app backs a generation's

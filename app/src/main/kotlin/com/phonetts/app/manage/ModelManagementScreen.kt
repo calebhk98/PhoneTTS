@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -130,7 +131,14 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
         val visibleUsage =
             ModelManagementViewModel.visibleUsage(state.usage, state.factsByModelId, state.sort, state.query)
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Re-sorting keeps stable item keys (by modelId), so a LazyColumn would otherwise preserve the
+        // scroll anchor and "follow" whatever row was on top - the user changed the order to see the new
+        // top, so snap back to it whenever the sort changes (issue #115). Keyed on the whole Sort so both
+        // a new sort-key and a direction flip trigger it.
+        val listState = rememberLazyListState()
+        LaunchedEffect(state.sort) { listState.animateScrollToItem(0) }
+
+        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(visibleUsage, key = { it.descriptor.modelId }) { usage ->
                 ModelUsageRow(
                     usage = usage,

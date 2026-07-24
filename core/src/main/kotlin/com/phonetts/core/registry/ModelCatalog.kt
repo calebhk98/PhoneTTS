@@ -1,6 +1,9 @@
 package com.phonetts.core.registry
 
 import com.phonetts.core.model.ModelDescriptor
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * A downloaded bundle sitting on disk that no registered engine could identify (spec rule 4:
@@ -26,6 +29,22 @@ class ModelCatalog {
     private val models = LinkedHashMap<String, ModelDescriptor>()
     private val unresolved = LinkedHashMap<String, UnresolvedModel>()
 
+    private val _revision = MutableStateFlow(0)
+
+    /**
+     * A monotonically increasing counter bumped on every mutation of this catalog. A UI can collect
+     * it to re-read [list] / [listUnresolved] whenever the set changes, which is what lets model
+     * hydration run OFF the main thread at startup (the folder re-import that scales with how many
+     * models the user has downloaded) and still have the home screen populate as models land, rather
+     * than blocking the first frame on that scan. Conflated (StateFlow), so a burst of adds during
+     * hydration coalesces into at most a few refreshes for the collector.
+     */
+    val revision: StateFlow<Int> = _revision.asStateFlow()
+
+    private fun bumpRevision() {
+        _revision.value += 1
+    }
+
     /** Add or replace the descriptor for its [ModelDescriptor.modelId]. */
     @Synchronized
     fun add(descriptor: ModelDescriptor) {
@@ -33,11 +52,13 @@ class ModelCatalog {
         // A later successful (re-)identification - e.g. an app update registered the right engine -
         // supersedes any earlier "couldn't identify this" marker for the same bundle id.
         unresolved.remove(descriptor.modelId)
+        bumpRevision()
     }
 
     @Synchronized
     fun remove(modelId: String) {
         models.remove(modelId)
+        bumpRevision()
     }
 
     @Synchronized
@@ -56,12 +77,14 @@ class ModelCatalog {
         // Already identified (e.g. this call is a stale retry) - an honest identified entry wins.
         if (models.containsKey(bundleId)) return
         unresolved[bundleId] = UnresolvedModel(bundleId, reason)
+        bumpRevision()
     }
 
     /** Drop [bundleId]'s unresolved marker - e.g. its on-disk files were deleted. */
     @Synchronized
     fun clearUnresolved(bundleId: String) {
         unresolved.remove(bundleId)
+        bumpRevision()
     }
 
     /** Every bundle currently on disk that no engine has claimed, in insertion order. */
@@ -85,5 +108,6 @@ class ModelCatalog {
     fun clear() {
         models.clear()
         unresolved.clear()
+        bumpRevision()
     }
 }

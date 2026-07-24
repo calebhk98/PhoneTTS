@@ -396,7 +396,11 @@ class HfBrowseViewModel(
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { fetchPiperVoices() } }
                 .onSuccess { voices ->
-                    mutableState.update { it.copy(piperVoicesLoading = false, piperVoices = voices) }
+                    // Same duplicate-key guard as the search results: the Piper list is rendered with
+                    // key = "piper:${it.id}", so two upstream voices that derive to the same id would
+                    // crash the LazyColumn on expand. Dedupe by id before it reaches state.
+                    val unique = voices.distinctBy { it.id }
+                    mutableState.update { it.copy(piperVoicesLoading = false, piperVoices = unique) }
                 }.onFailure { e ->
                     if (e is CancellationException) throw e
                     mutableState.update {
@@ -447,18 +451,25 @@ class HfBrowseViewModel(
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { catalog.search(query, limit = PAGE_SIZE) } }
                 .onSuccess { results ->
+                    // Dedupe by id BEFORE these become LazyColumn items: the list is rendered with
+                    // key = "hf:${it.id}", and the Hub can return the same repo id twice in one page
+                    // (its own ranking), which makes Compose throw a duplicate-key IllegalStateException
+                    // and crash the whole Browse screen. loadMore() already dedupes across page
+                    // boundaries for the same reason; the initial page needs the same guard. canLoadMore
+                    // still keys off the RAW page size so paging isn't cut short by within-page dupes.
+                    val unique = results.distinctBy { it.id }
                     // A success clears any prior cooldown counter so the next 429 starts its backoff
                     // from scratch rather than from an inflated consecutive count.
                     mutableState.update {
                         it.copy(
                             loading = false,
-                            results = results,
+                            results = unique,
                             canLoadMore = results.size >= PAGE_SIZE,
                             rateLimitConsecutive = 0,
                             rateLimitedUntilMs = 0,
                         )
                     }
-                    ensureSizesLoadedIfNeeded(results)
+                    ensureSizesLoadedIfNeeded(unique)
                 }.onFailure { e -> onSearchFailure(e) }
         }
     }

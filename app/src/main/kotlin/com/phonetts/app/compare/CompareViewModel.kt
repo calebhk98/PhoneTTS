@@ -49,6 +49,13 @@ private const val MAX_PREFETCH_AHEAD = 6
  * the look-ahead has a cost to reason about on the very first prefetch decision (issue #112). */
 private const val DEFAULT_GEN_ESTIMATE_SECONDS = 4.0
 
+/** Entries' worth of generation time to seed the bank with when a tournament starts, so the first
+ * pairing (both slots) and a little beyond are generated AHEAD instead of on-demand. Without this the
+ * bank starts empty and only [MIN_PREFETCH_AHEAD] (1) entry prefetches, so the user waits on the very
+ * first pairing's second slot - exactly the "should generate ahead of time" complaint (issue #112).
+ * The seed is spent down as entries generate, so a slow field still converges to the banked-time model. */
+private const val INITIAL_PREFETCH_CREDIT_ENTRIES = 3
+
 /** How many recent generation times feed the rolling "typical generation seconds" estimate. */
 private const val GEN_LOG_WINDOW = 8
 
@@ -629,6 +636,11 @@ class TournamentController(
         if (state.roster.size < 2 || currentText().isBlank() || state.running) return
 
         releaseAudio()
+        // Seed the look-ahead bank (releaseAudio just zeroed it) so the FIRST pairing generates ahead
+        // instead of on-demand: with an empty bank only one entry prefetches, leaving the user waiting
+        // on slot 2. A few entries' worth of credit lets both first slots (and a little more) be ready
+        // before judging starts; it is spent down as entries generate (issue #112).
+        bankedSeconds = INITIAL_PREFETCH_CREDIT_ENTRIES * DEFAULT_GEN_ESTIMATE_SECONDS
         // Shuffle once for the bracket order, and reuse that same order as the prefetch/generation
         // order (issue #112: "randomize the model order, then generate ahead") - every entry is
         // needed for at least one pairing, so generating in bracket order never wastes work.

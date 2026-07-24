@@ -21,8 +21,8 @@ import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentLibrary
+import com.phonetts.core.prefs.DefaultVoicePreference
 import com.phonetts.core.prefs.DocumentMemory
-import com.phonetts.core.prefs.FavoriteVoices
 import com.phonetts.core.prefs.LastUsedSelectionStore
 import com.phonetts.core.prefs.LongDocumentPreferences
 import com.phonetts.core.prefs.OnboardingState
@@ -250,11 +250,12 @@ class AppGraph(context: Context) {
                 "left in place at the old location so nothing was lost."
         }
 
-    // Preferences-backed features: favorite voices + per-language default, per-document resume,
-    // and the GLOBAL last-used model/voice/speed (issue #19-1 - one shared "where I left off",
-    // deliberately not per-document; see LastUsedSelection's kdoc). All model facts still come
-    // from descriptor.voices / the registry - these only persist the user's choices.
-    val favoriteVoices = FavoriteVoices(preferenceStore)
+    // Preferences-backed features: the per-language default voice, per-document resume, and the
+    // GLOBAL last-used model/voice/speed (issue #19-1 - one shared "where I left off", deliberately
+    // not per-document; see LastUsedSelection's kdoc). All model facts still come from
+    // descriptor.voices / the registry - these only persist the user's choices. Voice *favorites*
+    // now live solely in [favoritesStore] (one source of truth); this no longer holds them.
+    val defaultVoicePreference = DefaultVoicePreference(preferenceStore)
     val documentMemory = DocumentMemory(preferenceStore)
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
     val lastUsedSelection = LastUsedSelectionStore(preferenceStore)
@@ -294,7 +295,8 @@ class AppGraph(context: Context) {
      * The shared Favorites store the tournament (#113), home-favorites (#119), and persistence (#114)
      * work consume: favorite voices (modelId + voiceId), favorite models (modelId), and flagged/
      * downvoted models (modelId + optional reason). Loaded from disk at construction, persisted on
-     * every change. Distinct from [favoriteVoices] (the older per-language default-voice preference).
+     * every change. The single source of truth for voice and model favorites; [defaultVoicePreference]
+     * now holds only the per-language default voice, not favorites.
      */
     val favoritesStore = FavoritesStore(durableStore)
 
@@ -335,9 +337,17 @@ class AppGraph(context: Context) {
      * session (issue #4/#5) is honored on this launch with no extra wiring.
      */
     fun hydrate() {
-        val modelsDir = modelsBaseDir().resolve(ModelStorage.MODELS_DIR)
-        val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
-        folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
+        // The folder re-import scales with how many models the user has downloaded (each folder is a
+        // directory walk + a resolve across every registered engine). Run it OFF the main thread so a
+        // large library can't stall the first frame for many seconds at launch: the catalog bumps its
+        // revision as each model lands, and the home screen (TtsViewModel) re-reads the list on that
+        // signal, so models appear as they resolve instead of the UI blocking on the whole scan. The
+        // catalog is @Synchronized, so background mutation is safe.
+        appScope.launch(Dispatchers.IO) {
+            val modelsDir = modelsBaseDir().resolve(ModelStorage.MODELS_DIR)
+            val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
+            folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
+        }
         registerBuiltInDescriptors()
     }
 

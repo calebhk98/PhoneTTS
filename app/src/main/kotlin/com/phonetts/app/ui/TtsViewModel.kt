@@ -111,14 +111,11 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val loadedModelId: String? = null,
         // Chosen export encoder (WAV/AAC/Opus); the list is derived from AppGraph.exportFormats.
         val exportFormat: AudioEncoder,
-        // Favorited voice ids (spec §5.7). Sourced from graph.favoriteVoices, never invented here;
-        // the voice picker reads this to star/sort - the voices themselves still come from
-        // descriptor.voices (SSOT).
-        val favoriteVoiceIds: Set<String> = emptySet(),
         // Cross-model favorite voices (issue #119): (modelId, voiceId) pairs from the shared
-        // FavoritesStore, DISTINCT from [favoriteVoiceIds] (the older per-language default-voice
-        // preference). The Home quick-pick resolves these against [models] into [favoriteVoiceOptions],
-        // skipping any whose model/voice is no longer in the catalog (fail closed).
+        // FavoritesStore - the SINGLE source of truth for voice favorites. The Home quick-pick
+        // resolves these against [models] into [favoriteVoiceOptions], skipping any whose model/voice
+        // is no longer in the catalog (fail closed); the voice picker's per-voice stars read the
+        // derived [favoriteVoiceIds] below (same store, no second favorites list).
         val favoriteVoiceRefs: List<FavoriteVoiceRef> = emptyList(),
         // Set when a newer APK is available on GitHub Releases; drives the dismissible update banner.
         val update: UpdateStatus? = null,
@@ -150,6 +147,19 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
          */
         val voices: List<Voice>
             get() = selected?.let { BlendedVoiceCatalog.merge(it.voices, blendedVoices) } ?: emptyList()
+
+        /**
+         * The favorited voice ids for the currently selected model, derived from the single
+         * [favoriteVoiceRefs] source of truth (FavoritesStore). The voice picker reads this to
+         * star/sort; the voices themselves still come from descriptor.voices (SSOT). Empty when no
+         * model is selected. Deriving it here (rather than storing a second set) is what keeps the
+         * picker stars, the "Favorite this voice" toggle, and the Home quick-pick all in agreement.
+         */
+        val favoriteVoiceIds: Set<String>
+            get() {
+                val modelId = selected?.modelId ?: return emptySet()
+                return favoriteVoiceRefs.filter { it.modelId == modelId }.map { it.voiceId }.toSet()
+            }
 
         /**
          * Whether the currently selected model+voice is starred as a cross-model favorite (issue
@@ -277,7 +287,18 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     )
 
     init {
+        migrateLegacyFavorites()
         refreshModels()
+        // Model hydration now runs off the main thread (so a large library doesn't stall launch), so
+        // the catalog fills in AFTER this init. Re-read the model list - and retry the one-time
+        // favorites migration - whenever the catalog changes, so the home screen populates as models
+        // land. StateFlow is conflated, so a burst of hydration adds coalesces into a few refreshes.
+        viewModelScope.launch {
+            graph.catalog.revision.collect {
+                migrateLegacyFavorites()
+                refreshModels()
+            }
+        }
         mutableState.update {
             it.copy(
                 readingScale = graph.readingTextPreferences.scale(),
@@ -285,6 +306,24 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             )
         }
         checkForUpdate(announce = false)
+    }
+
+    // One-time port of the old model-blind voice favorites (a bare-voiceId SharedPreferences set) into
+    // the model-aware FavoritesStore, so unifying on one favorites store (issue: favorites not a single
+    // source of truth) doesn't silently drop the user's existing stars. A bare id carries no model, so
+    // each legacy id is matched against every catalog model that actually offers a voice with that id
+    // (fail closed: an id no model offers is dropped). Waits until the (async) catalog has models so it
+    // can actually resolve the ids; clearing the legacy set only after that makes it a no-op thereafter.
+    private fun migrateLegacyFavorites() {
+        val legacyIds = graph.defaultVoicePreference.legacyFavoriteVoiceIds()
+        if (legacyIds.isEmpty()) return
+        val models = graph.catalog.list()
+        if (models.isEmpty()) return
+        legacyIds.forEach { voiceId ->
+            models.filter { model -> model.voices.any { it.id == voiceId } }
+                .forEach { model -> graph.favoritesStore.setFavoriteVoice(model.modelId, voiceId, favorite = true) }
+        }
+        graph.defaultVoicePreference.clearLegacyFavorites()
     }
 
     // Ask GitHub Releases (off the main thread) whether a newer APK exists. Only ever surfaces a
@@ -343,7 +382,6 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                         restoringThisModel -> defaultParamValues(selected, preferredSpeed = restored?.speed)
                         else -> defaultParamValues(selected)
                     },
-                favoriteVoiceIds = graph.favoriteVoices.favoriteIds(),
                 favoriteVoiceRefs = graph.favoritesStore.favoriteVoices(),
             )
         }
@@ -413,30 +451,37 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
             param.id to value
         }
 
-    // Remembering the user's manual pick as the per-language default (favoriteVoices.setDefaultVoice)
-    // is what makes defaultVoiceIdFor's prefill useful next time this language comes up.
+    // Remembering the user's manual pick as the per-language default
+    // (defaultVoicePreference.setDefaultVoice) is what makes defaultVoiceIdFor's prefill useful next
+    // time this language comes up.
     fun setVoice(voiceId: String) {
         // Switching voice mid-utterance is the same barge-in as stop/skip (issue #45): cancel
         // synthesis, drop buffered chunks, stop the AudioTrack before the new voice takes effect.
         stop()
         mutableState.update { current ->
-            current.selected?.voices?.firstOrNull { it.id == voiceId }?.let(graph.favoriteVoices::setDefaultVoice)
+            current.selected?.voices?.firstOrNull { it.id == voiceId }?.let(graph.defaultVoicePreference::setDefaultVoice)
             current.copy(voiceId = voiceId)
         }
         saveLastUsedSelection()
     }
 
-    /** Flips [voice]'s favorite state; the voice picker re-sorts/stars off [UiState.favoriteVoiceIds]. */
-    fun toggleFavoriteVoice(voice: Voice) =
-        mutableState.update {
-            graph.favoriteVoices.toggleFavorite(voice)
-            it.copy(favoriteVoiceIds = graph.favoriteVoices.favoriteIds())
-        }
+    /**
+     * Flips [voice]'s favorite state for the currently selected model, via the single FavoritesStore
+     * source of truth (issue: favorites were split across two stores). The voice picker's stars and
+     * the "Favorite this voice" toggle both read the derived [UiState.favoriteVoiceIds] / the same
+     * refs, so they always agree. A no-op until a model is selected.
+     */
+    fun toggleFavoriteVoice(voice: Voice) {
+        val modelId = mutableState.value.selected?.modelId ?: return
+        graph.favoritesStore.toggleFavoriteVoice(modelId, voice.id)
+        mutableState.update { it.copy(favoriteVoiceRefs = graph.favoritesStore.favoriteVoices()) }
+    }
 
     /**
-     * Star/unstar the currently selected model+voice as a cross-model favorite (issue #119) via the
-     * shared FavoritesStore, which persists on change. DISTINCT from [toggleFavoriteVoice] (the older
-     * per-language default-voice preference). A no-op until a model+voice is actually selected.
+     * Star/unstar the currently selected model+voice as a favorite (issue #119) via the shared
+     * FavoritesStore. Identical in effect to [toggleFavoriteVoice] for the selected voice - both
+     * write the one favorites store - it just reads the model+voice from current state. A no-op
+     * until a model+voice is actually selected.
      */
     fun toggleFavoriteCurrentVoice() {
         val s = mutableState.value
@@ -468,7 +513,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     private fun defaultVoiceIdFor(descriptor: ModelDescriptor): String {
         val fallbackId = descriptor.defaultVoiceId
         val language = descriptor.voices.firstOrNull { it.id == fallbackId }?.language
-        val saved = language?.let { graph.favoriteVoices.defaultVoice(it, descriptor.voices) }
+        val saved = language?.let { graph.defaultVoicePreference.defaultVoice(it, descriptor.voices) }
         return saved?.id ?: fallbackId
     }
 

@@ -2,7 +2,7 @@ package com.phonetts.core.prefs
 
 /**
  * The user's opt-in for playback cues, over an injected [PreferenceStore] (mirrors
- * [FavoriteVoices] / [DocumentMemory]: `:core` holds the pure logic, `:app` supplies the
+ * [DefaultVoicePreference] / [DocumentMemory]: `:core` holds the pure logic, `:app` supplies the
  * SharedPreferences-backed store). Today the only cue is the end-of-document chime/haptic
  * (issue #32) - a short tone/vibration fired by the `:app` side's `PlaybackService` when a
  * playback flow completes *naturally* (as opposed to a user Stop).

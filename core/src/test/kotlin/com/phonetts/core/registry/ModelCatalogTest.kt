@@ -14,6 +14,22 @@ class ModelCatalogTest {
     }
 
     @Test
+    fun revisionBumpsOnEveryMutationSoAUiCanReactToAsyncHydration() {
+        val catalog = ModelCatalog()
+        val start = catalog.revision.value
+
+        catalog.add(testDescriptor("m1", "eng"))
+        catalog.add(testDescriptor("m2", "eng"))
+        catalog.markUnresolved("mystery", "no engine claimed it")
+        catalog.remove("m1")
+        catalog.clearUnresolved("mystery")
+        catalog.clear()
+
+        // Six mutations -> six bumps; the exact value doesn't matter, only that each change advances it.
+        assertEquals(start + 6, catalog.revision.value)
+    }
+
+    @Test
     fun addingSameModelIdReplacesTheDescriptor() {
         val catalog = ModelCatalog()
         catalog.add(testDescriptor("m1", "eng", sampleRate = 22_050))

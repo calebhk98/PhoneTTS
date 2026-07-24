@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -40,7 +41,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -295,25 +295,24 @@ private fun VoiceCard(
 ) {
     SectionCard("Voice") {
         if (state.models.isEmpty()) {
-            Text("No models yet. Open the menu to browse Hugging Face or sideload a folder.")
+            EmptyModelsHint()
             return@SectionCard
         }
+        FieldLabel("Model")
         ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
         val descriptor = state.selected ?: return@SectionCard
+
+        HorizontalDivider()
+        FieldLabel("Voice")
         VoicePicker(
             // Descriptor voices (SSOT) plus any saved mixes re-applied to the loaded engine (#42).
             voices = state.voices,
             selectedVoiceId = state.voiceId,
+            // Favorites are the single FavoritesStore source of truth now (was split across two
+            // stores); the picker's per-voice star is the one way to favorite a voice.
             favoriteVoiceIds = state.favoriteVoiceIds,
             onSelect = viewModel::setVoice,
             onToggleFavorite = viewModel::toggleFavoriteVoice,
-        )
-        // Star the currently selected model+voice as a cross-model favorite (issue #119) - a separate
-        // concept from the picker's per-voice stars above (which only re-order the current model's list).
-        FavoriteVoiceToggle(
-            isFavorite = state.currentVoiceIsFavorite,
-            enabled = state.voiceId != null,
-            onToggle = viewModel::toggleFavoriteCurrentVoice,
         )
         // Quick-pick of every starred voice across ALL models (issue #119): tap one to switch straight
         // to it. Absent when there are no resolvable favorites.
@@ -323,8 +322,34 @@ private fun VoiceCard(
             selectedVoiceId = state.voiceId,
             onSelect = viewModel::selectFavoriteVoice,
         )
-        ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
+
+        if (descriptor.parameters.isNotEmpty()) {
+            HorizontalDivider()
+            FieldLabel("Adjustments")
+            ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
+        }
     }
+}
+
+/** First-run hint when nothing is downloaded yet, phrased as a next step rather than a dead end. */
+@Composable
+private fun EmptyModelsHint() {
+    Text("No voices installed yet", style = MaterialTheme.typography.bodyLarge)
+    Text(
+        "Open the menu (top left) to browse Hugging Face models or sideload a folder, then pick one here.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** A small caps-style sub-label that breaks a dense card into scannable groups. */
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /**
@@ -586,10 +611,11 @@ private fun ExportFormatPicker(
 ) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
+        OutlinedTextField(
             value = selected.format.displayName,
             onValueChange = {},
             readOnly = true,
+            singleLine = true,
             label = { Text("Export format") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
@@ -693,18 +719,21 @@ private fun ModelPicker(
 ) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
+        OutlinedTextField(
             value = selected?.displayName ?: "Select a model",
             onValueChange = {},
             readOnly = true,
-            label = { Text("Model") },
+            singleLine = true,
+            supportingText = selected?.let { { Text(modelSummary(it)) } },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             models.forEach { model ->
+                val isSelected = model.modelId == selected?.modelId
                 DropdownMenuItem(
-                    text = { Text(model.displayName) },
+                    text = { TwoLineItem(model.displayName, modelSummary(model), isSelected) },
+                    trailingIcon = { SelectedCheck(isSelected) },
                     onClick = {
                         onSelect(model)
                         expanded = false
@@ -715,9 +744,50 @@ private fun ModelPicker(
     }
 }
 
+// A one-line "what is this model" summary from facts the descriptor already carries (SSOT - nothing
+// invented): the engine it runs on and how many voices it offers. Gives the picker the at-a-glance
+// context it was missing (the whole screen's most important choice was the most information-starved).
+private fun modelSummary(model: ModelDescriptor): String {
+    val voiceCount = model.voices.size
+    val voices = if (voiceCount == 1) "1 voice" else "$voiceCount voices"
+    return "${model.engineId} · $voices"
+}
+
+/** A dropdown row rendered as a bold primary line over a muted supporting line. */
+@Composable
+private fun TwoLineItem(
+    primary: String,
+    secondary: String,
+    selected: Boolean,
+) {
+    Column {
+        Text(
+            primary,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        Text(
+            secondary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** A check glyph shown only on the currently-selected dropdown row, so the pick is obvious in a long list. */
+@Composable
+private fun SelectedCheck(selected: Boolean) {
+    if (!selected) return
+    Text("✓", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+}
+
 /**
  * Voice picker; voices always come from [voices] (a descriptor's own list - SSOT). Favorited
- * voices ([favoriteVoiceIds], sourced from [com.phonetts.core.prefs.FavoriteVoices]) sort first
+ * voices ([favoriteVoiceIds], derived from the single FavoritesStore source of truth) sort first
  * and show a filled star; the star toggle never changes the voice list itself, only its order.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -730,22 +800,35 @@ private fun VoicePicker(
     onToggleFavorite: (Voice) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedName = voices.firstOrNull { it.id == selectedVoiceId }?.name ?: "Select a voice"
+    val selected = voices.firstOrNull { it.id == selectedVoiceId }
+    val selectedName = selected?.name ?: "Select a voice"
     val ordered = voices.sortedByDescending { it.id in favoriteVoiceIds }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
+        OutlinedTextField(
             value = selectedName,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Voice") },
+            singleLine = true,
+            supportingText = selected?.let { { Text(it.language) } },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             ordered.forEach { voice ->
+                val isSelected = voice.id == selectedVoiceId
                 DropdownMenuItem(
-                    text = { Text("${voice.name} (${voice.language})") },
-                    trailingIcon = { FavoriteStar(voice.id in favoriteVoiceIds) { onToggleFavorite(voice) } },
+                    text = { TwoLineItem(voice.name, voice.language, isSelected) },
+                    // Star (favorite) and check (selected) both live here; the star is tappable on its
+                    // own without dismissing, so a voice can be favorited straight from the list.
+                    trailingIcon = {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            FavoriteStar(voice.id in favoriteVoiceIds) { onToggleFavorite(voice) }
+                            SelectedCheck(isSelected)
+                        }
+                    },
                     onClick = {
                         onSelect(voice.id)
                         expanded = false
@@ -765,29 +848,6 @@ private fun FavoriteStar(
         text = if (isFavorite) "★" else "☆", // filled / outline star
         modifier = Modifier.clickable(onClick = onToggle),
     )
-}
-
-/**
- * Star/unstar the currently selected model+voice as a cross-model favorite (issue #119). Separate
- * from the voice picker's own per-voice stars (which only re-order the current model's list): this
- * feeds the [FavoriteVoicesQuickPick] below, which surfaces starred voices across ALL models.
- */
-@Composable
-private fun FavoriteVoiceToggle(
-    isFavorite: Boolean,
-    enabled: Boolean,
-    onToggle: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("Favorite this voice", modifier = Modifier.weight(1f))
-        OutlinedButton(onClick = onToggle, enabled = enabled) {
-            Text(if (isFavorite) "★ Favorited" else "☆ Favorite")
-        }
-    }
 }
 
 /**
@@ -891,15 +951,22 @@ private fun ContinuousControl(
     onValue: (Float) -> Unit,
 ) {
     val range = param.range ?: return
-    Text("${param.displayName}: ${"%.2f".format(value)}")
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(param.displayName, modifier = Modifier.weight(1f))
+        Text("%.2f".format(value), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+    }
     Slider(value = value, onValueChange = onValue, valueRange = range)
     // Speed keeps its familiar preset shortcuts; other continuous knobs just get the slider.
     if (param.id != ModelParameter.SPEED_ID) return
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         // Only presets the model's own range actually supports - clamping out-of-range presets to
-        // the boundary instead would show the same value twice (e.g. two "1.50x" buttons).
+        // the boundary instead would show the same value twice (e.g. two "1.50x" chips).
         SPEED_PRESETS.filter { it in range }.forEach { preset ->
-            OutlinedButton(onClick = { onValue(preset) }) { Text("${"%.2fx".format(preset)}") }
+            FilterChip(
+                selected = kotlin.math.abs(value - preset) < PRESET_MATCH_EPSILON,
+                onClick = { onValue(preset) },
+                label = { Text("%.2fx".format(preset)) },
+            )
         }
     }
 }
@@ -915,14 +982,17 @@ private fun ChoiceControl(
     Text(param.displayName)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         param.choices.forEachIndexed { index, choice ->
-            if (index == selected) {
-                Button(onClick = { onIndex(index.toFloat()) }) { Text(choice) }
-            } else {
-                OutlinedButton(onClick = { onIndex(index.toFloat()) }) { Text(choice) }
-            }
+            FilterChip(
+                selected = index == selected,
+                onClick = { onIndex(index.toFloat()) },
+                label = { Text(choice) },
+            )
         }
     }
 }
+
+// Speed is a Float, so a preset chip is "selected" when the current value is essentially equal to it.
+private const val PRESET_MATCH_EPSILON = 0.001f
 
 private val SPEED_PRESETS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 

@@ -36,6 +36,30 @@ data class RtfResult(
         get() = if (audioSecondsProduced <= 0.0) 0.0 else wallClockElapsedSeconds / audioSecondsProduced
 
     /**
+     * Whether the produced audio is a plausible amount of speech for the calibration text, rather
+     * than a model that silently emitted almost nothing (a wrong-language tokenizer dropping the
+     * input, an empty synthesis). Natural TTS speech runs on the order of 0.3-0.6s of audio per
+     * word; anything under [MIN_SECONDS_OF_SPEECH_PER_WORD] per word is far below any real voice and
+     * is treated as broken output, not a legitimate (and, at RTF near 0, deceptively "fastest")
+     * result. A calibration text with no countable words can't be judged, so it passes (fail-open on
+     * the measurement, so this never turns a genuine-but-unmeasurable run into a false failure).
+     */
+    val isPlausibleSpeech: Boolean
+        get() =
+            calibrationWordCount <= 0 ||
+                audioSecondsProduced >= calibrationWordCount * MIN_SECONDS_OF_SPEECH_PER_WORD
+
+    companion object {
+        /**
+         * Conservative floor of audio-seconds-per-word below which benchmark output is deemed broken.
+         * Set well under the ~0.25-0.3s/word of even very fast real speech so only genuinely degenerate
+         * output (near-zero audio, e.g. the 0.06s an Arabic model emitted for an English phrase) is
+         * flagged, never a merely fast-but-real voice.
+         */
+        const val MIN_SECONDS_OF_SPEECH_PER_WORD = 0.08
+    }
+
+    /**
      * Measured wall-clock seconds this engine+voice+speed took per word of the calibration
      * text, projected to a batch of [WORDS_PER_ESTIMATE_BATCH] words. `null` when the
      * calibration text had no words to measure a rate from.
