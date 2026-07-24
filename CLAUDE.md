@@ -11,8 +11,7 @@ time or export to a file. Target: budget hardware (developed against a Samsung G
 ~4 GB RAM, no NPU), but it must run unmodified on better/worse phones.
 
 The full engineering specification lives in [`docs/SPEC.md`](docs/SPEC.md). **Read it before
-making architectural changes** - the build order and abstractions there are *decided, not
-suggestions*.
+making architectural changes** - the abstractions there are *decided, not suggestions*.
 
 ## The one idea that governs everything
 
@@ -26,9 +25,10 @@ Four abstractions (all in `:core`):
   models, so it is deliberately **not** part of `VoiceEngine`; it lives *inside* each engine.
   (Not every engine has one: CosyVoice's native runtime tokenizes internally.)
 - **`Runtime`** - pluggable inference backend behind an interface, so adding one touches nothing
-  else. Two exist: the ONNX `Runtime` most engines use, and `NativeTtsRuntime` - a non-ONNX ggml
-  backend that runs CosyVoice3's **entire** text→audio pipeline in one native call (CrispASR's
-  `cosyvoice3_tts`; see docs/COSYVOICE2.md).
+  else. Several exist (see `app/src/main/kotlin/com/phonetts/app/runtime/`): the ONNX `Runtime`
+  most engines use; the non-ONNX ggml `NativeTtsRuntime` family (one impl runs CosyVoice3's
+  **entire** text→audio pipeline in one native call via CrispASR's `cosyvoice3_tts`, another is a
+  generalized ggml backend); plus ExecuTorch and LiteRT backends. See docs/COSYVOICE2.md.
 - **`ModelDescriptor`** - the single authority for every user-visible model fact, including the
   **dynamic list of tunable `ModelParameter`s** a model supports (see rule 1). The UI is derived
   entirely from it.
@@ -78,14 +78,23 @@ These come straight from the spec and are the whole point of the design:
   resolver, descriptors, WAV encoder, streaming driver, manifest/SHA-256. **No Android
   dependencies**, so its unit tests (the seam tests, spec §9) run on any JVM with no SDK.
   This is where correctness is proven.
-- **`:app`** - the Android application (Compose UI, `AudioTrack` sink, ONNX/native runtimes,
-  concrete engines, SharedPreferences-backed override store, downloader). Requires the
+- **`:engines:*`** - one Gradle module per model engine (`:engines:kokoro`, `:engines:kittentts`,
+  `:engines:cosyvoice2`, `:engines:melotts`, `:engines:ggmltts`, ...), plus `:engines:common` for
+  shared, model-agnostic engine plumbing (`AbstractVoiceEngine` and friends). Each is pure
+  Kotlin/JVM, depends only on `:core`'s seams, **names no other engine**, and is discovered at
+  runtime via `ServiceLoader` (a `META-INF/services/com.phonetts.core.engine.EngineProvider`
+  resource). See *Adding an engine* below.
+- **`:integration`** - cross-module JVM integration tests: the one place all engines share a
+  classpath.
+- **`:app`** - the Android application (Compose UI, `AudioTrack` sink, ONNX/native runtime
+  implementations, SharedPreferences-backed override store, downloader). Requires the
   Android SDK. `settings.gradle.kts` includes it **automatically when an SDK is present**
   (`ANDROID_HOME`/`ANDROID_SDK_ROOT`, or `sdk.dir` in `local.properties`); on a core-only
   machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`.
 
-Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,
-registry,resolver,audio}`.
+Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,registry,
+resolver,audio,download,update,text,prefs,…}` (that list is not exhaustive - see the package tree for
+the full set); each engine under `com.phonetts.engines.<name>`.
 
 ## Build & test
 
@@ -134,7 +143,9 @@ These bite in the ephemeral cloud sessions; note them so you don't waste a loop 
 - **`./gradlew` can't fetch its distribution behind the proxy** - the wrapper download 403s from
   `github.com`. **Use the system Gradle instead: `gradle …` (8.14.3 at `/opt/gradle/bin/gradle`,
   matches the wrapper version).** Same tasks, e.g. `gradle -PskipApp=true :core:test ktlintCheck detekt`.
-  Don't hand-edit `gradle-wrapper.jar`/`.properties` to work around it - CI validates the wrapper.
+  Don't hand-edit `gradle-wrapper.jar`/`.properties` to work around it - `gradle-wrapper.properties`
+  sets `validateDistributionUrl=true` (Gradle checks the distribution download), but CI does **not**
+  currently re-validate the jar itself.
 - **No Android SDK preinstalled, but it's downloadable** - `dl.google.com` is reachable. See the
   block in *Build & test* to install it and build `:app`; don't claim the app can't be built here.
 - **The pre-commit hook is NOT installed in a fresh clone** - there's no `.git/hooks/pre-commit`
@@ -163,7 +174,7 @@ consumer draining one flow. Write the failing test first, then the minimum code 
 non-deterministic. Test invariants instead (length in range, samples bounded, no NaNs).
 
 Shared test fixtures (`FakeEngine`, `testDescriptor`) live in
-`core/src/test/kotlin/com/phonetts/core/testing/Fakes.kt` - reuse them for new seam tests.
+`core/src/testFixtures/kotlin/com/phonetts/core/testing/Fakes.kt` - reuse them for new seam tests.
 
 ## Workflow conventions in this repo
 
@@ -200,8 +211,9 @@ Other conventions:
   the debug APK. It publishes the APK to a **GitHub Release** on **every push to `main`** (each merge
   bumps the patch, so each merge ships a release) and on any `v*` tag; a manual `workflow_dispatch`
   on another branch publishes a **prerelease**. Feature-branch pushes only upload the APK as an
-  Actions artifact - they do **not** cut a release. The checked-in `gradle-wrapper.jar` **must** be
-  the official one (the workflow validates it) - regenerate with the pinned Gradle, never hand-edit it.
+  Actions artifact - they do **not** cut a release. The checked-in `gradle-wrapper.jar` should stay
+  the official one - regenerate with the pinned Gradle, never hand-edit it (`validateDistributionUrl=true`
+  in `gradle-wrapper.properties` guards the download, but CI does not currently re-validate the jar).
 - **Auto-versioning (per merge, not per commit):** `app/build.gradle.kts` derives the version from
   the count of **merges to main** - `git rev-list --count --first-parent HEAD`, so a PR merge (or
   squash) adds exactly one and the branch's own commits never inflate it. `versionName` is
@@ -219,9 +231,30 @@ Other conventions:
   **"Check for updates"** button (`HelpScreen` → `TtsViewModel.checkForUpdatesNow`) that re-runs the
   same check on demand and reports "Up to date" / a download offer / a can't-reach note.
 
-## Build order (locked - hardest first, see spec §3-§4)
+## Adding an engine
 
-Phase 1 (skeleton, no audio yet) → Phase 2 models in order: **CosyVoice2 → MeloTTS → Piper →
-KittenTTS → Kokoro** → Phase 3 auto-load (which is just the same `inspect() → resolve →
-register` pipeline triggered by a file drop). Leading with the two awkward models forces the
-abstractions to be right on day one instead of refactoring the foundation late.
+Adding a model is **adding a module**, not editing a shared list (rule 5). Create
+`engines/<name>/` mirroring an existing engine of the same runtime family - an ONNX model like
+`:engines:kittentts` or `:engines:kokoro`, a native-ggml model like `:engines:ggmltts` - with:
+
+- an engine extending `AbstractVoiceEngine` (implementing `inspect`/`forcedMatch`/`doLoad`/
+  `synthesizeSentence`), building its `ModelDescriptor` from facts it verified against the real
+  model files (rule 1 SSOT; rule 4 fail-closed - never fabricate a sample rate, voice, or tensor
+  contract you can't source);
+- its `TextFrontend`, if the model needs one;
+- an `EngineProvider` registered via `META-INF/services/com.phonetts.core.engine.EngineProvider`;
+- seam tests (inspect fail-closed, descriptor facts, speed routing, synthesize invariants).
+
+Then add one `include(":engines:<name>")` line to `settings.gradle.kts` (and, for the app, a
+`runtimeOnly(project(":engines:<name>"))` in `app/build.gradle.kts`). The registry and the entire
+UI recompute themselves from the new descriptor - no `when(model)` switch, no shared list is
+touched. Removing an engine is deleting its module and that one `include` line. A native-runtime
+engine additionally documents its opt-in native wiring in an `INTEGRATION.md` (see
+`engines/ggmltts/INTEGRATION.md`) rather than editing shared app/build files directly.
+
+**Kotlin gotcha - block comments nest, so a literal `/*` inside a comment breaks the build.** Engine
+KDoc references paths and globs constantly; writing one like `voice_styles/*.json` or `onnx/*.onnx`
+in a comment puts a `/*` inside it, which *opens a nested comment* - the intended `*/` then closes
+only the inner level and the compiler swallows everything to end-of-file (`Syntax error: Unclosed
+comment`). Write such paths as `voice_styles/<name>.json`, or otherwise never let a literal `/*`
+appear inside a comment or KDoc.
