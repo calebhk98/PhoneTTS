@@ -26,10 +26,11 @@ Grab the latest APK from the [**Releases page**](https://github.com/calebhk98/Ph
 3. Open the APK to install.
 
 It's a **debug-signed** build (installs without a Play account, ideal for personal/sideload use).
-The ONNX engines (Piper, Kokoro, KittenTTS, MeloTTS) are included. espeak-ng phonemization and the
-CosyVoice engine are **opt-in native builds** not bundled in this baseline APK - build from source
-with `-PwithEspeak=true` / `-PwithCosyVoice=true` to include them (see
-[`docs/COSYVOICE2.md`](docs/COSYVOICE2.md) and
+Most on-device engines are included by default (Piper, Kokoro, KittenTTS, MeloTTS, MMS, F5-TTS, plus
+the ExecuTorch/LiteRT backends). espeak-ng phonemization and the CosyVoice **native** runtime are
+**opt-in native builds** not bundled in this baseline APK (the CosyVoice engine class ships, but its
+native backend does not) - build from source with `-PwithEspeak=true` / `-PwithCosyVoice=true` to
+include them (see [`docs/COSYVOICE2.md`](docs/COSYVOICE2.md) and
 [`docs/espeak-ng-integration.md`](docs/espeak-ng-integration.md)).
 
 No release yet? Push a `v*` tag (or run the **Android CI + APK release** workflow manually) and CI
@@ -38,13 +39,15 @@ publishes the APK; every push also attaches the APK to its Actions run as a buil
 ## Highlights
 
 - **A registry of engines, not a fixed list:** models ship as self-contained modules
-  (Piper, Kokoro-82M, KittenTTS, MeloTTS, CosyVoice2-0.5B, and more) - adding one is dropping in a
+  (Piper, Kokoro-82M, KittenTTS, MeloTTS, CosyVoice3-0.5B, and more) - adding one is dropping in a
   module, and the UI recomputes itself.
 - **Two output modes:** real-time streaming playback, and export-to-file (the escape hatch
   for models too slow for real-time).
 - **Native speed control** on every model - via the model's own duration/speed parameter,
   never by resampling (which would shift pitch).
 - **Per-model voice selection.**
+- **System-TTS fallback:** can also speak through the phone's built-in OS voices (Google/Samsung
+  TTS) with no model download at all.
 - **Drop-in models:** download a model from Hugging Face onto the device and the app
   configures it automatically when it recognizes the family - a sideloaded model is a
   first-class citizen. If it can't identify the model, it asks you once which engine to use
@@ -58,8 +61,8 @@ The app doesn't hardcode a list of models. It holds a **registry of engines**; e
 advertises what it can do through a **descriptor**, and the entire UI is *derived at runtime*
 from that registry and those descriptors. Four abstractions carry it: `VoiceEngine` (loads
 weights, runs inference), `TextFrontend` (text → phonemes/tokens, kept separate because it
-varies hardest between models), `Runtime` (pluggable inference backend - ONNX for most, a
-second LLM-style one for CosyVoice2), and `ModelDescriptor` (the sole authority for every
+varies hardest between models), `Runtime` (pluggable inference backends - ONNX for most, plus a
+native/ggml one, ExecuTorch, and LiteRT), and `ModelDescriptor` (the sole authority for every
 user-visible model fact). Adding, removing, or auto-detecting a model are the same operation
 seen from different entry points. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 
@@ -68,7 +71,9 @@ seen from different entry points. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | Module | What | Buildable without Android SDK? |
 |---|---|---|
 | `:core` | Pure Kotlin/JVM. Contracts, registry, resolver, descriptors, WAV encoder, streaming driver, manifest + SHA-256. All the testable "seam" logic. | **Yes** - its unit tests run on any JVM. |
-| `:app`  | Android app: Compose UI, `AudioTrack` playback, ONNX/native runtimes, concrete engines, downloader. | No (needs the SDK). `settings.gradle.kts` includes it automatically when an SDK is present. |
+| `:engines:*` | One module per model engine (kokoro, kittentts, cosyvoice2, melotts, …) + `:engines:common` shared plumbing; discovered at runtime via `ServiceLoader`. | **Yes** - pure Kotlin/JVM. |
+| `:integration` | Cross-module JVM integration tests - the one place all engines share a classpath. | **Yes**. |
+| `:app`  | Android app: Compose UI, `AudioTrack` playback, ONNX/native/ExecuTorch/LiteRT runtime implementations, downloader. | No (needs the SDK). `settings.gradle.kts` includes it automatically when an SDK is present. |
 
 ## Building
 
@@ -120,12 +125,14 @@ The engines that currently ship with verified model facts (the set grows as modu
 | Piper | ~5-30M / voice | 16k or 22.05k | Voices are independent ONNX files |
 | KittenTTS | 15M / 40M / 80M | 24k | Dev-preview; English-only for now |
 | Kokoro-82M | 82M | 24k | 54 voices, 8 languages; own g2p (misaki) w/ espeak fallback |
-| MeloTTS | small core + ~94M BERT | 44.1k | Multilingual; heavier real footprint |
-| CosyVoice2-0.5B | ~500M | *verify* | Autoregressive, non-deterministic, multi-component |
+| MeloTTS | small core + ~110M BERT | 44.1k | Multilingual; heavier real footprint |
+| CosyVoice3-0.5B | ~500M | 24k | Autoregressive, non-deterministic, multi-component |
 
 Per-model facts are confirmed against the actual shipped files and recorded in descriptors -
-see `docs/research/model-facts.md`. **Model weights are never bundled in the app**; they are
-downloaded into app-private storage and verified by SHA-256 before use.
+see `docs/research/model-facts.md`. Additional engine modules (e.g. MMS, F5-TTS, and native-runtime
+experiments) ship under `engines/` beyond the five detailed above - see `settings.gradle.kts` for the
+full set. **Model weights are never bundled in the app**; they are downloaded into app-private storage
+and verified by SHA-256 before use.
 
 ## Adding a model
 

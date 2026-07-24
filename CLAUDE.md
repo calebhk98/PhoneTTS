@@ -25,9 +25,10 @@ Four abstractions (all in `:core`):
   models, so it is deliberately **not** part of `VoiceEngine`; it lives *inside* each engine.
   (Not every engine has one: CosyVoice's native runtime tokenizes internally.)
 - **`Runtime`** - pluggable inference backend behind an interface, so adding one touches nothing
-  else. Two exist: the ONNX `Runtime` most engines use, and `NativeTtsRuntime` - a non-ONNX ggml
-  backend that runs CosyVoice3's **entire** text→audio pipeline in one native call (CrispASR's
-  `cosyvoice3_tts`; see docs/COSYVOICE2.md).
+  else. Several exist (see `app/src/main/kotlin/com/phonetts/app/runtime/`): the ONNX `Runtime`
+  most engines use; the non-ONNX ggml `NativeTtsRuntime` family (one impl runs CosyVoice3's
+  **entire** text→audio pipeline in one native call via CrispASR's `cosyvoice3_tts`, another is a
+  generalized ggml backend); plus ExecuTorch and LiteRT backends. See docs/COSYVOICE2.md.
 - **`ModelDescriptor`** - the single authority for every user-visible model fact, including the
   **dynamic list of tunable `ModelParameter`s** a model supports (see rule 1). The UI is derived
   entirely from it.
@@ -91,8 +92,9 @@ These come straight from the spec and are the whole point of the design:
   (`ANDROID_HOME`/`ANDROID_SDK_ROOT`, or `sdk.dir` in `local.properties`); on a core-only
   machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`.
 
-Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,
-registry,resolver,audio}`; each engine under `com.phonetts.engines.<name>`.
+Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,registry,
+resolver,audio,download,update,text,prefs,…}` (that list is not exhaustive - see the package tree for
+the full set); each engine under `com.phonetts.engines.<name>`.
 
 ## Build & test
 
@@ -141,7 +143,9 @@ These bite in the ephemeral cloud sessions; note them so you don't waste a loop 
 - **`./gradlew` can't fetch its distribution behind the proxy** - the wrapper download 403s from
   `github.com`. **Use the system Gradle instead: `gradle …` (8.14.3 at `/opt/gradle/bin/gradle`,
   matches the wrapper version).** Same tasks, e.g. `gradle -PskipApp=true :core:test ktlintCheck detekt`.
-  Don't hand-edit `gradle-wrapper.jar`/`.properties` to work around it - CI validates the wrapper.
+  Don't hand-edit `gradle-wrapper.jar`/`.properties` to work around it - `gradle-wrapper.properties`
+  sets `validateDistributionUrl=true` (Gradle checks the distribution download), but CI does **not**
+  currently re-validate the jar itself.
 - **No Android SDK preinstalled, but it's downloadable** - `dl.google.com` is reachable. See the
   block in *Build & test* to install it and build `:app`; don't claim the app can't be built here.
 - **The pre-commit hook is NOT installed in a fresh clone** - there's no `.git/hooks/pre-commit`
@@ -170,7 +174,7 @@ consumer draining one flow. Write the failing test first, then the minimum code 
 non-deterministic. Test invariants instead (length in range, samples bounded, no NaNs).
 
 Shared test fixtures (`FakeEngine`, `testDescriptor`) live in
-`core/src/test/kotlin/com/phonetts/core/testing/Fakes.kt` - reuse them for new seam tests.
+`core/src/testFixtures/kotlin/com/phonetts/core/testing/Fakes.kt` - reuse them for new seam tests.
 
 ## Workflow conventions in this repo
 
@@ -207,8 +211,9 @@ Other conventions:
   the debug APK. It publishes the APK to a **GitHub Release** on **every push to `main`** (each merge
   bumps the patch, so each merge ships a release) and on any `v*` tag; a manual `workflow_dispatch`
   on another branch publishes a **prerelease**. Feature-branch pushes only upload the APK as an
-  Actions artifact - they do **not** cut a release. The checked-in `gradle-wrapper.jar` **must** be
-  the official one (the workflow validates it) - regenerate with the pinned Gradle, never hand-edit it.
+  Actions artifact - they do **not** cut a release. The checked-in `gradle-wrapper.jar` should stay
+  the official one - regenerate with the pinned Gradle, never hand-edit it (`validateDistributionUrl=true`
+  in `gradle-wrapper.properties` guards the download, but CI does not currently re-validate the jar).
 - **Auto-versioning (per merge, not per commit):** `app/build.gradle.kts` derives the version from
   the count of **merges to main** - `git rev-list --count --first-parent HEAD`, so a PR merge (or
   squash) adds exactly one and the branch's own commits never inflate it. `versionName` is
