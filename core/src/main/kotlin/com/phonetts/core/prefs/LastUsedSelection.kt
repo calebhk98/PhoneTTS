@@ -18,7 +18,7 @@ data class LastUsedSelection(
 
 /**
  * Persists/reads the single global [LastUsedSelection] over an injected [PreferenceStore] (mirrors
- * [FavoriteVoices]/[DocumentMemory]'s pattern: `:core` holds the pure logic, `:app` supplies the
+ * [DefaultVoicePreference]/[DocumentMemory]'s pattern: `:core` holds the pure logic, `:app` supplies the
  * SharedPreferences-backed store). Purely a value seam - it is the caller's job to decide whether a
  * saved modelId/voiceId still exist before trusting them as the initial UI selection (fail-closed:
  * a stale or corrupt save must never crash or select something that no longer exists).

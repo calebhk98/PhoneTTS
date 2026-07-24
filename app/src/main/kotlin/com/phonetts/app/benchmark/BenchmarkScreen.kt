@@ -184,7 +184,7 @@ private fun ResultsTable(rows: List<BenchmarkViewModel.Row>) {
 @Composable
 private fun TableRow(row: BenchmarkViewModel.Row) {
     if (!row.ok) {
-        TableRow(row.displayName, "failed", "-", "-", "-", "-", ram(row.metrics?.processMemoryBytes), ram(row.peakRamBytes))
+        FailedRow(row)
         return
     }
     TableRow(
@@ -227,6 +227,25 @@ private fun TableRow(
     }
 }
 
+// A failed model: name in the first column, then the captured reason (crash message, or the
+// implausible-output note) spanning the remaining columns instead of a wall of dashes, so the user
+// can tell a crash from an OOM from a wrong-language model at a glance (issues #110, benchmark 0.06s).
+@Composable
+private fun FailedRow(row: BenchmarkViewModel.Row) {
+    Row(
+        modifier = Modifier.padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Cell(row.displayName, MODEL_COL_WIDTH, FontWeight.Normal)
+        Text(
+            "failed" + (row.error?.let { ": $it" } ?: ""),
+            modifier = Modifier.width(NUM_COL_WIDTH * FAILED_REASON_COLUMNS),
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
 @Composable
 private fun Cell(
     text: String,
@@ -248,3 +267,6 @@ private fun ram(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE
 private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
 private val MODEL_COL_WIDTH = 200.dp
 private val NUM_COL_WIDTH = 72.dp
+
+// A failed row's reason spans where the seven numeric columns would be, so it has room to read.
+private const val FAILED_REASON_COLUMNS = 7

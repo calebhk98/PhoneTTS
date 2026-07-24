@@ -216,9 +216,34 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
                 modelLoadSeconds to rtf
             }
         }.fold(
-            onSuccess = { (modelLoadSeconds, result) -> successRow(descriptor, modelLoadSeconds, result) },
+            onSuccess = { (modelLoadSeconds, result) ->
+                // A model can "succeed" (throw nothing) yet emit almost no audio - e.g. an Arabic
+                // model handed the English bench phrase produced 0.06s of sound. That is broken
+                // output, not a fast result, and at RTF near 0 it would even sort to the TOP as the
+                // "fastest" model. Treat implausibly short output as a failure so it sinks to the
+                // bottom with a clear reason instead of masquerading as the best result.
+                if (result.isPlausibleSpeech) {
+                    successRow(descriptor, modelLoadSeconds, result)
+                } else {
+                    implausibleOutputRow(descriptor, estimatedRam, result)
+                }
+            },
             onFailure = { e -> failureRow(descriptor, estimatedRam, e) },
         )
+    }
+
+    // A run that completed without error but produced far too little audio to be real speech (see
+    // RtfResult.isPlausibleSpeech). Recorded as a failed row - ok=false sinks it below real results -
+    // with a reason the user can act on (likely a wrong-language or otherwise mismatched model).
+    private fun implausibleOutputRow(
+        descriptor: ModelDescriptor,
+        estimatedRam: Long?,
+        result: RtfResult,
+    ): Row {
+        val reason =
+            "produced only %.2fs of audio for %d words - likely wrong-language or broken output"
+                .format(result.audioSecondsProduced, result.calibrationWordCount)
+        return Row(displayName = descriptor.displayName, ok = false, peakRamBytes = estimatedRam, error = reason)
     }
 
     private fun successRow(
@@ -283,7 +308,12 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     private fun markdownRow(row: Row): String {
         val ramUsed = ramText(row.metrics?.processMemoryBytes)
         val estRam = ramText(row.peakRamBytes)
-        if (!row.ok) return "| ${row.displayName} | failed | - | - | - | - | $ramUsed | $estRam |"
+        // Surface the captured failure reason (crash message, or the implausible-output note) instead
+        // of a bare "failed", so the user can tell a crash from an OOM from a wrong-language model.
+        if (!row.ok) {
+            val why = row.error?.let { "failed: $it" } ?: "failed"
+            return "| ${row.displayName} | $why | - | - | - | - | $ramUsed | $estRam |"
+        }
         val speed = "${fmt(row.realTimeFactor)} | ${fmt(row.audioSeconds)} | ${fmt(row.wallSeconds)}"
         val ttfa = optionalFmt(row.metrics?.timeToFirstAudioSeconds)
         val load = optionalFmt(row.metrics?.modelLoadSeconds)

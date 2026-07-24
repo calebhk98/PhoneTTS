@@ -2,7 +2,7 @@ package com.phonetts.core.prefs
 
 /**
  * The user's chosen font scale for the reading/editing text field (the A− / A+ control), persisted
- * over an injected [PreferenceStore] exactly like [FavoriteVoices] and [DocumentMemory]. This is a
+ * over an injected [PreferenceStore] exactly like [DefaultVoicePreference] and [DocumentMemory]. This is a
  * pure display preference - it scales nothing about synthesis and touches no model fact - so the
  * scale bounds live here as ordinary named constants, not in any descriptor.
  */

@@ -21,7 +21,7 @@ enum class AppTheme(val displayName: String) {
 
 /**
  * Persists the user's [AppTheme] choice over an injected [PreferenceStore] (same `:core` logic /
- * `:app` SharedPreferences split as [FavoriteVoices]). Fails safe: an unset or unrecognized stored
+ * `:app` SharedPreferences split as [DefaultVoicePreference]). Fails safe: an unset or unrecognized stored
  * value resolves to [AppTheme.SYSTEM] rather than throwing, so a renamed/removed theme can never
  * brick the UI.
  */

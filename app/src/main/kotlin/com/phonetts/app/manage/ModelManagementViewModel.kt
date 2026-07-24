@@ -26,9 +26,10 @@ import kotlinx.coroutines.withContext
  * is [ModelManager]'s job (spec §1.1.6, "removable models"); this class only holds UI state and
  * keeps the (potentially slow, recursive-delete) work off the main thread.
  *
- * It also surfaces the resource-cost hint (issue #38): each row shows an estimated peak RAM (the
- * engine's a-priori estimate from the descriptor, refined by observed peaks in [resourceUsage]), and
- * the screen shows the device's total RAM at the top. A "won't fit" warning is only ever shown when
+ * It also surfaces the resource-cost hint (issue #38): each row shows the engine's a-priori estimated
+ * peak RAM from the descriptor (issue #123: deliberately NOT the observed whole-process PSS, which
+ * isn't model-attributable; that stays on the Benchmark screen), and the screen shows the device's
+ * total RAM at the top. A "won't fit" warning is only ever shown when
  * the model's estimated peak genuinely exceeds this device's TOTAL RAM
  * ([com.phonetts.core.model.DeviceRamFit]) - never merely because free RAM is currently low, which
  * on a 4 GB phone is often true even for models that fit fine (a per-maintainer fix: a 3.5 GB model
@@ -127,7 +128,12 @@ class ModelManagementViewModel(
     /** Re-read the catalog + sizes + RAM estimates - call after a delete, or when the screen shows. */
     fun refresh() {
         val usage = modelManager.usage()
-        val estimates = usage.associate { it.descriptor.modelId to resourceUsage.peakRamEstimate(it.descriptor) }
+        // Show the engine's a-priori peak-RAM ESTIMATE, not the observed peak. The observed value is a
+        // whole-process PSS snapshot taken after a benchmark run (it includes the entire app, not just
+        // this model), so it isn't model-attributable and produced contradictory numbers between models
+        // - a 22.8 MB model reading 354 MB while a 57.3 MB one read 80 MB (issue #123). The honest
+        // measured process-memory still lives on the Benchmark screen, labeled as process memory there.
+        val estimates = usage.associate { it.descriptor.modelId to it.descriptor.resourceCost.approxPeakRamBytes }
         val facts = usage.associate { it.descriptor.modelId to factsFor(it) }
         mutableState.update {
             it.copy(

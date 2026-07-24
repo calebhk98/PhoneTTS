@@ -199,6 +199,45 @@ class RtfEstimatorTest {
         }
 
     @Test
+    fun implausiblyShortAudioForTheWordCountIsFlaggedAsNotRealSpeech() {
+        // 19 words but only 0.06s of audio (the MMS-ara case): far below the per-word floor, so broken.
+        val broken =
+            RtfResult(
+                calibrationWordCount = 19,
+                audioSecondsProduced = 0.06,
+                wallClockElapsedSeconds = 0.5,
+                chunksProduced = 1,
+            )
+        assertTrue(!broken.isPlausibleSpeech, "0.06s for 19 words must be flagged as broken output")
+    }
+
+    @Test
+    fun ampleAudioForTheWordCountIsPlausibleSpeech() {
+        // 19 words, ~7s of audio: comfortably above the floor, a real (even if fast) result.
+        val real =
+            RtfResult(
+                calibrationWordCount = 19,
+                audioSecondsProduced = 7.0,
+                wallClockElapsedSeconds = 2.0,
+                chunksProduced = 3,
+            )
+        assertTrue(real.isPlausibleSpeech, "ample audio for the word count should be plausible")
+    }
+
+    @Test
+    fun outputIsNeverFlaggedWhenThereAreNoWordsToJudgeAgainst() {
+        // No countable words -> can't judge plausibility, so it must pass (fail-open on measurement).
+        val noWords =
+            RtfResult(
+                calibrationWordCount = 0,
+                audioSecondsProduced = 0.0,
+                wallClockElapsedSeconds = 0.0,
+                chunksProduced = 0,
+            )
+        assertTrue(noWords.isPlausibleSpeech, "a zero-word calibration can't be judged and must pass")
+    }
+
+    @Test
     fun rejectsANegativeTimeToFirstAudio() {
         assertFailsWith<IllegalArgumentException> {
             RtfResult(

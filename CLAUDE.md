@@ -176,6 +176,15 @@ non-deterministic. Test invariants instead (length in range, samples bounded, no
 Shared test fixtures (`FakeEngine`, `testDescriptor`) live in
 `core/src/testFixtures/kotlin/com/phonetts/core/testing/Fakes.kt` - reuse them for new seam tests.
 
+## Subagent model policy
+
+**Spawn subagents on Sonnet or Haiku, never Opus or Fable.** When delegating with the Agent/Task
+tools, always pin the model explicitly: `model: "sonnet"` for research/exploration/analysis, and
+`model: "haiku"` for cheap mechanical work (simple greps, file listings, boilerplate). Do NOT leave
+the model unset - an unpinned subagent inherits the (expensive) parent model. Reserve Opus for the
+main orchestrating loop only. This keeps fan-out cheap without hurting result quality on the seam-
+and UI-level tasks this repo involves.
+
 ## Workflow conventions in this repo
 
 **The issue is the source of truth for what to do - the prompt only gets you up to speed.** Work is

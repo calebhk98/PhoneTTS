@@ -225,7 +225,8 @@ private fun SlotCard(
             HorizontalDivider()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onReplay, enabled = hasResult && !playing) { Text("Replay $label") }
-                OutlinedButton(onClick = onSave, enabled = hasResult) { Text("Save $label") }
+                // Exports this side's clip to a .wav file (system file picker), not a "favorite".
+                OutlinedButton(onClick = onSave, enabled = hasResult) { Text("Export $label") }
             }
         }
     }
@@ -269,7 +270,6 @@ private fun TournamentSection(
                     t = t,
                     onPick = controller::pickWinner,
                     onReplay = controller::replayEntry,
-                    onSave = onSaveEntry,
                     onFlag = controller::flagSlot,
                 )
                 OutlinedButton(onClick = controller::stop) { Text("Cancel tournament") }
@@ -398,13 +398,12 @@ private fun ActiveMatchCard(
     t: CompareViewModel.TournamentUiState,
     onPick: (Int) -> Unit,
     onReplay: (String) -> Unit,
-    onSave: (String) -> Unit,
     onFlag: (Int) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(roundHeadline(t), style = MaterialTheme.typography.titleMedium)
-            BlindSlotsRow(t, onPick, onReplay, onSave, onFlag)
+            BlindSlotsRow(t, onPick, onReplay, onFlag)
         }
     }
 }
@@ -424,7 +423,6 @@ private fun BlindSlotsRow(
     t: CompareViewModel.TournamentUiState,
     onPick: (Int) -> Unit,
     onReplay: (String) -> Unit,
-    onSave: (String) -> Unit,
     onFlag: (Int) -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -437,7 +435,6 @@ private fun BlindSlotsRow(
             canPick = t.canPick,
             onPick = onPick,
             onReplay = onReplay,
-            onSave = onSave,
             onFlag = onFlag,
         )
         BlindSlot(
@@ -449,16 +446,18 @@ private fun BlindSlotsRow(
             canPick = t.canPick,
             onPick = onPick,
             onReplay = onReplay,
-            onSave = onSave,
             onFlag = onFlag,
         )
     }
 }
 
 // One blind slot's card: while judging, [entryId] is an OPAQUE contender id (never a label) - just
-// enough for "Replay"/"Save"/"Flag" to act on the already-generated audio / underlying model without
-// regenerating, without revealing which model/voice it is (issues: "replay + save + relisten",
-// #113d downvote). The flag toggle acts on the hidden model behind the slot, staying blind.
+// enough for "Replay"/"Flag" to act on the already-generated audio / underlying model without
+// regenerating, without revealing which model/voice it is (issues: "replay + relisten", #113d
+// downvote). The flag toggle acts on the hidden model behind the slot, staying blind. There is no
+// export here on purpose: saving a still-anonymous clip to a compare-entry-N.wav file mid-judging
+// has no clear use and only crowded the choose/replay/flag actions - exporting lives on the final
+// ranking page, once identities are revealed and the file can be named for its model.
 @Composable
 private fun BlindSlot(
     slot: Int,
@@ -469,7 +468,6 @@ private fun BlindSlot(
     canPick: Boolean,
     onPick: (Int) -> Unit,
     onReplay: (String) -> Unit,
-    onSave: (String) -> Unit,
     onFlag: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -481,10 +479,7 @@ private fun BlindSlot(
             }
         Text(label, style = MaterialTheme.typography.bodyMedium)
         Button(onClick = { onPick(slot) }, enabled = canPick) { Text("Choose $slot") }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { entryId?.let(onReplay) }, enabled = ready && !playing) { Text("Replay $slot") }
-            OutlinedButton(onClick = { entryId?.let(onSave) }, enabled = ready) { Text("Save $slot") }
-        }
+        OutlinedButton(onClick = { entryId?.let(onReplay) }, enabled = ready && !playing) { Text("Replay $slot") }
         OutlinedButton(onClick = { onFlag(slot) }, enabled = ready) {
             Text(if (flagged) "Flagged - undo" else "Flag as bad")
         }
@@ -517,7 +512,10 @@ private fun RankingTable(
                 Text("Judged wins: ${row.winsRecorded}", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onReplay(row.entryId) }, enabled = hasAudio) { Text("Replay") }
-                    OutlinedButton(onClick = { onSave(row.entryId) }, enabled = hasAudio) { Text("Save") }
+                    // "Export WAV", not "Save": this writes the clip to a .wav file via the system
+                    // file picker - it is not "save as my favorite" (that's the Favorite button beside
+                    // it). The old "Save" label read as favoriting and confused which button did what.
+                    OutlinedButton(onClick = { onSave(row.entryId) }, enabled = hasAudio) { Text("Export WAV") }
                     OutlinedButton(onClick = { onToggleFavorite(row.modelId) }) {
                         Text(if (isFavorite) "Favorited" else "Favorite")
                     }

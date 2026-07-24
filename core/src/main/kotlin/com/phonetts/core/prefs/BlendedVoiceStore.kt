@@ -4,7 +4,7 @@ import com.phonetts.core.engine.BlendedVoiceSpec
 
 /**
  * Persists the user's saved voice mixes ([BlendedVoiceSpec]s) over an injected [PreferenceStore],
- * mirroring [FavoriteVoices]: `:core` holds the pure logic, `:app` supplies the
+ * mirroring [DefaultVoicePreference]: `:core` holds the pure logic, `:app` supplies the
  * SharedPreferences-backed store, so this stays unit-testable on a plain JVM. Only the recipe is
  * stored (the two source voice ids + weight), never audio or an embedding - the engine recomputes
  * the blend from the loaded model each time, so a saved mix survives app restarts and model

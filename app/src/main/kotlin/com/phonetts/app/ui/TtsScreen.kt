@@ -15,16 +15,32 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -38,9 +54,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -60,21 +75,18 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
-import com.phonetts.core.audio.transform.BassCut
-import com.phonetts.core.audio.transform.DeEsser
-import com.phonetts.core.audio.transform.PresenceBoost
-import com.phonetts.core.audio.transform.TempoStretch
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
-import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.text.TextChunker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 /**
  * The main screen. Model list, voice list and speed bounds are read entirely from the
@@ -96,6 +108,7 @@ fun TtsScreen(
     onMixVoices: () -> Unit = {},
     onLibrary: () -> Unit = {},
     onCompare: () -> Unit = {},
+    onSettings: () -> Unit = {},
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
@@ -148,6 +161,7 @@ fun TtsScreen(
                 onMixVoices = { navigate(onMixVoices) },
                 onLibrary = { navigate(onLibrary) },
                 onCompare = { navigate(onCompare) },
+                onSettings = { navigate(onSettings) },
             )
         },
     ) {
@@ -157,9 +171,7 @@ fun TtsScreen(
                     title = { Text("PhoneTTS") },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            // The repo avoids the material-icons dependency (see back arrow / stars),
-                            // so the menu affordance is the "trigram for heaven" hamburger glyph.
-                            Text("☰", style = MaterialTheme.typography.titleLarge)
+                            Icon(Icons.Filled.Menu, contentDescription = "Open navigation menu")
                         }
                     },
                 )
@@ -210,8 +222,8 @@ private fun TtsBody(
 
         VoiceCard(state, viewModel)
         TextCard(state, viewModel, onImport)
-        PlaybackCard(state, viewModel)
-        OutputCard(state, viewModel, sleepTimer, onExport, onSampleAll)
+        PlaybackCard(state, viewModel, sleepTimer)
+        OutputCard(state, viewModel, onExport, onSampleAll)
     }
 }
 
@@ -226,7 +238,9 @@ private fun SectionCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            // titleMedium in near-white (onSurface), not a small saturated label - a real section
+            // header in the type hierarchy rather than an HTML fieldset legend (issue #123).
+            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             content()
         }
     }
@@ -245,6 +259,7 @@ private fun AppDrawer(
     onMixVoices: () -> Unit = {},
     onLibrary: () -> Unit = {},
     onCompare: () -> Unit = {},
+    onSettings: () -> Unit = {},
 ) {
     ModalDrawerSheet {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -268,6 +283,7 @@ private fun AppDrawer(
             DrawerLink("Reading library", onLibrary)
             DrawerLink("Compare voices (A/B)", onCompare)
             DrawerLink("Benchmarks", onBenchmarks)
+            DrawerLink("Settings", onSettings)
             DrawerLink("Help", onHelp)
         }
     }
@@ -295,25 +311,24 @@ private fun VoiceCard(
 ) {
     SectionCard("Voice") {
         if (state.models.isEmpty()) {
-            Text("No models yet. Open the menu to browse Hugging Face or sideload a folder.")
+            EmptyModelsHint()
             return@SectionCard
         }
+        FieldLabel("Model")
         ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
         val descriptor = state.selected ?: return@SectionCard
+
+        HorizontalDivider()
+        FieldLabel("Voice")
         VoicePicker(
             // Descriptor voices (SSOT) plus any saved mixes re-applied to the loaded engine (#42).
             voices = state.voices,
             selectedVoiceId = state.voiceId,
+            // Favorites are the single FavoritesStore source of truth now (was split across two
+            // stores); the picker's per-voice star is the one way to favorite a voice.
             favoriteVoiceIds = state.favoriteVoiceIds,
             onSelect = viewModel::setVoice,
             onToggleFavorite = viewModel::toggleFavoriteVoice,
-        )
-        // Star the currently selected model+voice as a cross-model favorite (issue #119) - a separate
-        // concept from the picker's per-voice stars above (which only re-order the current model's list).
-        FavoriteVoiceToggle(
-            isFavorite = state.currentVoiceIsFavorite,
-            enabled = state.voiceId != null,
-            onToggle = viewModel::toggleFavoriteCurrentVoice,
         )
         // Quick-pick of every starred voice across ALL models (issue #119): tap one to switch straight
         // to it. Absent when there are no resolvable favorites.
@@ -323,8 +338,34 @@ private fun VoiceCard(
             selectedVoiceId = state.voiceId,
             onSelect = viewModel::selectFavoriteVoice,
         )
-        ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
+
+        if (descriptor.parameters.isNotEmpty()) {
+            HorizontalDivider()
+            FieldLabel("Adjustments")
+            ParameterControls(descriptor, state.paramValues) { id, value -> viewModel.setParam(id, value) }
+        }
     }
+}
+
+/** First-run hint when nothing is downloaded yet, phrased as a next step rather than a dead end. */
+@Composable
+private fun EmptyModelsHint() {
+    Text("No voices installed yet", style = MaterialTheme.typography.bodyLarge)
+    Text(
+        "Open the menu (top left) to browse Hugging Face models or sideload a folder, then pick one here.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** A small caps-style sub-label that breaks a dense card into scannable groups. */
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /**
@@ -382,25 +423,8 @@ private fun TextCard(
                 onClick = viewModel::saveToLibrary,
                 enabled = state.text.isNotBlank(),
             ) { Text("Save to library") }
-            FontSizeControls(state, viewModel)
         }
     }
-}
-
-/** A− / A+ reading font size (issue #29); bounds come from [ReadingTextPreferences] (SSOT for them). */
-@Composable
-private fun FontSizeControls(
-    state: TtsViewModel.UiState,
-    viewModel: TtsViewModel,
-) {
-    OutlinedButton(
-        onClick = viewModel::decreaseTextScale,
-        enabled = state.readingScale > ReadingTextPreferences.MIN_SCALE,
-    ) { Text("A−") }
-    OutlinedButton(
-        onClick = viewModel::increaseTextScale,
-        enabled = state.readingScale < ReadingTextPreferences.MAX_SCALE,
-    ) { Text("A+") }
 }
 
 /**
@@ -427,6 +451,9 @@ private fun KaraokeText(
         val target = scrollState.maxValue.toFloat() * index / sentences.size
         scrollState.animateScrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
     }
+    // Label it so the highlighted echo of the text below the field reads as "the sentence being
+    // spoken now", not an unexplained duplicate of what was typed (issue #123).
+    FieldLabel("Now reading")
     Column(
         modifier =
             Modifier
@@ -472,24 +499,40 @@ private val TEXT_FIELD_MAX_HEIGHT = 280.dp
 private fun PlaybackCard(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
+    sleepTimer: SleepTimerHandle,
 ) {
     SectionCard("Playback") {
         val selected = state.selected
         val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
 
-        Button(
-            onClick = viewModel::play,
-            enabled = selected != null && !state.playing,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (state.playing) "Playing…" else "Play") }
+        // Standard audio-player transport, always visible: previous, a large central play/pause, next,
+        // stop (issue #123 / follow-up). The central button plays when idle and toggles Pause/Resume
+        // while active (halting immediately at the hardware level, BufferedPlayback -> AudioTrackSink);
+        // prev/next/stop act only during playback (a per-sentence restart-from-index for skip).
+        TransportBar(state, viewModel)
 
-        // Estimated listening time (issue #23): a synthesis-free "~6 min at 1.25×" that updates live
-        // as the text or speed changes. Hidden for empty text (estimate is zero then).
-        if (state.estimatedListeningSeconds > 0) {
+        // Playback position as a sentence-level seek bar (issue #123). Only while playing.
+        if (state.playing) SentenceSeekBar(state, viewModel)
+
+        // Live playback state, and the synthesis-free listening estimate ("~6 min at 1.25x", issue
+        // #23) when idle. The estimate is suppressed once real generation stats exist, so the rough
+        // "~4 sec" estimate and the measured "Generated 2.6s" never sit on screen contradicting each
+        // other (issue #123). Centered under the transport, secondary to it.
+        val statusLine =
+            when {
+                state.playing && state.paused -> "Paused"
+                state.playing -> "Playing…"
+                state.estimatedListeningSeconds > 0 && state.stats == null ->
+                    formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed)
+                else -> null
+            }
+        statusLine?.let {
             Text(
-                formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed),
+                it,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
 
@@ -503,31 +546,15 @@ private fun PlaybackCard(
             ) { Text("Resume from where it stopped") }
         }
 
-        // Standard media transport (prev · play/pause · next · stop), only mid-playback. Play/Pause
-        // is the prominent central control and toggles in place - pause now halts immediately at the
-        // hardware level (BufferedPlayback→AudioTrackSink), not only at the next sentence boundary.
-        // Prev/next are the same per-sentence restart-from-index mechanism the lock-screen skip uses.
-        if (state.playing) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedButton(onClick = viewModel::skipBackSentence, modifier = Modifier.weight(1f)) { Text("⏮") }
-                Button(
-                    onClick = if (state.paused) viewModel::resumePlayback else viewModel::pausePlayback,
-                    modifier = Modifier.weight(1.6f),
-                ) { Text(if (state.paused) "▶  Resume" else "⏸  Pause") }
-                OutlinedButton(onClick = viewModel::skipForwardSentence, modifier = Modifier.weight(1f)) { Text("⏭") }
-                OutlinedButton(onClick = viewModel::stop, modifier = Modifier.weight(1f)) { Text("⏹") }
-            }
-        }
-
+        // Secondary/manual actions. "Model loaded" is a status line (below), not a greyed-out pill
+        // that reads as broken (issue #123).
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = viewModel::loadModel,
-                enabled = selected != null && !state.busy && !state.playing && !isModelLoaded,
-            ) { Text(if (isModelLoaded) "Model loaded" else "Load model") }
+            if (!isModelLoaded) {
+                OutlinedButton(
+                    onClick = viewModel::loadModel,
+                    enabled = selected != null && !state.busy && !state.playing,
+                ) { Text("Load model") }
+            }
             OutlinedButton(
                 onClick = viewModel::generateAudio,
                 enabled = selected != null && !state.busy && !state.playing,
@@ -537,12 +564,136 @@ private fun PlaybackCard(
                 enabled = selected != null && !state.busy,
             ) { Text("Sample voice") }
         }
+        if (isModelLoaded) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("Model loaded", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
 
-        if (state.busy || state.playing) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        // Generation progress, labeled and SEPARATE from the playback position above (issue #123):
+        // shown whenever a synthesis is running, including generating ahead during playback.
+        if (state.busy) {
+            Text("Generating…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        // Measured generation stats behind a Details toggle - useful, but diagnostic, not for every glance.
         state.stats?.let { GenerationStatsView(it) }
         state.status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+
+        // Sleep timer sits with the transport now (issue #123: someone using it in the dark shouldn't
+        // have to scroll to the bottom of the app to find it).
+        HorizontalDivider()
+        SleepTimerControls(sleepTimer)
     }
 }
+
+/**
+ * Playback position as a sentence-level seek bar. Time/duration isn't plumbed through, but this
+ * reader navigates by sentence anyway (that's what skip does), so the slider seeks to a sentence and
+ * reads "Sentence X of N". Absent when there's nothing to move between (one sentence or blank). Seeks
+ * on release, not mid-drag, so dragging across a long document doesn't re-trigger synthesis at every
+ * step (each seek restarts the one generation flow from that sentence).
+ */
+@Composable
+private fun SentenceSeekBar(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    val sentenceCount = remember(state.text) { TextChunker.intoSentences(state.text).size }
+    if (sentenceCount <= 1) return
+    val lastIndex = sentenceCount - 1
+    val current = (state.currentSentenceIndex ?: 0).coerceIn(0, lastIndex)
+    var dragValue by remember { mutableStateOf<Float?>(null) }
+    val value = (dragValue ?: current.toFloat()).coerceIn(0f, lastIndex.toFloat())
+    Slider(
+        value = value,
+        onValueChange = { dragValue = it },
+        onValueChangeFinished = {
+            dragValue?.let { viewModel.seekToSentence(it.roundToInt()) }
+            dragValue = null
+        },
+        valueRange = 0f..lastIndex.toFloat(),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        "Sentence ${value.roundToInt() + 1} of $sentenceCount",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+// The central button's (icon, label, action) for the current state: Play when idle, Pause while
+// playing, Resume while paused. One place so the button and its TalkBack label never disagree.
+private fun primaryPlaybackAction(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+): Triple<androidx.compose.ui.graphics.vector.ImageVector, String, () -> Unit> =
+    when {
+        !state.playing -> Triple(Icons.Filled.PlayArrow, "Play", viewModel::play)
+        state.paused -> Triple(Icons.Filled.PlayArrow, "Resume", viewModel::resumePlayback)
+        else -> Triple(Icons.Filled.Pause, "Pause", viewModel::pausePlayback)
+    }
+
+/**
+ * A standard media-player transport row - previous, a large central play/pause, next, stop - centered
+ * like an MP3 player. The centre is a prominent filled circular button (the primary action, usable
+ * with a model selected); prev/next/stop are plain icon buttons enabled only while something is
+ * playing. Every icon carries a TalkBack description, and each button meets the 48dp touch target.
+ */
+@Composable
+private fun TransportBar(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    val (playIcon, playLabel, playAction) = primaryPlaybackAction(state, viewModel)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = viewModel::skipBackSentence,
+            enabled = state.playing,
+            modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
+        ) {
+            Icon(Icons.Filled.SkipPrevious, "Previous sentence", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+        }
+        FilledIconButton(
+            onClick = playAction,
+            enabled = state.selected != null && (state.playing || !state.busy),
+            modifier = Modifier.size(TRANSPORT_PRIMARY_SIZE),
+        ) {
+            Icon(playIcon, contentDescription = playLabel, modifier = Modifier.size(TRANSPORT_PRIMARY_ICON_SIZE))
+        }
+        IconButton(
+            onClick = viewModel::skipForwardSentence,
+            enabled = state.playing,
+            modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
+        ) {
+            Icon(Icons.Filled.SkipNext, "Next sentence", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+        }
+        IconButton(
+            onClick = viewModel::stop,
+            enabled = state.playing,
+            modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
+        ) {
+            Icon(Icons.Filled.Stop, "Stop", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+        }
+    }
+}
+
+private val TRANSPORT_BUTTON_SIZE = 48.dp
+private val TRANSPORT_ICON_SIZE = 32.dp
+private val TRANSPORT_PRIMARY_SIZE = 64.dp
+private val TRANSPORT_PRIMARY_ICON_SIZE = 36.dp
 
 /** Export + the non-destructive post-processing toggles + the sleep timer - the "on the way out" knobs. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -550,29 +701,52 @@ private fun PlaybackCard(
 private fun OutputCard(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
-    sleepTimer: SleepTimerHandle,
     onExport: () -> Unit,
     onSampleAll: () -> Unit,
 ) {
     SectionCard("Output") {
+        var confirmSampleAll by remember { mutableStateOf(false) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // "Export audio", not "Export WAV" - the format selector below can change the format, so
+            // naming the button after one format contradicted it (issue #123). The chosen format still
+            // shows in the picker underneath.
             OutlinedButton(
                 onClick = onExport,
                 enabled = state.selected != null && !state.busy,
-            ) { Text("Export ${state.exportFormat.format.fileExtension.uppercase()}") }
+            ) { Text("Export audio") }
             // Audition every downloaded model at once: one sample clip per model, saved to a folder.
+            // Confirmed first (issue #123): with many models this loads and runs each one in turn - a
+            // long, battery-heavy job - so it shouldn't fire from a single tap next to Export.
             OutlinedButton(
-                onClick = onSampleAll,
+                onClick = { confirmSampleAll = true },
                 enabled = state.models.isNotEmpty() && !state.busy && !state.playing,
             ) { Text("Sample every model") }
+        }
+        if (confirmSampleAll) {
+            val count = state.models.size
+            AlertDialog(
+                onDismissRequest = { confirmSampleAll = false },
+                title = { Text("Sample every model?") },
+                text = {
+                    Text(
+                        "This loads and generates a clip for all $count installed models, one at a time. " +
+                            "It can take a while and use noticeable battery.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmSampleAll = false
+                        onSampleAll()
+                    }) { Text("Sample all $count") }
+                },
+                dismissButton = { TextButton(onClick = { confirmSampleAll = false }) { Text("Cancel") } },
+            )
         }
         if (viewModel.exportFormats.size > 1) {
             ExportFormatPicker(viewModel.exportFormats, state.exportFormat, viewModel::setExportFormat)
         }
-        HorizontalDivider()
-        TransformToggles(state, viewModel)
-        HorizontalDivider()
-        SleepTimerControls(sleepTimer)
+        // Post-processing toggles + font size moved to Settings, and the sleep timer moved up next to
+        // the transport (issue #123), so the Output card is now just export + format.
     }
 }
 
@@ -586,10 +760,11 @@ private fun ExportFormatPicker(
 ) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
+        OutlinedTextField(
             value = selected.format.displayName,
             onValueChange = {},
             readOnly = true,
+            singleLine = true,
             label = { Text("Export format") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
@@ -608,79 +783,29 @@ private fun ExportFormatPicker(
     }
 }
 
-/** Non-destructive post-processing toggles (spec: applied to export, raw audio never altered). */
-@Composable
-private fun TransformToggles(
-    state: TtsViewModel.UiState,
-    viewModel: TtsViewModel,
-) {
-    ToggleRow("Trim silence", state.trimSilence, viewModel::setTrimSilence)
-    ToggleRow("Normalize volume", state.normalizeVolume, viewModel::setNormalizeVolume)
-    ToggleRow("Crossfade joins", state.crossfadeJoins, viewModel::setCrossfadeJoins)
-    // EQ clarity presets (issue #40): timbre-only biquads, same non-destructive export chain.
-    ToggleRow(BassCut().displayName, state.bassCut, viewModel::setBassCut)
-    ToggleRow(PresenceBoost().displayName, state.presenceBoost, viewModel::setPresenceBoost)
-    ToggleRow(DeEsser().displayName, state.deEss, viewModel::setDeEss)
-    TempoBoostControl(state, viewModel)
-    // Long-document mode (issue #34): opt-in memory ceiling - older audio spills to disk during a
-    // book-length synthesis. Off by default; when off, generation is unchanged.
-    ToggleRow("Long-document mode (spill audio to disk)", state.longDocumentMode, viewModel::setLongDocumentMode)
-}
-
 /**
- * Opt-in, PLAYBACK-ONLY beyond-native tempo (issue #43). Deliberately separate from the native
- * "Speed" control: this is a post-processed, pitch-preserving WSOLA time-stretch that never touches
- * the model's own speed parameter and never resamples for it (rule 2). Off by default; the factor
- * slider only appears once enabled.
+ * Live, measured generation stats (spec: RTF is calculated, never guessed). This is diagnostic
+ * detail - RTF, words/s, ETA - so it hides behind a tap rather than sitting on screen for every
+ * casual listen (issue #123: it read as developer telemetry). Collapsed by default.
  */
 @Composable
-private fun TempoBoostControl(
-    state: TtsViewModel.UiState,
-    viewModel: TtsViewModel,
-) {
-    ToggleRow("Playback speed (post-processed)", state.tempoBoost, viewModel::setTempoBoost)
-    if (!state.tempoBoost) return
-    Text(
-        "Playback tempo ${"%.1f".format(state.tempoFactor)}x (pitch-preserving, not the model's Speed)",
-        style = MaterialTheme.typography.bodySmall,
-    )
-    Slider(
-        value = state.tempoFactor,
-        onValueChange = viewModel::setTempoFactor,
-        valueRange = TempoStretch.MIN_FACTOR..TempoStretch.MAX_FACTOR,
-    )
-}
-
-@Composable
-private fun ToggleRow(
-    label: String,
-    checked: Boolean,
-    onChecked: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        // weight(1f) lets a long label (e.g. "Long-document mode (spill audio to disk)") wrap onto
-        // a second line within its own share of the row instead of pushing the fixed-size Switch
-        // past the row's bound - without it, a long label and the Switch fight over unbounded width
-        // and the Switch ends up overlapped or shoved off-screen (issues #20/#21).
-        Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChecked)
-    }
-}
-
-/** Live, measured generation stats (spec: RTF is calculated, never guessed). */
-@Composable
 private fun GenerationStatsView(stats: com.phonetts.core.metrics.GenerationStats) {
+    var expanded by remember { mutableStateOf(false) }
+    Text(
+        if (expanded) "Hide generation details" else "Generation details",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.clickable { expanded = !expanded },
+    )
+    if (!expanded) return
     val rtf = "%.2f".format(stats.realTimeFactor)
     val audio = "%.1f".format(stats.audioSecondsProduced)
     val eta = stats.estimatedRemainingSeconds?.let { " · ETA ${"%.0f".format(it)}s" } ?: ""
     val wps = if (stats.wordsPerSecond > 0) " · ${"%.1f".format(stats.wordsPerSecond)} words/s" else ""
     Text(
-        "Generated ${audio}s audio · ${rtf}x real-time$wps$eta",
+        "Generated ${audio}s of audio · ${rtf}x real-time$wps$eta",
         style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -693,18 +818,21 @@ private fun ModelPicker(
 ) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
+        OutlinedTextField(
             value = selected?.displayName ?: "Select a model",
             onValueChange = {},
             readOnly = true,
-            label = { Text("Model") },
+            singleLine = true,
+            supportingText = selected?.let { { Text(modelSummary(it)) } },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             models.forEach { model ->
+                val isSelected = model.modelId == selected?.modelId
                 DropdownMenuItem(
-                    text = { Text(model.displayName) },
+                    text = { TwoLineItem(model.displayName, modelSummary(model), isSelected) },
+                    trailingIcon = { SelectedCheck(isSelected) },
                     onClick = {
                         onSelect(model)
                         expanded = false
@@ -715,9 +843,50 @@ private fun ModelPicker(
     }
 }
 
+// A one-line "what is this model" summary from facts the descriptor already carries (SSOT - nothing
+// invented): the engine it runs on and how many voices it offers. Gives the picker the at-a-glance
+// context it was missing (the whole screen's most important choice was the most information-starved).
+private fun modelSummary(model: ModelDescriptor): String {
+    val voiceCount = model.voices.size
+    val voices = if (voiceCount == 1) "1 voice" else "$voiceCount voices"
+    return "${model.engineId} · $voices"
+}
+
+/** A dropdown row rendered as a bold primary line over a muted supporting line. */
+@Composable
+private fun TwoLineItem(
+    primary: String,
+    secondary: String,
+    selected: Boolean,
+) {
+    Column {
+        Text(
+            primary,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        Text(
+            secondary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** A check icon shown only on the currently-selected dropdown row, so the pick is obvious in a long list. */
+@Composable
+private fun SelectedCheck(selected: Boolean) {
+    if (!selected) return
+    Icon(Icons.Filled.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+}
+
 /**
  * Voice picker; voices always come from [voices] (a descriptor's own list - SSOT). Favorited
- * voices ([favoriteVoiceIds], sourced from [com.phonetts.core.prefs.FavoriteVoices]) sort first
+ * voices ([favoriteVoiceIds], derived from the single FavoritesStore source of truth) sort first
  * and show a filled star; the star toggle never changes the voice list itself, only its order.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -730,22 +899,35 @@ private fun VoicePicker(
     onToggleFavorite: (Voice) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedName = voices.firstOrNull { it.id == selectedVoiceId }?.name ?: "Select a voice"
+    val selected = voices.firstOrNull { it.id == selectedVoiceId }
+    val selectedName = selected?.name ?: "Select a voice"
     val ordered = voices.sortedByDescending { it.id in favoriteVoiceIds }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
+        OutlinedTextField(
             value = selectedName,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Voice") },
+            singleLine = true,
+            supportingText = selected?.let { { Text(it.language) } },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             ordered.forEach { voice ->
+                val isSelected = voice.id == selectedVoiceId
                 DropdownMenuItem(
-                    text = { Text("${voice.name} (${voice.language})") },
-                    trailingIcon = { FavoriteStar(voice.id in favoriteVoiceIds) { onToggleFavorite(voice) } },
+                    text = { TwoLineItem(voice.name, voice.language, isSelected) },
+                    // Star (favorite) and check (selected) both live here; the star is tappable on its
+                    // own without dismissing, so a voice can be favorited straight from the list.
+                    trailingIcon = {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            FavoriteStar(voice.id in favoriteVoiceIds) { onToggleFavorite(voice) }
+                            SelectedCheck(isSelected)
+                        }
+                    },
                     onClick = {
                         onSelect(voice.id)
                         expanded = false
@@ -761,32 +943,12 @@ private fun FavoriteStar(
     isFavorite: Boolean,
     onToggle: () -> Unit,
 ) {
-    Text(
-        text = if (isFavorite) "★" else "☆", // filled / outline star
-        modifier = Modifier.clickable(onClick = onToggle),
-    )
-}
-
-/**
- * Star/unstar the currently selected model+voice as a cross-model favorite (issue #119). Separate
- * from the voice picker's own per-voice stars (which only re-order the current model's list): this
- * feeds the [FavoriteVoicesQuickPick] below, which surfaces starred voices across ALL models.
- */
-@Composable
-private fun FavoriteVoiceToggle(
-    isFavorite: Boolean,
-    enabled: Boolean,
-    onToggle: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("Favorite this voice", modifier = Modifier.weight(1f))
-        OutlinedButton(onClick = onToggle, enabled = enabled) {
-            Text(if (isFavorite) "★ Favorited" else "☆ Favorite")
-        }
+    IconButton(onClick = onToggle, modifier = Modifier.size(32.dp)) {
+        Icon(
+            imageVector = if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
+            tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -891,15 +1053,22 @@ private fun ContinuousControl(
     onValue: (Float) -> Unit,
 ) {
     val range = param.range ?: return
-    Text("${param.displayName}: ${"%.2f".format(value)}")
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(param.displayName, modifier = Modifier.weight(1f))
+        Text("%.2f".format(value), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+    }
     Slider(value = value, onValueChange = onValue, valueRange = range)
     // Speed keeps its familiar preset shortcuts; other continuous knobs just get the slider.
     if (param.id != ModelParameter.SPEED_ID) return
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         // Only presets the model's own range actually supports - clamping out-of-range presets to
-        // the boundary instead would show the same value twice (e.g. two "1.50x" buttons).
+        // the boundary instead would show the same value twice (e.g. two "1.50x" chips).
         SPEED_PRESETS.filter { it in range }.forEach { preset ->
-            OutlinedButton(onClick = { onValue(preset) }) { Text("${"%.2fx".format(preset)}") }
+            FilterChip(
+                selected = kotlin.math.abs(value - preset) < PRESET_MATCH_EPSILON,
+                onClick = { onValue(preset) },
+                label = { Text("%.2fx".format(preset)) },
+            )
         }
     }
 }
@@ -915,14 +1084,17 @@ private fun ChoiceControl(
     Text(param.displayName)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         param.choices.forEachIndexed { index, choice ->
-            if (index == selected) {
-                Button(onClick = { onIndex(index.toFloat()) }) { Text(choice) }
-            } else {
-                OutlinedButton(onClick = { onIndex(index.toFloat()) }) { Text(choice) }
-            }
+            FilterChip(
+                selected = index == selected,
+                onClick = { onIndex(index.toFloat()) },
+                label = { Text(choice) },
+            )
         }
     }
 }
+
+// Speed is a Float, so a preset chip is "selected" when the current value is essentially equal to it.
+private const val PRESET_MATCH_EPSILON = 0.001f
 
 private val SPEED_PRESETS = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
