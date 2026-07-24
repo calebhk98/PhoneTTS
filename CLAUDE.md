@@ -11,8 +11,7 @@ time or export to a file. Target: budget hardware (developed against a Samsung G
 ~4 GB RAM, no NPU), but it must run unmodified on better/worse phones.
 
 The full engineering specification lives in [`docs/SPEC.md`](docs/SPEC.md). **Read it before
-making architectural changes** - the build order and abstractions there are *decided, not
-suggestions*.
+making architectural changes** - the abstractions there are *decided, not suggestions*.
 
 ## The one idea that governs everything
 
@@ -78,14 +77,22 @@ These come straight from the spec and are the whole point of the design:
   resolver, descriptors, WAV encoder, streaming driver, manifest/SHA-256. **No Android
   dependencies**, so its unit tests (the seam tests, spec §9) run on any JVM with no SDK.
   This is where correctness is proven.
-- **`:app`** - the Android application (Compose UI, `AudioTrack` sink, ONNX/native runtimes,
-  concrete engines, SharedPreferences-backed override store, downloader). Requires the
+- **`:engines:*`** - one Gradle module per model engine (`:engines:kokoro`, `:engines:kittentts`,
+  `:engines:cosyvoice2`, `:engines:melotts`, `:engines:ggmltts`, ...), plus `:engines:common` for
+  shared, model-agnostic engine plumbing (`AbstractVoiceEngine` and friends). Each is pure
+  Kotlin/JVM, depends only on `:core`'s seams, **names no other engine**, and is discovered at
+  runtime via `ServiceLoader` (a `META-INF/services/com.phonetts.core.engine.EngineProvider`
+  resource). See *Adding an engine* below.
+- **`:integration`** - cross-module JVM integration tests: the one place all engines share a
+  classpath.
+- **`:app`** - the Android application (Compose UI, `AudioTrack` sink, ONNX/native runtime
+  implementations, SharedPreferences-backed override store, downloader). Requires the
   Android SDK. `settings.gradle.kts` includes it **automatically when an SDK is present**
   (`ANDROID_HOME`/`ANDROID_SDK_ROOT`, or `sdk.dir` in `local.properties`); on a core-only
   machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`.
 
 Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,
-registry,resolver,audio}`.
+registry,resolver,audio}`; each engine under `com.phonetts.engines.<name>`.
 
 ## Build & test
 
@@ -219,9 +226,23 @@ Other conventions:
   **"Check for updates"** button (`HelpScreen` → `TtsViewModel.checkForUpdatesNow`) that re-runs the
   same check on demand and reports "Up to date" / a download offer / a can't-reach note.
 
-## Build order (locked - hardest first, see spec §3-§4)
+## Adding an engine
 
-Phase 1 (skeleton, no audio yet) → Phase 2 models in order: **CosyVoice2 → MeloTTS → Piper →
-KittenTTS → Kokoro** → Phase 3 auto-load (which is just the same `inspect() → resolve →
-register` pipeline triggered by a file drop). Leading with the two awkward models forces the
-abstractions to be right on day one instead of refactoring the foundation late.
+Adding a model is **adding a module**, not editing a shared list (rule 5). Create
+`engines/<name>/` mirroring an existing engine of the same runtime family - an ONNX model like
+`:engines:kittentts` or `:engines:kokoro`, a native-ggml model like `:engines:ggmltts` - with:
+
+- an engine extending `AbstractVoiceEngine` (implementing `inspect`/`forcedMatch`/`doLoad`/
+  `synthesizeSentence`), building its `ModelDescriptor` from facts it verified against the real
+  model files (rule 1 SSOT; rule 4 fail-closed - never fabricate a sample rate, voice, or tensor
+  contract you can't source);
+- its `TextFrontend`, if the model needs one;
+- an `EngineProvider` registered via `META-INF/services/com.phonetts.core.engine.EngineProvider`;
+- seam tests (inspect fail-closed, descriptor facts, speed routing, synthesize invariants).
+
+Then add one `include(":engines:<name>")` line to `settings.gradle.kts` (and, for the app, a
+`runtimeOnly(project(":engines:<name>"))` in `app/build.gradle.kts`). The registry and the entire
+UI recompute themselves from the new descriptor - no `when(model)` switch, no shared list is
+touched. Removing an engine is deleting its module and that one `include` line. A native-runtime
+engine additionally documents its opt-in native wiring in an `INTEGRATION.md` (see
+`engines/ggmltts/INTEGRATION.md`) rather than editing shared app/build files directly.

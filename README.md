@@ -8,13 +8,13 @@ audio file.
 Built to run on budget hardware (developed against a Samsung Galaxy A16, ~4 GB RAM, no NPU),
 but designed to run unmodified on better and worse phones.
 
-> **Status: in development.** Phase 1 (the deterministic "seams") and Phase 2 (all five engine
-> modules) are implemented and unit-tested on the JVM, and the `:app` module compiles into an
-> installable APK. All five models are verified to produce real audio off-device (see
-> [`docs/MODEL-VERIFICATION.md`](docs/MODEL-VERIFICATION.md)); the espeak-ng phonemizer and the
-> CosyVoice native ggml runtime are opt-in native builds (`-PwithEspeak` / `-PwithCosyVoice`).
-> On-device/emulator verification of those native bridges is the remaining work. See the full
-> [engineering spec](docs/SPEC.md).
+> **Status: in development.** The deterministic "seams" (`:core`) and a growing set of engine
+> modules under `:engines:*` are implemented and unit-tested on the JVM, and the `:app` module
+> compiles into an installable APK. The ONNX engines are verified to produce real audio off-device
+> (see [`docs/MODEL-VERIFICATION.md`](docs/MODEL-VERIFICATION.md)); the espeak-ng phonemizer and the
+> native ggml runtimes are opt-in native builds (`-PwithEspeak` / `-PwithCosyVoice`), whose
+> on-device verification is the remaining work. New engines are added as self-contained modules -
+> see the full [engineering spec](docs/SPEC.md).
 
 ## Download
 
@@ -37,7 +37,9 @@ publishes the APK; every push also attaches the APK to its Actions run as a buil
 
 ## Highlights
 
-- **Five models planned:** CosyVoice2-0.5B, MeloTTS, Piper, KittenTTS, Kokoro-82M.
+- **A registry of engines, not a fixed list:** models ship as self-contained modules
+  (Piper, Kokoro-82M, KittenTTS, MeloTTS, CosyVoice2-0.5B, and more) - adding one is dropping in a
+  module, and the UI recomputes itself.
 - **Two output modes:** real-time streaming playback, and export-to-file (the escape hatch
   for models too slow for real-time).
 - **Native speed control** on every model - via the model's own duration/speed parameter,
@@ -111,6 +113,8 @@ as described in [`docs/SPEC.md` §8.1](docs/SPEC.md).
 
 ## Models
 
+The engines that currently ship with verified model facts (the set grows as modules are added):
+
 | Model | Params (approx) | Sample rate | Notes |
 |---|---|---|---|
 | Piper | ~5-30M / voice | 16k or 22.05k | Voices are independent ONNX files |
@@ -123,16 +127,15 @@ Per-model facts are confirmed against the actual shipped files and recorded in d
 see `docs/research/model-facts.md`. **Model weights are never bundled in the app**; they are
 downloaded into app-private storage and verified by SHA-256 before use.
 
-## Build order
+## Adding a model
 
-Deliberately **hardest-first**, so the abstractions are proven against the worst cases on day
-one rather than refactored late:
-
-1. **Phase 1 - Skeleton:** interfaces, registry, resolver, `EngineManager`, dual-consumer
-   audio layer, espeak-ng frontend. Every seam testable and green; no audio yet.
-2. **Phase 2 - Models** in order: CosyVoice2 → MeloTTS → Piper → KittenTTS → Kokoro.
-3. **Phase 3 - Auto-load:** the same `inspect() → resolve → register` pipeline, triggered by
-   a file drop instead of app startup.
+Models aren't a hardcoded list - each is a self-contained module under `engines/` that advertises
+itself through a descriptor and is discovered at runtime via `ServiceLoader`. Adding one means
+creating `engines/<name>/` (mirroring an existing engine of the same runtime family) and adding a
+single `include` line to `settings.gradle.kts`; the registry, dropdowns, sliders, and playback
+config all recompute themselves. Removing one is deleting that module. No shared list, no
+`when(model)` switch. Auto-loading a sideloaded model is the same `inspect() → resolve → register`
+pipeline seen from a different entry point.
 
 ## Development
 
