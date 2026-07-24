@@ -211,7 +211,13 @@ private fun TtsBody(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         state.update?.let { update ->
-            UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
+            UpdateBanner(
+                update = update,
+                download = state.updateDownload,
+                onDownload = viewModel::downloadUpdate,
+                onCancelDownload = viewModel::cancelUpdateDownload,
+                onDismiss = viewModel::dismissUpdate,
+            )
         }
         state.sideloadFailureExplanation?.let { explanation ->
             SideloadFailureBanner(
@@ -983,23 +989,24 @@ private fun FavoriteVoicesQuickPick(
     }
 }
 
-// Offer (never force) an update: a dismissible banner that opens the new APK's download URL in the
-// browser, where the user chooses to download and install it. Shown only when the update check found
-// a strictly-newer release with an installable APK.
+// Offer (never force) an update: a dismissible banner that downloads the new APK IN THE APP - with
+// progress and SHA-256 verification - and then offers to install it. It used to just fire the asset
+// URL at the browser, whose download of GitHub's short-lived signed link would stall and never
+// finish; "Open in browser" is still there as a fallback (see UpdateActions). Shown only when the
+// update check found a strictly-newer release with an installable APK.
 @Composable
 private fun UpdateBanner(
     update: com.phonetts.core.update.UpdateStatus,
+    download: com.phonetts.core.update.ApkDownloadState,
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val uriHandler = LocalUriHandler.current
-    val target = update.apkDownloadUrl ?: update.releasePageUrl
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Update available: ${update.latestVersion} (you have ${update.currentVersion})")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { target?.let(uriHandler::openUri) }, enabled = target != null) { Text("Download") }
-                OutlinedButton(onClick = onDismiss) { Text("Not now") }
-            }
+            UpdateActions(update, download, onDownload, onCancelDownload)
+            OutlinedButton(onClick = onDismiss) { Text("Not now") }
         }
     }
 }

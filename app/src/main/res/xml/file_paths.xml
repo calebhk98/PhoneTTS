@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The only thing this app shares outward: the update APK it downloaded into cacheDir/updates,
+     handed to the system package installer (see ApkInstaller). Deliberately narrow - no other
+     app-private file is reachable through the provider. -->
+<paths>
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

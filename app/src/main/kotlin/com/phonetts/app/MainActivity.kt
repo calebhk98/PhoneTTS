@@ -360,8 +360,11 @@ private fun AppNav(
                 HelpScreen(
                     currentVersion = BuildConfig.VERSION_NAME,
                     update = ttsState.update,
+                    updateDownload = ttsState.updateDownload,
                     checkStatus = ttsState.updateCheckStatus,
                     onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
+                    onDownloadUpdate = ttsViewModel::downloadUpdate,
+                    onCancelUpdateDownload = ttsViewModel::cancelUpdateDownload,
                     repoUrl = "https://github.com/${AppGraph.REPO_OWNER}/${AppGraph.REPO_NAME}",
                     currentTheme = theme,
                     onThemeSelected = onThemeSelected,

@@ -14,6 +14,7 @@ import com.phonetts.app.sideload.SideloadCoordinator
 import com.phonetts.app.store.FilesDurableStore
 import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
+import com.phonetts.app.update.ApkUpdateDownloader
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.PlatformServices
@@ -172,6 +173,12 @@ class AppGraph(context: Context) {
     // Checks GitHub Releases for a newer APK than the running build (BuildConfig.VERSION_NAME) and
     // only ever OFFERS it - never force-updates (the UI shows a dismissible banner). Fail-closed.
     val updateChecker = UpdateChecker(HttpUrlConnectionClient())
+
+    // Fetches that APK ourselves, with progress + SHA-256 verification, rather than handing the URL
+    // to the browser - GitHub's asset URL redirects to a short-lived signed link that a queued or
+    // retried browser download outlives, which is why those downloads "never finished". See
+    // ApkUpdateDownloader's kdoc.
+    val apkUpdateDownloader = ApkUpdateDownloader(appContext.cacheDir)
 
     // Manage (list sizes / delete) downloaded models. File I/O is injected so :core stays pure;
     // deleting the loaded model unloads it first and forgets its saved override (PrefsOverrideStore

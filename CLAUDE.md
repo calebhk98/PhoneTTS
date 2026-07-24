@@ -235,10 +235,21 @@ Other conventions:
   count per-commit).
 - **In-app update check (offer, never force):** `core/.../update/UpdateChecker` compares
   `BuildConfig.VERSION_NAME` to the latest GitHub Release and, if newer, the app shows a
-  **dismissible** banner that opens the new APK's download URL - it never downloads or installs on
-  its own. Fail-closed: a network hiccup shows nothing. The **Help screen** also has a manual
-  **"Check for updates"** button (`HelpScreen` → `TtsViewModel.checkForUpdatesNow`) that re-runs the
-  same check on demand and reports "Up to date" / a download offer / a can't-reach note.
+  **dismissible** banner offering it. Fail-closed: a network hiccup shows nothing. The **Help screen**
+  also has a manual **"Check for updates"** button (`HelpScreen` → `TtsViewModel.checkForUpdatesNow`)
+  that re-runs the same check on demand and reports "Up to date" / a download offer / a can't-reach note.
+- **The update download runs IN the app, not the browser.** Handing the release-asset URL to the
+  browser is what used to break: GitHub 302s that URL to a **signed, ~1-hour** `release-assets.
+  githubusercontent.com` link, so a browser download that queues/pauses/retries past the signature's
+  expiry gets a 403 and parks forever ("never finishes"). `:app`'s `ApkUpdateDownloader` streams the
+  APK itself into `cacheDir/updates` with visible progress, re-requesting the stable `github.com` URL
+  on every attempt so each retry follows a **freshly signed** redirect; it then verifies the bytes
+  against the release asset's `sha256` digest (fail-closed - a mismatch deletes the file and refuses).
+  `ApkInstaller` hands the result to the system package installer via a FileProvider `content://` URI
+  (`REQUEST_INSTALL_PACKAGES` + `res/xml/file_paths.xml`). Still offer-never-force: nothing downloads
+  until Download is tapped, nothing installs until Install is tapped, and the OS's own confirm screen
+  is the last gate. The pure decisions (`ApkDownloadState`, percent-or-null, `ApkIntegrity`) live in
+  `:core` and are seam-tested; only the transport and the intent are in `:app`.
 
 ## Adding an engine
 

@@ -25,6 +25,12 @@
     <!-- End-of-document haptic cue (issue #32): PlaybackChime's optional vibration pulse. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- In-app update install: the app downloads the release APK itself (with progress + SHA-256
+         verification) and hands it to the system package installer. Without this the install intent
+         dead-ends. The OS still shows its own confirmation and the per-app "install unknown apps"
+         consent, so nothing installs without the user agreeing - the app only ever offers. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Issue #77: discover the installed system TextToSpeech engines (Google, Samsung, …) via
          PackageManager. On Android 11+ (API 30) package visibility is filtered, so without this
          <queries> the TTS-service lookup returns nothing and system voices are silently absent. -->
@@ -98,6 +104,19 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/playback_widget_info" />
         </receiver>
+
+        <!-- Shares the downloaded update APK (app-private cache/updates) with the system package
+             installer as a content:// URI - a file:// URI would throw FileUriExposedException on
+             Android 7+. Not exported; access is a one-shot read grant on the install intent. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- Quick Settings tile (issue #27): toggle play/pause on the last-loaded document from the
              shade. Guarded by the system BIND_QUICK_SETTINGS_TILE permission; exported for the OS. -->

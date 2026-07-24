@@ -38,6 +38,7 @@ import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.store.FavoriteVoiceRef
 import com.phonetts.core.text.DocumentId
 import com.phonetts.core.text.TextChunker
+import com.phonetts.core.update.ApkDownloadState
 import com.phonetts.core.update.UpdateStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -122,6 +123,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // Transient result line for a manual "Check for updates" tap ("Checking…", "Up to date (v…)",
         // or a failure note). Null except right after a manual check; the launch check stays silent.
         val updateCheckStatus: String? = null,
+        // Where the in-app APK download stands. The app fetches the update itself now (progress here)
+        // instead of handing the URL to the browser, whose download of GitHub's short-lived signed
+        // asset link would stall and never finish.
+        val updateDownload: ApkDownloadState = ApkDownloadState.Idle,
         // Sentence index to resume from after a generation/export failure (issue #28), or null when
         // there's nothing to resume. Non-null drives the "Resume from where it stopped" action.
         val resumeSentenceIndex: Int? = null,
@@ -273,6 +278,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     // own; both are started together in beginProgressTracking and cancelled together in stop().
     private var sentenceProgressJob: Job? = null
 
+    // The in-app APK update download (issue: the browser-delegated download never finished). Held so
+    // a Cancel/Dismiss can abandon it and so a second Download tap can't start a duplicate.
+    private var updateDownloadJob: Job? = null
+
     // The most recently generated buffer, kept so a Play tap that exactly matches what was last
     // generated (same model/voice/text/params) replays instantly instead of re-synthesizing -
     // still the ONE generation path (spec §6.1), just not re-run when nothing changed.
@@ -353,8 +362,41 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /** Manually re-run the update check (the Help screen's "Check for updates" button). */
     fun checkForUpdatesNow() = checkForUpdate(announce = true)
 
+    /**
+     * Download the offered APK **in the app**, with progress, and leave it ready to install.
+     *
+     * This replaces "open the URL in the browser and hope": GitHub redirects the asset URL to a
+     * signed link that expires within the hour, so a browser download that queues or retries past
+     * that expiry never completes (the reported bug). Every attempt here re-requests the stable
+     * github.com URL and follows a freshly signed redirect. Installing is still the user's explicit
+     * next tap - this only fetches and verifies the bytes.
+     */
+    fun downloadUpdate() {
+        val status = mutableState.value.update ?: return
+        if (mutableState.value.updateDownload is ApkDownloadState.Downloading) return
+        updateDownloadJob?.cancel()
+        updateDownloadJob =
+            viewModelScope.launch {
+                graph.apkUpdateDownloader.download(status) { state ->
+                    mutableState.update { it.copy(updateDownload = state) }
+                }
+            }
+    }
+
+    /** Abandon an in-flight update download (the user tapped Cancel); no partial file is kept. */
+    fun cancelUpdateDownload() {
+        updateDownloadJob?.cancel()
+        updateDownloadJob = null
+        mutableState.update { it.copy(updateDownload = ApkDownloadState.Idle) }
+    }
+
     /** Dismiss the update banner for this session (the check runs again next launch). */
-    fun dismissUpdate() = mutableState.update { it.copy(update = null) }
+    fun dismissUpdate() {
+        updateDownloadJob?.cancel()
+        updateDownloadJob = null
+        viewModelScope.launch(Dispatchers.IO) { graph.apkUpdateDownloader.clear() }
+        mutableState.update { it.copy(update = null, updateDownload = ApkDownloadState.Idle) }
+    }
 
     fun refreshModels() {
         val models = graph.catalog.list()

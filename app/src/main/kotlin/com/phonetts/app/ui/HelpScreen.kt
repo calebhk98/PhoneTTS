@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.builtin.BuiltInCatalog
 import com.phonetts.core.prefs.AppTheme
+import com.phonetts.core.update.ApkDownloadState
 import com.phonetts.core.update.UpdateStatus
 
 /**
@@ -47,8 +48,11 @@ import com.phonetts.core.update.UpdateStatus
 fun HelpScreen(
     currentVersion: String,
     update: UpdateStatus?,
+    updateDownload: ApkDownloadState,
     checkStatus: String?,
     onCheckForUpdates: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onCancelUpdateDownload: () -> Unit,
     repoUrl: String,
     currentTheme: AppTheme,
     onThemeSelected: (AppTheme) -> Unit,
@@ -61,7 +65,16 @@ fun HelpScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates, repoUrl)
+        UpdatesSection(
+            currentVersion = currentVersion,
+            update = update,
+            updateDownload = updateDownload,
+            checkStatus = checkStatus,
+            onCheckForUpdates = onCheckForUpdates,
+            onDownloadUpdate = onDownloadUpdate,
+            onCancelUpdateDownload = onCancelUpdateDownload,
+            repoUrl = repoUrl,
+        )
 
         ThemeSection(currentTheme, onThemeSelected)
 
@@ -186,26 +199,25 @@ private fun ErrorLogDialog(
 // Version + a manual update check. The app also checks automatically at launch (silent unless a
 // newer build exists); this button lets the user re-check on demand and always gives feedback -
 // "Up to date (v…)", a download offer, or a note when the check couldn't reach GitHub. Installing is
-// always the user's choice (offer, never force): Download only opens the APK URL in the browser.
+// always the user's choice (offer, never force): the download runs in-app with visible progress and
+// the OS installer is the final gate - see UpdateActions, which the Home banner shares.
 @Composable
 private fun UpdatesSection(
     currentVersion: String,
     update: UpdateStatus?,
+    updateDownload: ApkDownloadState,
     checkStatus: String?,
     onCheckForUpdates: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onCancelUpdateDownload: () -> Unit,
     repoUrl: String,
 ) {
     val uriHandler = LocalUriHandler.current
     Section("About & updates") {
         Body("Version $currentVersion")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onCheckForUpdates) { Text("Check for updates") }
-            update?.let { available ->
-                val target = available.apkDownloadUrl ?: available.releasePageUrl
-                Button(onClick = { target?.let(uriHandler::openUri) }, enabled = target != null) {
-                    Text("Download ${available.latestVersion}")
-                }
-            }
+        OutlinedButton(onClick = onCheckForUpdates) { Text("Check for updates") }
+        update?.let { available ->
+            UpdateActions(available, updateDownload, onDownloadUpdate, onCancelUpdateDownload)
         }
         OutlinedButton(onClick = { uriHandler.openUri(repoUrl) }) { Text("View on GitHub") }
         checkStatus?.let { Body(it) }
