@@ -196,7 +196,15 @@ class MainActivity : ComponentActivity() {
 
     private fun forwardState(localBinder: PlaybackService.LocalBinder) {
         lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // CREATED, not STARTED, and for the same reason keepServiceStartedWhilePlaying uses
+            // CREATED: a STARTED-scoped collector stops the instant the Activity backgrounds, which
+            // is exactly when the lock screen matters. This is the ONLY path that pushes
+            // playing/paused into the service, so while backgrounded the notification could not
+            // update and - worse - onStateChanged(playing=false) never arrived, so finishPlayback()
+            // never ran: a lock-screen Stop really stopped the audio but left an ongoing "Playing"
+            // notification up until the app was reopened. I widened the sibling collector to CREATED
+            // earlier and missed this one; they have to agree.
+            repeatOnLifecycle(Lifecycle.State.CREATED) {
                 ttsViewModel.state.collect { s ->
                     localBinder.onStateChanged(s.playing, s.paused, s.selected?.displayName)
                 }
