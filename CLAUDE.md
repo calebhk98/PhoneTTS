@@ -72,6 +72,74 @@ These come straight from the spec and are the whole point of the design:
 9. **Never-nesting.** Guard clauses / early `return`/`continue`. No deep `if` pyramids.
    Enforced by detekt (`NestedBlockDepth`, `LongMethod`, `LargeClass`).
 
+## Practices that would have prevented real bugs
+
+Not generic advice - each rule below exists because its absence caused a specific, verified
+defect in this repo. If you're tempted to skip one, re-read the defect it cites.
+
+1. **Derive, don't hand-maintain, any list that must track reality.** Which engines exist, how
+   many, which screens the app can reach - compute these from the source of truth (the
+   filesystem, an enum, `Screen.entries`, `rootProject.subprojects`), never keep a second,
+   hand-written copy. `settings.gradle.kts`/`app/build.gradle.kts` used to hand-list engine
+   modules; `neutts`, `outetts`, `pockettts`, and `supertonic` existed and compiled but were
+   missing from the app's list, so `ServiceLoader` never saw them and they silently shipped in no
+   build at all. Both files now derive the engine set from `engines/*/build.gradle.kts` on disk
+   (see *Adding an engine*).
+   **Corollary: no magic counts in tests.** A test asserting "there are N of these" computes N
+   from the same source of truth. `AllEnginesDiscoveryTest` used to hardcode
+   `expectedEngineCount = 5` while 15 engine modules existed - the test meant to guard
+   `ServiceLoader` discovery kept passing while blind to two-thirds of the engines. It now reads
+   `phonetts.expectedEngineCount`, a Gradle-derived system property (`integration/build.gradle.kts`).
+2. **No silent no-ops on a control path.** `controller?.pause() ?: Unit`, an empty `catch`, or a
+   swallowed null on any user-triggered action (button, tile, notification, widget) is a bug, not
+   a safe default - it used to mean a tapped pause button did nothing, with no log and no crash to
+   find it by. If an action can fail, log it or surface it; never let the failure branch be a
+   silent no-op.
+3. **UI state is derived from its one owner, never mirrored into a second field.** (About
+   *state*, distinct from rule 1 above the *"Practices"* header and rule 1 of the numbered rules,
+   which is about model *facts*.) `fun play() = startPlaybackFrom(0)` ignored the resume point
+   `DocumentPosition` already recorded - the data existed, nothing read it. Worse, that resume
+   point was keyed to *generation* progress, not *playback* progress, so a skip discarded audio
+   that had already been generated but never heard, while the screen kept showing "playing." On a
+   real device that read as "audio kept going after the UI said it had stopped." If two fields can
+   both answer "where are we" and disagree, delete one of them.
+4. **Foreground services must be started, not merely bound.** `PlaybackService` was a declared
+   foreground media service that the app only ever bound to, and the Activity detached its
+   controller in `onStop()` - so lock-screen/notification controls went dead exactly while the
+   Activity was backgrounded, which is the entire point of a foreground service. Start it
+   (`ContextCompat.startForegroundService`) for anything that must stay controllable off-screen;
+   binding alone couples its lifetime to the Activity's.
+5. **Every user-visible choice survives process death.** Settings toggles, reader position,
+   anything the user set and would notice reverting, gets persisted - before this was enforced, 8
+   Settings toggles and the reader's text position silently reset on process death because no
+   ViewModel used `SavedStateHandle`/`rememberSaveable` and nothing backed them. Persist through
+   `:core`'s store seam (`DurableStore`/`JsonListStore`, `core/src/main/kotlin/com/phonetts/core/
+   store/`) or a dedicated store like `SessionStateStore` - don't add a fourth hand-rolled
+   `getSharedPreferences(...)` namespace next to `PlaybackStateStore`, `PrefsOverrideStore`, and
+   `PrefsPreferenceStore` without a reason the existing seam can't cover.
+6. **Wire the crash hook, don't just build the log it's supposed to feed.**
+   `Thread.setDefaultUncaughtExceptionHandler` appeared nowhere, so the durable error log built to
+   catch crashes recorded nothing on an actual crash - empty exactly when it mattered. A
+   failure-capture path that isn't wired to the real crash hook (`CrashReporter`, installed at app
+   start) is dead code wearing a safety net's clothes.
+7. **A UI control, a persisted value, and a screen all need a test before they're "done."** `:app`
+   shipped with zero tests for a long time; every bug above went out through a green build because
+   nothing exercised the UI layer. `app/src/test/` now has a Robolectric source set:
+   `NavigationReachabilityTest` walks `Screen.entries` against the drawer's `NAV_ITEMS` so a new
+   screen that isn't wired into a reachable path fails the build, and `ScreenSmokeTest` renders
+   every `Screen.entries` value and asserts it doesn't crash. Adding a screen means adding it to
+   `Screen.entries` - the tests find it automatically; leaving one out of reachability/smoke
+   coverage must be a **named, deliberate exception in the test** (see
+   `NavigationReachabilityTest`'s `nonDrawerEntryPoints`), not a silent gap. The same bar applies
+   to anything reachable from a control (rule 2 above) and anything that persists (rule 5 above).
+8. **State what "verified" means - don't imply more than you checked.** "Compiles," "unit-tested,"
+   and "confirmed on device" are different claims; an issue comment or commit message should say
+   which one applies. Issues have been closed "implemented, pending on-device confirmation" and
+   later turned out not to work on real hardware - closing as `completed` (see *Workflow
+   conventions*, step 4) on reasoning alone, for anything device-observed (audio, playback,
+   foreground services, lock-screen controls), is how that happened. If verification stopped short
+   of running on a device, say so instead of letting the closure imply it didn't.
+
 ## Module layout
 
 - **`:core`** - pure Kotlin/JVM. All deterministic "seam" logic: contracts, registry,
@@ -90,7 +158,11 @@ These come straight from the spec and are the whole point of the design:
   implementations, SharedPreferences-backed override store, downloader). Requires the
   Android SDK. `settings.gradle.kts` includes it **automatically when an SDK is present**
   (`ANDROID_HOME`/`ANDROID_SDK_ROOT`, or `sdk.dir` in `local.properties`); on a core-only
-  machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`.
+  machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`. It has
+  a real test source set (`app/src/test`, Robolectric + Compose UI testing on plain JVM, no
+  emulator needed) including `NavigationReachabilityTest` and `ScreenSmokeTest`, which cover every
+  `Screen.entries` value - see *Practices that would have prevented real bugs*, rule 7, and
+  *Environment quirks* below for why CI doesn't run it yet.
 
 Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,registry,
 resolver,audio,download,update,text,prefs,…}` (that list is not exhaustive - see the package tree for
@@ -152,9 +224,11 @@ These bite in the ephemeral cloud sessions; note them so you don't waste a loop 
   and no `core.hooksPath` until you run `scripts/install-hooks.sh`. So a commit runs **no** checks
   automatically here. Run them yourself before committing (`gradle -PskipApp=true :core:test
   ktlintCheck detekt`), and note the hook itself calls `./gradlew` - which fails per the first bullet.
-- **CI lint is core-only** - the `test` job runs `-PskipApp=true`, so `:app` Kotlin is **not**
-  ktlint/detekt-checked by CI. If you touch `:app`, lint it locally with the SDK present
-  (`gradle ktlintCheck detekt`), or style regressions land unnoticed.
+- **CI is core-only for both lint and tests** - the `test` job runs `-PskipApp=true`, so `:app`
+  Kotlin is **not** ktlint/detekt-checked, and `:app`'s Robolectric suite (`app/src/test`) is
+  **not** run, by CI (the `apk` job only assembles the debug APK, it doesn't test it). If you
+  touch `:app`, lint and test it locally with the SDK present
+  (`gradle ktlintCheck detekt :app:testDebugUnitTest`), or regressions land unnoticed.
 - **`JAVA_TOOL_OPTIONS` proxy/truststore noise** is printed on **every** JVM invocation
   (`Picked up JAVA_TOOL_OPTIONS: …`). It's harmless boilerplate, not an error - ignore it.
 - **The container is ephemeral** - only what you commit and push survives. `local.properties`
@@ -265,11 +339,15 @@ Adding a model is **adding a module**, not editing a shared list (rule 5). Creat
 - an `EngineProvider` registered via `META-INF/services/com.phonetts.core.engine.EngineProvider`;
 - seam tests (inspect fail-closed, descriptor facts, speed routing, synthesize invariants).
 
-Then add one `include(":engines:<name>")` line to `settings.gradle.kts` (and, for the app, a
-`runtimeOnly(project(":engines:<name>"))` in `app/build.gradle.kts`). The registry and the entire
-UI recompute themselves from the new descriptor - no `when(model)` switch, no shared list is
-touched. Removing an engine is deleting its module and that one `include` line. A native-runtime
-engine additionally documents its opt-in native wiring in an `INTEGRATION.md` (see
+That's it - there is no `include()` line and no `runtimeOnly` line to add anymore.
+`settings.gradle.kts` auto-discovers every directory under `engines/` that has its own
+`build.gradle.kts` and includes it; `app/build.gradle.kts` and `integration/build.gradle.kts` each
+derive their engine dependency list from `rootProject.subprojects` the same way. (This replaced a
+hand-maintained include/runtimeOnly list that had already drifted - see *Practices that would have
+prevented real bugs*, rule 1.) The registry and the entire UI recompute themselves from the new
+descriptor - no `when(model)` switch, no shared list is touched. Removing an engine is deleting its
+`engines/<name>/` directory, full stop - no other file to edit. A native-runtime engine
+additionally documents its opt-in native wiring in an `INTEGRATION.md` (see
 `engines/ggmltts/INTEGRATION.md`) rather than editing shared app/build files directly.
 
 **Kotlin gotcha - block comments nest, so a literal `/*` inside a comment breaks the build.** Engine
