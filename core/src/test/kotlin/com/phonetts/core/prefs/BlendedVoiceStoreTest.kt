@@ -75,4 +75,22 @@ class BlendedVoiceStoreTest {
         store.save(saved)
         assertEquals("Heart + Bella (60%)", store.forModel("kokoro").single().name)
     }
+
+    // --- allModelIds() (issue #149: backup export needs to enumerate every model with a saved mix) ---
+
+    @Test
+    fun `allModelIds is empty when nothing was ever saved`() {
+        val store = BlendedVoiceStore(InMemoryPreferenceStore())
+        assertTrue(store.allModelIds().isEmpty())
+    }
+
+    @Test
+    fun `allModelIds lists every model that has a saved mix`() {
+        val store = BlendedVoiceStore(InMemoryPreferenceStore())
+        store.save(spec("mix1", "kokoro"))
+        store.save(spec("mix2", "kittentts"))
+        store.save(spec("mix3", "kokoro")) // second mix, same model - must not duplicate the id
+
+        assertEquals(setOf("kokoro", "kittentts"), store.allModelIds())
+    }
 }

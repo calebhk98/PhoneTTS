@@ -67,9 +67,6 @@ object BackupCodec {
 
     private fun peekSchemaVersion(raw: String): Int? =
         runCatching {
-            versionProbeJson.decodeFromString(
-                BackupVersionProbe.serializer(),
-                raw,
-            ).schemaVersion
+            versionProbeJson.decodeFromString(BackupVersionProbe.serializer(), raw).schemaVersion
         }.getOrNull()
 }

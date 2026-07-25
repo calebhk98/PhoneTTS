@@ -43,12 +43,7 @@ object BackupExporter {
     }
 
     private fun toBackupDocument(doc: LibraryDocument) =
-        BackupLibraryDocument(
-            doc.id,
-            doc.title,
-            doc.text,
-            doc.savedAtMillis,
-        )
+        BackupLibraryDocument(doc.id, doc.title, doc.text, doc.savedAtMillis)
 
     private fun toBackupPosition(position: DocumentPosition) =
         BackupResumePosition(
