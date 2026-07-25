@@ -82,9 +82,12 @@ class HfBrowseErrorLogPersistenceTest {
     @Test
     fun `a search failure is mirrored into the durable error log when one is wired`() {
         val durableErrorLog = DurableErrorLog(InMemoryDurableStore())
+        // HfBrowseViewModel's own init block already runs one search() as soon as it's constructed
+        // (see its `init { runCatching { search() } ... }`) - the failing HTTP client means THAT
+        // first attempt is the one that fails, so this test doesn't call search() again itself
+        // (which would double the count: two failures logged where the assertion below expects one).
         val viewModel = newViewModel(durableErrorLog)
 
-        viewModel.search()
         val state = awaitState(viewModel) { !it.loading }
 
         assertTrue("the session error banner must still show (issue #3, unchanged)", state.error != null)
@@ -101,9 +104,9 @@ class HfBrowseErrorLogPersistenceTest {
     fun `a search failure with no durable error log wired behaves exactly as before - no crash, session log still works`() {
         // No durableErrorLog passed - defaults to null, same fail-closed shape as [notifier] elsewhere
         // in this class (a test/build that wires nothing up must not need real Android storage).
+        // Same reasoning as above: the constructor's own init-triggered search() is what fails here.
         val viewModel = newViewModel(durableErrorLog = null)
 
-        viewModel.search()
         val state = awaitState(viewModel) { !it.loading }
 
         assertTrue("the session error banner must still show even with no durable sink wired", state.error != null)
