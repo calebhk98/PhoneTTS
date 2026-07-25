@@ -261,7 +261,12 @@ class HfResultsViewTest {
     // reproduced verdict rather than a guess.
     private fun manyResults(count: Int): List<HfModelSummary> =
         (0 until count).map { i ->
-            HfModelSummary(id = "org$i/model-$i", likes = i * 7 % 500, downloads = (count - i) * 13 % 1000, tags = listOf("tts"))
+            HfModelSummary(
+                id = "org$i/model-$i",
+                likes = i * 7 % 500,
+                downloads = (count - i) * 13 % 1000,
+                tags = listOf("tts"),
+            )
         }
 
     @Test

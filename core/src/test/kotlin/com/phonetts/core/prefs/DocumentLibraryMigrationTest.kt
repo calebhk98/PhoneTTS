@@ -94,21 +94,24 @@ class DocumentLibraryMigrationTest {
     }
 
     @Test
-    fun `a resume position for text that was never saved to the library cannot be recovered, but nothing throws`() {
+    fun `an unsaved document's resume position can't be re-keyed, but migration leaves it untouched, not lost`() {
         // No corresponding library text exists anywhere to re-derive a new id from - this is the one
-        // documented, unavoidable gap (see DocumentLibraryMigration's kdoc). The important behavior is
-        // that migration completes cleanly and loses nothing it COULD have preserved.
+        // documented, unavoidable gap (see DocumentLibraryMigration's kdoc): migration can only ever
+        // leave this position exactly as it was (still readable under its OLD id) rather than losing
+        // it outright or throwing.
         val prefs = InMemoryPreferenceStore()
         seedLegacy(prefs, legacyRecord("999", "Saved Doc", 1L, "Saved doc text"))
         val library = DocumentLibrary(InMemoryDurableStore())
         val memory = DocumentMemory(InMemoryPreferenceStore())
         // An orphaned resume position: no library entry with this id.
-        memory.record(DocumentPosition("orphan-id", "piper", "v0", 1.0f, 4))
+        val orphan = DocumentPosition("orphan-id", "piper", "v0", 1.0f, 4)
+        memory.record(orphan)
 
         val result = DocumentLibraryMigration.migrate(prefs, library, memory)
 
         assertEquals(1, result.migratedDocuments)
-        assertNull(memory.resume("orphan-id")) // left exactly as it was: unreachable, but untouched/unlost by us
+        // Untouched, not silently dropped - migration never had a new id to move it to.
+        assertEquals(orphan, memory.resume("orphan-id"))
     }
 
     @Test

@@ -5,6 +5,7 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import com.phonetts.core.audio.Pcm16
 import com.phonetts.core.audio.export.SegmentWriter
+import kotlinx.coroutines.CancellationException
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -21,17 +22,41 @@ import java.io.OutputStream
 // buffer at a time, so a book-length export never materializes its raw PCM as one giant byte[].
 private const val TIMEOUT_US = 10_000L
 
+/**
+ * Runs [step] repeatedly until [isDone] reports true, checking [isCancelled] before every
+ * iteration and throwing [CancellationException] the instant it does (issue: export cannot be
+ * cancelled) - the exact checkpoint [MediaCodecFileEncoder.drive] needs around its MediaCodec
+ * dequeue/drain loop, extracted so the checkpoint's own correctness can be unit-tested on a plain
+ * JVM without a real (or Robolectric-shadowed) MediaCodec/MediaMuxer pair.
+ */
+internal fun runUntilDoneOrCancelled(
+    isDone: () -> Boolean,
+    isCancelled: () -> Boolean,
+    step: () -> Unit,
+) {
+    while (!isDone()) {
+        if (isCancelled()) throw CancellationException("MediaCodec export cancelled")
+        step()
+    }
+}
+
 /** Encodes raw PCM16 bytes (streamed from [pcmSource]) into [target] muxed via [muxerOutputFormat]. */
 internal class MediaCodecFileEncoder(
     private val mimeType: String,
     private val muxerOutputFormat: Int,
     private val configure: (MediaFormat) -> Unit,
 ) {
+    // [isCancelled] defaults to "never" so every existing call site (in particular
+    // [MediaCodecSegmentWriter.close], a plain, non-suspend [SegmentWriter.close] override that
+    // cannot itself observe a coroutine's cancellation) keeps compiling unchanged; callers that DO
+    // have a live coroutine context (see [com.phonetts.core.audio.export.AudioEncoder.encode],
+    // which threads its own cancellation state all the way down to here) get a real checkpoint.
     fun encode(
         pcmSource: File,
         sampleRate: Int,
         channelCount: Int,
         target: File,
+        isCancelled: () -> Boolean = { false },
     ) {
         val mediaFormat = MediaFormat.createAudioFormat(mimeType, sampleRate, channelCount)
         configure(mediaFormat)
@@ -40,20 +65,28 @@ internal class MediaCodecFileEncoder(
         codec.start()
         val muxer = MediaMuxer(target.absolutePath, muxerOutputFormat)
         try {
-            pcmSource.inputStream().buffered().use { input -> drive(codec, muxer, input) }
+            pcmSource.inputStream().buffered().use { input -> drive(codec, muxer, input, isCancelled) }
         } finally {
             releaseQuietly(codec, muxer)
         }
     }
 
+    // Bounded memory (issue #33) already streams PCM instead of buffering it; this adds the missing
+    // cancellation checkpoint (issue: export cannot be cancelled) - the same per-item guard
+    // [com.phonetts.app.hf.HfDownloader.copyCapped] already applies per buffer, just applied per
+    // codec dequeue/drain cycle here so a long AAC/Opus pass can actually be interrupted mid-export
+    // instead of running to completion regardless of the caller's coroutine being cancelled. The
+    // checkpoint itself is [runUntilDoneOrCancelled] - pulled out on its own so it is unit-testable
+    // without a real (or Robolectric-shadowed) MediaCodec/MediaMuxer.
     private fun drive(
         codec: MediaCodec,
         muxer: MediaMuxer,
         input: InputStream,
+        isCancelled: () -> Boolean,
     ) {
         val session = CodecSession(codec, muxer)
         var eosSent = false
-        while (!session.outputDone) {
+        runUntilDoneOrCancelled(isDone = { session.outputDone }, isCancelled = isCancelled) {
             if (!eosSent) eosSent = session.feedInput(input)
             session.drainOutput()
         }
@@ -136,6 +169,12 @@ internal class MediaCodecSegmentWriter(
     private val extension: String,
     private val channelCount: Int,
     precondition: () -> Unit,
+    // Threaded down from the suspend [com.phonetts.core.audio.export.AudioEncoder.encode] that
+    // opened this writer (issue: export cannot be cancelled) - `close()` below is a plain,
+    // non-suspend [SegmentWriter] override, so it has no way to observe the caller's coroutine
+    // cancellation on its own; this closure is its only route to it. Defaults to "never cancelled"
+    // so a direct construction that doesn't care (or can't supply one) still compiles.
+    private val isCancelled: () -> Boolean = { false },
 ) : SegmentWriter {
     private val pcmScratch: File
 
@@ -155,7 +194,7 @@ internal class MediaCodecSegmentWriter(
         pcmOut.close()
         val container = File.createTempFile("phonetts_enc_", ".$extension", tempDir)
         try {
-            encoder.encode(pcmScratch, sampleRate, channelCount, container)
+            encoder.encode(pcmScratch, sampleRate, channelCount, container, isCancelled)
             container.inputStream().use { it.copyTo(out) }
         } finally {
             pcmScratch.delete()

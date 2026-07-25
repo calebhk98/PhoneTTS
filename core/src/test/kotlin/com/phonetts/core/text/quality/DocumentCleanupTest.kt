@@ -105,7 +105,8 @@ class DocumentCleanupTest {
     @Test
     fun stripCitationMarkersRemovesBracketedNumericReferences() {
         val text = "This claim is well supported [12] and further confirmed [3, 4] by later work."
-        assertEquals("This claim is well supported and further confirmed by later work.", DocumentCleanup.stripCitationMarkers(text))
+        val expected = "This claim is well supported and further confirmed by later work."
+        assertEquals(expected, DocumentCleanup.stripCitationMarkers(text))
     }
 
     @Test

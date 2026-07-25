@@ -65,8 +65,26 @@ These come straight from the spec and are the whole point of the design:
    built-in-vs-sideloaded distinction is the `Origin` field, used for **display only**.
 6. **One engine loaded at a time.** `EngineManager` calls `unload()` on the previous engine
    before `load()` on the next. A 4 GB phone cannot hold them all.
-7. **Model weights are never bundled in the APK.** Ship a manifest, download into app-private
-   storage, verify SHA-256, then load.
+7. **Model weights are never bundled in the APK; verify what can genuinely be verified, and be
+   honest about what can't.** Download into app-private storage, then:
+   - **Curated `BuiltInCatalog` models** are a fixed, project-controlled set - each file's SHA-256
+     is sourced by hashing the real upstream bytes and pinned in `BuiltInFile.sha256`
+     (`core/.../download/builtin/BuiltInModel.kt`). `HfDownloader` checks every completed file
+     against it and **rejects on mismatch** (deletes the file, surfaces a clear error) before the
+     model ever reaches the resolver. A file whose genuine hash couldn't be sourced carries `null`
+     rather than a fabricated value, and is honestly left unverified - never a silent pass dressed
+     up as a check.
+   - **Arbitrary Hugging Face repos browsed by the user** cannot be hash-verified this way: HF's
+     ETags are not stable content hashes, so there is no known-good value to check a browsed file
+     against. That's a real constraint, not an oversight - integrity there rests on HTTPS-in-transit
+     plus the resolver's fail-closed `inspect()` (rule 4) refusing anything it can't identify, and
+     the app must never claim otherwise in code, comments, or UI.
+   - **Every ingestion path shares one free-storage guard** (`DownloadStorageCap`): both the HF
+     download path and a sideloaded folder (`SideloadCoordinator`) check free space before AND
+     while copying, so neither can fill the device.
+   - `ModelManifest`/`ManifestFile.sha256` remain the seam for a future server-issued manifest (a
+     manifest entry seeds the resolver, never bypasses it) - nothing in production constructs one
+     yet; don't imply it's wired up until it is.
 8. **All inference off the main thread** (coroutines). **Chunk long text into sentences** and
    synthesize sequentially so output can start before the whole thing is generated.
 9. **Never-nesting.** Guard clauses / early `return`/`continue`. No deep `if` pyramids.

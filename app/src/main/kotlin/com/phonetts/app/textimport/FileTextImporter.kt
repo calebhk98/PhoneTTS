@@ -68,7 +68,8 @@ class FileTextImporter(
         val bytes =
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: error("could not read $uri")
-        val extractor = registry.extractorFor(fileName, mimeType) ?: throw UnsupportedFileTypeException(fileName, mimeType)
+        val extractor =
+            registry.extractorFor(fileName, mimeType) ?: throw UnsupportedFileTypeException(fileName, mimeType)
         val rawText = extractor.extract(bytes)
         val pageCount = (extractor as? PageCountAwareTextExtractor)?.pageCount(bytes)
         val quality = ImportQualityAnalyzer.analyze(rawText, bytes.size.toLong(), pageCount)

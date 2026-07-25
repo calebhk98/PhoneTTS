@@ -13,7 +13,7 @@ class DocumentIdTest {
         // to (two DIFFERENT saved documents silently overwriting each other).
         val textA = "Aa"
         val textB = "BB"
-        assertEquals(textA.hashCode(), textB.hashCode(), "test fixture assumption: these must collide under String.hashCode")
+        assertEquals(textA.hashCode(), textB.hashCode(), "fixture assumption: these must collide under String.hashCode")
 
         assertNotEquals(DocumentId.of(textA), DocumentId.of(textB))
     }

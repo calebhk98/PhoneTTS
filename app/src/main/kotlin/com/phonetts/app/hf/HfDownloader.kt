@@ -328,3 +328,7 @@ private class HttpStatusException(val code: Int, statusMessage: String?) :
 /** The download can't fit in free storage. Distinct from a generic [IOException] so it is never
  * retried - the file won't fit no matter how many times it's fetched. */
 private class DownloadCapExceededException(message: String) : IOException(message)
+
+/** A completed file's SHA-256 didn't match its pinned expectation (rule 4: fail closed). The file
+ * is already deleted by the time this is thrown - see [HfDownloader.verifyOrReject]. */
+private class Sha256MismatchException(message: String) : IOException(message)

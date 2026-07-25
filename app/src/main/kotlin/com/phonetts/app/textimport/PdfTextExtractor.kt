@@ -28,7 +28,8 @@ class PdfTextExtractor : TextExtractor, PageCountAwareTextExtractor {
     override fun extract(bytes: ByteArray): String =
         PDDocument.load(bytes).use { document -> PDFTextStripper().getText(document).trim() }
 
-    override fun pageCount(bytes: ByteArray): Int? = runCatching { PDDocument.load(bytes).use { it.numberOfPages } }.getOrNull()
+    override fun pageCount(bytes: ByteArray): Int? =
+        runCatching { PDDocument.load(bytes).use { it.numberOfPages } }.getOrNull()
 
     companion object {
         val EXTENSIONS = setOf("pdf")

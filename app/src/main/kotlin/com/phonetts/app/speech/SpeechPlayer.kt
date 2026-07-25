@@ -56,10 +56,10 @@ class SpeechPlayer(
     }
 
     /** Pause whichever session currently owns playback. A no-op if nothing is attached. */
-    fun pause() = current?.pause()
+    fun pause(): Unit = run { current?.pause() }
 
     /** Resume whichever session currently owns playback. A no-op if nothing is attached. */
-    fun resume() = current?.resume()
+    fun resume(): Unit = run { current?.resume() }
 
     /**
      * Immediate hardware stop (issue #45: a barge-in must take effect at once, not at the next

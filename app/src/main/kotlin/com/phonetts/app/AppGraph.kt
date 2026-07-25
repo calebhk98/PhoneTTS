@@ -23,6 +23,7 @@ import com.phonetts.core.metrics.UsageStatsStore
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentLibrary
+import com.phonetts.core.prefs.DocumentLibraryMigration
 import com.phonetts.core.prefs.DefaultVoicePreference
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.LastUsedSelectionStore
@@ -269,11 +270,6 @@ class AppGraph(context: Context) {
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
     val lastUsedSelection = LastUsedSelectionStore(preferenceStore)
 
-    // Saved multi-document library (issue #19-5): titles/text only, keyed by the same content-derived
-    // id DocumentMemory uses for resume positions (see TtsViewModel.documentIdFor), so opening a saved
-    // document lines up with its resume point automatically.
-    val documentLibrary = DocumentLibrary(preferenceStore)
-
     // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
     // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
     val blendedVoices = BlendedVoiceStore(preferenceStore)
@@ -299,6 +295,22 @@ class AppGraph(context: Context) {
     // generalised behind the :core DurableStore seam. Lives under filesDir/durable (app-private
     // internal storage), so it is untouched by a model-storage relocation (only weights move).
     private val durableStore = FilesDurableStore(durableDir(appContext))
+
+    // Saved multi-document library (issue #19-5): titles/text only, keyed by the same content-derived
+    // id DocumentMemory uses for resume positions (see TtsViewModel.documentIdFor), so opening a saved
+    // document lines up with its resume point automatically. Backed by [durableStore] (issue #140 -
+    // SHA-256 document identity replaced the old collidable 32-bit hash), so it must be declared AFTER
+    // durableStore above, not the plain [preferenceStore] this used to read.
+    val documentLibrary = DocumentLibrary(durableStore)
+
+    // Re-key an existing user's saved library and resume positions onto the new SHA-256 document ids
+    // (issue #140). Without this call the migration is dead code and every previously-saved document
+    // becomes permanently invisible - still on disk, never read again - which is a worse bug than the
+    // hash collision it fixes. Idempotent and fail-closed: it clears the legacy key only after a
+    // complete pass, so an interrupted run simply retries next launch.
+    init {
+        DocumentLibraryMigration.migrate(preferenceStore, documentLibrary, documentMemory)
+    }
 
     /**
      * The shared Favorites store the tournament (#113), home-favorites (#119), and persistence (#114)

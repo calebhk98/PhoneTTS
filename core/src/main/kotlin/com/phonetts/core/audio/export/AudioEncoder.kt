@@ -2,7 +2,9 @@ package com.phonetts.core.audio.export
 
 import com.phonetts.core.audio.transform.TransformChain
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.isActive
 import java.io.OutputStream
+import kotlin.coroutines.coroutineContext
 
 // Base class for every file-export consumer. It is the file-side sibling of StreamingConsumer:
 // both drain the ONE `synthesize()` flow, so a new export format is a new *consumer*, never a new
@@ -30,7 +32,15 @@ abstract class AudioEncoder {
         out: OutputStream,
         transforms: TransformChain? = null,
     ) {
-        val writer = openWriter(sampleRate, out)
+        // Captured HERE (a suspend context) and threaded down to [openWriter] so a [SegmentWriter]
+        // whose close() runs a long, otherwise-uninterruptible native pass (MediaCodec's AAC/Opus
+        // encoders in :app) can still notice this coroutine being cancelled - `close()` itself is a
+        // plain, non-suspend function with no way to ask the coroutine machinery on its own (issue:
+        // export cannot be cancelled). A writer that never runs anything long (WavEncoder) simply
+        // ignores it.
+        val context = coroutineContext
+        val isCancelled = { !context.isActive }
+        val writer = openWriter(sampleRate, out, isCancelled)
         try {
             val chain = transforms ?: TransformChain(emptyList())
             val pipeline = chain.pipeline(sampleRate) { segment -> writer.write(segment) }
@@ -44,9 +54,14 @@ abstract class AudioEncoder {
     /**
      * Open a bounded-memory [SegmentWriter] for one export to [out] at [sampleRate]. Each concrete
      * format implements the raw byte encoding here; the base owns the drain + transform streaming.
+     * [isCancelled] reflects the [encode] caller's own coroutine cancellation - a platform-specific
+     * writer whose `close()` may run a long, otherwise-uninterruptible native pass (a MediaCodec
+     * AAC/Opus encode, say - :core has no such writer itself) should poll it and bail out; one that
+     * doesn't need to (like the plain WAV writer below) can ignore it.
      */
     protected abstract fun openWriter(
         sampleRate: Int,
         out: OutputStream,
+        isCancelled: () -> Boolean = { false },
     ): SegmentWriter
 }
