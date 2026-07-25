@@ -93,6 +93,13 @@ private fun BrowseTabContent(graph: AppGraph, ttsViewModel: TtsViewModel) {
                             // "may not fit this device" warning appears at the download decision
                             // point too.
                             totalRamBytes = { DeviceInfo.totalRamBytes(graph.appContext) },
+                            // Issue #88: mirror Browse's search/size/download failures into the
+                            // DURABLE error log, so they survive process death and are still there
+                            // on the Help screen when the user goes to copy them. Without this one
+                            // argument the persistence built for #88 is inert - the fifth
+                            // "implemented but never wired" defect found in this codebase, so it is
+                            // connected here rather than left as a note.
+                            durableErrorLog = graph.durableErrorLog,
                         )
                     }
                 },

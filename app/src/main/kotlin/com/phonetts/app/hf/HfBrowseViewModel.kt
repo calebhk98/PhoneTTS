@@ -88,10 +88,10 @@ class HfBrowseViewModel(
     // above - this class (and any test constructing it directly) needs no real Android storage; the
     // caller wiring up the real dependency (AppGraph/MainActivity, outside this file's ownership)
     // passes `graph.durableErrorLog` to turn it on.
-    // EXTERNAL WIRING REQUIRED: the real call site (VoicesHubScreen's BrowseTabContent) is outside
-    // this file's ownership for this change and still needs `durableErrorLog = graph.durableErrorLog`
-    // added to its HfBrowseViewModel(...) construction - see this file's onConnectivityAvailable kdoc
-    // for the same kind of "built here, wired elsewhere" note.
+    // WIRED: VoicesHubScreen's BrowseTabContent passes `durableErrorLog = graph.durableErrorLog`.
+    // Stated as a fact rather than a to-do on purpose - a comment saying "still needs wiring" that
+    // outlives the wiring is how this repo ended up with several features that were built, tested,
+    // and never actually connected.
     private val durableErrorLog: DurableErrorLog? = null,
     // The transport used ONLY to fetch upstream rhasspy/piper-voices' `voices.json` (issue: don't
     // check in a static Piper voice snapshot - see PiperVoicesIndex). Defaults to the same real
@@ -1059,10 +1059,10 @@ class HfBrowseViewModel(
      * callback: a no-op when nothing has failed, and [beginTracking]/`isDownloading` prevent
      * double-starting one already back in flight.
      *
-     * EXTERNAL WIRING REQUIRED: nothing registers a connectivity listener yet - the app graph (or
-     * MainActivity) must register a `ConnectivityManager.NetworkCallback` (or equivalent) whose
-     * `onAvailable` calls this. That registration is outside this file's ownership; this is the hook
-     * it should call.
+     * WIRED: VoicesHubScreen's BrowseTabContent registers a `ConnectivityManager.NetworkCallback`
+     * in a DisposableEffect whose `onAvailable` calls this. (This kdoc previously said nothing
+     * registered one - it was stale, and a stale "not wired yet" note is worse than none, because
+     * it invites someone to wire it a second time.)
      */
     fun onConnectivityAvailable() = resumeFailedDownloads()
 

@@ -308,8 +308,17 @@ class AppGraph(context: Context) {
     // becomes permanently invisible - still on disk, never read again - which is a worse bug than the
     // hash collision it fixes. Idempotent and fail-closed: it clears the legacy key only after a
     // complete pass, so an interrupted run simply retries next launch.
+    //
+    // Runs OFF the main thread. AppGraph is constructed in Application.onCreate(), so doing this
+    // inline blocked app startup on rewriting every saved document's full text to disk - and
+    // FilesDurableStore's own kdoc says plainly that callers must not do that on the main thread.
+    // It would have stalled the very first launch after upgrading, for exactly the users who have a
+    // library worth migrating. The migration is idempotent and fail-closed, so running it
+    // concurrently with startup is safe: an interrupted pass simply retries next launch.
     init {
-        DocumentLibraryMigration.migrate(preferenceStore, documentLibrary, documentMemory)
+        appScope.launch(Dispatchers.IO) {
+            DocumentLibraryMigration.migrate(preferenceStore, documentLibrary, documentMemory)
+        }
     }
 
     /**
