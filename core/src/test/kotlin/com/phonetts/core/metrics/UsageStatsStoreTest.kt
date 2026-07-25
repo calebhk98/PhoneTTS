@@ -138,4 +138,32 @@ class UsageStatsStoreTest {
         assertTrue(runCatching { store.recordPlayback("piper", listenedMillis = -1L) }.isFailure)
         assertTrue(runCatching { store.recordPlayback("", listenedMillis = 100L) }.isFailure)
     }
+
+    // --- restoreSnapshot() (issue #149: backup restore needs to set exact totals, not increment) ----
+
+    @Test
+    fun `restoreSnapshot overwrites the totals exactly, including on top of prior activity`() {
+        val store = UsageStatsStore(InMemoryDurableStore())
+        store.recordGeneration(wordCount = 999)
+
+        val restored =
+            UsageStatsSnapshot(
+                totalListeningMillis = 42_000L,
+                totalWordsSpoken = 7L,
+                generationCount = 3L,
+                playCountByModelId = mapOf("piper" to 2L),
+            )
+        store.restoreSnapshot(restored)
+
+        assertEquals(restored, store.snapshot())
+    }
+
+    @Test
+    fun `restoreSnapshot survives a relaunch over the same backing document`() {
+        val backing = InMemoryDurableStore()
+        val restored = UsageStatsSnapshot(10_000L, 100L, 5L, mapOf("kokoro" to 5L))
+        UsageStatsStore(backing).restoreSnapshot(restored)
+
+        assertEquals(restored, UsageStatsStore(backing).snapshot())
+    }
 }

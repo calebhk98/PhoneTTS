@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.phonetts.app.backup.BackupSection
 import com.phonetts.app.ui.nav.SettingsRow
 import com.phonetts.core.audio.transform.BassCut
 import com.phonetts.core.audio.transform.DeEsser
@@ -166,6 +167,7 @@ fun SettingsScreen(
 
         ThemeSection(currentTheme, onThemeSelected)
         UpdatesSection(updateInfo, updateActions)
+        BackupSection()
 
         SettingsSection("More") {
             SettingsRow.entries.forEachIndexed { index, row ->

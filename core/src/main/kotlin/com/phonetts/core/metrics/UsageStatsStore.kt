@@ -110,6 +110,23 @@ class UsageStatsStore(
         )
     }
 
+    /**
+     * Overwrites the entire cumulative snapshot with [snapshot]'s exact totals. Every other caller
+     * should keep using [recordGeneration]/[recordPlayback] increments - this exists solely so backup
+     * restore (issue #149) can set precise totals from a saved file rather than incrementing toward
+     * them (there is no sequence of increments that reconstructs an arbitrary saved count).
+     */
+    fun restoreSnapshot(snapshot: UsageStatsSnapshot) {
+        persist(
+            UsageStatsState(
+                totalListeningMillis = snapshot.totalListeningMillis,
+                totalWordsSpoken = snapshot.totalWordsSpoken,
+                generationCount = snapshot.generationCount,
+                playCountByModelId = snapshot.playCountByModelId,
+            ),
+        )
+    }
+
     private fun persist(next: UsageStatsState) {
         state = next
         runCatching { store.write(documentName, json.encodeToString(UsageStatsState.serializer(), next)) }
