@@ -64,4 +64,24 @@ class BenchmarkHistoryTest {
         assertEquals(1, recorded.size)
         assertEquals(100L, recorded.first().timestampMillis)
     }
+
+    @Test
+    fun `reads fail closed on a stored NaN RTF, skipping it rather than throwing`() {
+        // Regression (Browse crash investigation): "NaN".toDoubleOrNull() successfully parses to
+        // Double.NaN, and NaN < 0.0 is always false (NaN fails every relational comparison), so the
+        // decode() guard `rtf < 0.0 return null` silently lets a NaN value through instead of
+        // rejecting it as corrupt. It then reaches BenchmarkRecord's init block, whose
+        // `require(realTimeFactor >= 0.0)` also evaluates false for NaN and THROWS
+        // IllegalArgumentException - out of decode(), out of the mapNotNull in history(), uncaught -
+        // breaking this class's own documented contract ("malformed lines are skipped rather than
+        // crashing the parse"). Browse's RTF sort (HfBrowseViewModel.rtfEstimates) calls
+        // BenchmarkHistory.history() on every recompute, so one corrupt/legacy NaN entry here would
+        // take the whole Browse screen down before this fix.
+        val backing = InMemoryPreferenceStore()
+        backing.putString("benchmark_history.piper|Pixel", "100|NaN\n200|0.8")
+        val history = BenchmarkHistory(backing)
+        val recorded = history.history("piper", "Pixel")
+        assertEquals(1, recorded.size)
+        assertEquals(200L, recorded.first().timestampMillis)
+    }
 }

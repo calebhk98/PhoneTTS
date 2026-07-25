@@ -68,7 +68,15 @@ class BenchmarkHistory(private val store: PreferenceStore) {
         if (parts.size != FIELD_COUNT) return null
         val timestamp = parts[0].toLongOrNull() ?: return null
         val rtf = parts[1].toDoubleOrNull() ?: return null
-        if (timestamp < 0L || rtf < 0.0) return null
+        // `rtf < 0.0` looks like it rejects a negative value, but NaN fails EVERY relational
+        // comparison (NaN < 0.0 is false, same as NaN >= 0.0), so a stored "NaN" - which
+        // toDoubleOrNull happily parses - used to slip past this guard and reach
+        // BenchmarkRecord's `require(realTimeFactor >= 0.0)`, which throws instead of failing
+        // closed. Mirroring that exact require() condition here (rather than its negation) rejects
+        // NaN the same way the constructor would, restoring this function's own contract: a
+        // malformed/corrupt line is skipped, never a thrown exception (bug: Browse RTF sort crash -
+        // history() feeds HfBrowseViewModel.rtfEstimates, called on every Browse recompute).
+        if (timestamp < 0L || !(rtf >= 0.0)) return null
         return BenchmarkRecord(engineId, device, timestamp, rtf)
     }
 

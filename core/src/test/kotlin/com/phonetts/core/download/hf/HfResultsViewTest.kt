@@ -247,4 +247,107 @@ class HfResultsViewTest {
     fun needsEagerSizeFetchIsFalseWithNeitherASizeSortNorAnActiveSizeFilter() {
         assertFalse(needsEagerSizeFetch(HfSortOption.MOST_DOWNLOADS, HfSizeParamFilter()))
     }
+
+    // --- Browse crash investigation (owner report: "may be related to filters/sort") ---
+    //
+    // Prime suspect from the lead: java.util.TimSort throws "Comparison method violates its
+    // general contract!" for an inconsistent comparator, but ONLY once a list exceeds 32 elements
+    // (its insertion-sort fallback threshold) - exactly why a 3-item unit test would never catch
+    // this class of bug, and why it would only show up on a real, large Hugging Face result page.
+    // A Double sort key that can be NaN is the classic trigger IF the comparator uses raw `<`/`>`
+    // (inconsistent for NaN - every relational comparison with NaN is false). These tests build a
+    // 150-element result set - realistic HF page sizes - with NaN, duplicate, and merely-large RTF
+    // values mixed in against every sort option HfResultsView exposes, to give a definitive,
+    // reproduced verdict rather than a guess.
+    private fun manyResults(count: Int): List<HfModelSummary> =
+        (0 until count).map { i ->
+            HfModelSummary(id = "org$i/model-$i", likes = i * 7 % 500, downloads = (count - i) * 13 % 1000, tags = listOf("tts"))
+        }
+
+    @Test
+    fun sortingOverThirtyTwoResultsByEveryPlainOptionNeverThrows() {
+        val big = manyResults(150)
+        // MOST_DOWNLOADS/MOST_LIKES/NAME_ASC read plain Int/String fields off HfModelSummary itself
+        // - never NaN-capable - so these are expected to be safe; asserted here at realistic scale
+        // per the investigation's "not a 3-item toy" requirement rather than assumed.
+        HfSortOption.entries.forEach { option ->
+            val sorted = HfResultsView.sort(big, option)
+            assertEquals(big.size, sorted.size)
+        }
+    }
+
+    @Test
+    fun sortingByRtfWithNaNAndInfinityMixedIntoA150ElementListDoesNotThrow() {
+        val big = manyResults(150)
+        // A NaN or Infinity RTF should never be constructible through BenchmarkRecord/RtfResult's
+        // own require() guards in normal operation (see BenchmarkHistoryTest's NaN-decode
+        // regression for the one place a NaN COULD reach this map: a corrupt/legacy persisted
+        // value) - but HfResultsView.sort itself takes a bare Map<String, Double> with no
+        // validation of its own, so this proves its behavior at the boundary regardless of how a
+        // bad value might arrive.
+        val rtf =
+            big.indices.associate { i ->
+                val value =
+                    when {
+                        i % 37 == 0 -> Double.NaN
+                        i % 11 == 0 -> Double.POSITIVE_INFINITY
+                        i % 5 == 0 -> null // stays "unknown" - never fetched/benchmarked
+                        else -> i.toDouble() * 0.01
+                    }
+                big[i].id to value
+            }.filterValues { it != null }.mapValues { it.value as Double }
+
+        // The real question this answers: does Kotlin's sortedBy (java.util.Comparable.compareTo,
+        // NOT the raw < / > operators) throw TimSort's contract-violation exception when NaN is
+        // mixed into a >32-element Double sort? It must not, and both directions are exercised.
+        val fastest = HfResultsView.sort(big, HfSortOption.FASTEST_RTF, rtfEstimates = rtf)
+        val slowest = HfResultsView.sort(big, HfSortOption.SLOWEST_RTF, rtfEstimates = rtf)
+        assertEquals(big.size, fastest.size)
+        assertEquals(big.size, slowest.size)
+        // Every known (non-null) RTF entry still sorts before every unknown one, in EITHER
+        // direction - NaN behaves as Double.compareTo's "greater than everything else" rather than
+        // corrupting the ordering guarantee.
+        val unknownIds = big.map { it.id }.toSet() - rtf.keys
+        assertTrue(fastest.takeLast(unknownIds.size).map { it.id }.toSet() == unknownIds)
+        assertTrue(slowest.takeLast(unknownIds.size).map { it.id }.toSet() == unknownIds)
+    }
+
+    @Test
+    fun sortingBySizeAndParamsOverA150ElementListWithManyKnownAndUnknownSizesDoesNotThrow() {
+        val big = manyResults(150)
+        val sizes =
+            big.indices.filter { it % 3 != 0 }.associate { i ->
+                big[i].id to HfSizeEstimate(knownBytes = (i.toLong() + 1) * 1_000_000L, unknownFileCount = 0)
+            }
+        listOf(HfSortOption.LARGEST_SIZE, HfSortOption.SMALLEST_SIZE, HfSortOption.MOST_PARAMS, HfSortOption.FEWEST_PARAMS)
+            .forEach { option ->
+                val sorted = HfResultsView.sort(big, option, sizeEstimates = sizes)
+                assertEquals(big.size, sorted.size)
+            }
+    }
+
+    @Test
+    fun applyOverA150ElementListWithEveryAdvancedFilterAndAllSortOptionsNeverThrows() {
+        // End-to-end version of the above three: the exact call HfBrowseViewModel.applyFilters
+        // makes on every recompute, across every sort option, at realistic scale.
+        val big = manyResults(150)
+        val sizes =
+            big.indices.filter { it % 2 == 0 }.associate { i ->
+                big[i].id to HfSizeEstimate(knownBytes = (i.toLong() + 1) * 500_000L, unknownFileCount = 0)
+            }
+        val rtf =
+            big.indices.filter { it % 4 == 0 }.associate { i ->
+                big[i].id to if (i % 40 == 0) Double.NaN else i.toDouble() * 0.02
+            }
+        HfSortOption.entries.forEach { option ->
+            val filtered =
+                HfResultsView.apply(
+                    big,
+                    option,
+                    tag = "tts",
+                    filters = HfResultFilters(sizeEstimates = sizes, rtfEstimates = rtf),
+                )
+            assertTrue(filtered.size <= big.size)
+        }
+    }
 }
