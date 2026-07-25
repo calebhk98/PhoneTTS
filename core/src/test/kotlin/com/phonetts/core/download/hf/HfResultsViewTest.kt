@@ -319,11 +319,17 @@ class HfResultsViewTest {
             big.indices.filter { it % 3 != 0 }.associate { i ->
                 big[i].id to HfSizeEstimate(knownBytes = (i.toLong() + 1) * 1_000_000L, unknownFileCount = 0)
             }
-        listOf(HfSortOption.LARGEST_SIZE, HfSortOption.SMALLEST_SIZE, HfSortOption.MOST_PARAMS, HfSortOption.FEWEST_PARAMS)
-            .forEach { option ->
-                val sorted = HfResultsView.sort(big, option, sizeEstimates = sizes)
-                assertEquals(big.size, sorted.size)
-            }
+        val sizeAndParamOptions =
+            listOf(
+                HfSortOption.LARGEST_SIZE,
+                HfSortOption.SMALLEST_SIZE,
+                HfSortOption.MOST_PARAMS,
+                HfSortOption.FEWEST_PARAMS,
+            )
+        sizeAndParamOptions.forEach { option ->
+            val sorted = HfResultsView.sort(big, option, sizeEstimates = sizes)
+            assertEquals(big.size, sorted.size)
+        }
     }
 
     @Test

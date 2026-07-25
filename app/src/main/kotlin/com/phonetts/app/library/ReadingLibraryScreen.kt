@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.prefs.LibraryDocument
@@ -100,7 +101,9 @@ private fun DocumentRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        // mergeDescendants = true (issue #141 rule 3): the title/preview/saved-at/resume-point lines
+        // announce as one TalkBack stop; Open/Rename/Delete stay separate, individually reachable nodes.
+        Column(modifier = Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
             Text(document.title, fontWeight = FontWeight.Bold)
             Text(preview(document.text), style = MaterialTheme.typography.bodySmall, maxLines = 2)
             Text(formatSavedAt(document.savedAtMillis), style = MaterialTheme.typography.bodySmall)

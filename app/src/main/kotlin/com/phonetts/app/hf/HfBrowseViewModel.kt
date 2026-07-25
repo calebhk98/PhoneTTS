@@ -98,9 +98,23 @@ class HfBrowseViewModel(
     // engine choices), so a test constructing this class directly needs nothing. AppGraph passes
     // engineRegistry.list().map { it.id } - the one small external wire-up this filter needs.
     private val knownEngineIds: List<String> = emptyList(),
+    // This device's TOTAL RAM (issue #137: the "may not fit this device" warning existed only on
+    // the Manage screen, AFTER download - too late to help the decision this screen is actually
+    // for). Same figure/provider shape as ModelManagementViewModel's totalRamBytes: a 0-arg
+    // provider (not a raw Long) so it's read once lazily rather than forcing every call site,
+    // including tests that construct this class directly, to know a real device's RAM up front.
+    // Defaults to "unknown" (0L), which DeviceRamFit.modelExceedsDeviceRam treats as "can't say" -
+    // fail-closed, never a false warning from an absent reading.
+    private val totalRamBytes: () -> Long = { 0L },
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(HfBrowseUiState())
     val state: StateFlow<HfBrowseUiState> = mutableState.asStateFlow()
+
+    /** This device's TOTAL RAM in bytes, read once (it never changes for the life of the process) -
+     * the one figure [com.phonetts.core.model.DeviceRamFit] checks to decide whether a browsed
+     * model's estimated size can't possibly fit. Exposed as a plain property (not app state) since
+     * it never changes and the UI needs no recomposition trigger for it. */
+    val deviceTotalRamBytes: Long = totalRamBytes()
 
     // One coroutine per repo id currently in flight (listing files, or fetching them) - a map, not
     // a single slot, so the user can start a second download while the first is still running and

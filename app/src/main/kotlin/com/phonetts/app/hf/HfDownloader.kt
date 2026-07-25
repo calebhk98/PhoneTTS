@@ -4,6 +4,7 @@ import android.os.StatFs
 import com.phonetts.app.ModelStorage
 import com.phonetts.core.download.DownloadStorageCap
 import com.phonetts.core.download.SafePath
+import com.phonetts.core.download.Sha256Verifier
 import com.phonetts.core.download.hf.DownloadDiagnosticsLog
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.download.hf.HfDownloadItem
@@ -36,9 +37,17 @@ import kotlin.coroutines.coroutineContext
  * retry resumes rather than restarts.
  *
  * HF ETags are not stable content hashes, so there is no manifest hash to check against for an
- * arbitrary repo; integrity for browsed models rests on HTTPS + the resolver refusing anything it
- * can't identify. (Curated/manifest downloads still verify SHA-256 via
- * com.phonetts.core.download.Sha256Verifier.)
+ * arbitrary BROWSED repo; integrity for those rests on HTTPS + the resolver refusing anything it
+ * can't identify - that is a real, unavoidable constraint, not an oversight.
+ *
+ * A curated [com.phonetts.core.download.builtin.BuiltInModel], by contrast, names a fixed set of
+ * files this project controls, so its [com.phonetts.core.download.hf.HfDownloadItem.expectedSha256]
+ * CAN be (and, where a genuine hash was obtainable, IS) pinned ahead of time. [fetch] checks every
+ * completed file against its item's [com.phonetts.core.download.hf.HfDownloadItem.expectedSha256]
+ * when one is present, via [com.phonetts.core.download.Sha256Verifier] - deleting the file and
+ * failing the download on a mismatch rather than silently loading a corrupted/tampered file. A
+ * `null` hash (always the case for a browsed repo; only the case for a curated file whose real
+ * hash could not be sourced) is treated honestly as "not verified", never as an implicit pass.
  *
  * A dropped connection mid-file ("Software caused connection abort", "unexpected end of stream",
  * a socket reset, a premature EOF) is common on flaky mobile networks and is NOT treated as a hard
@@ -125,16 +134,44 @@ class HfDownloader(
             val decision = HfResume.decide(onDisk, item.sizeBytes)
             if (decision.action == ResumeAction.SKIP) {
                 reportWithinFile(onDisk)
+                verifyOrReject(item, target)
                 return
             }
             val resumeFrom = if (decision.action == ResumeAction.RESUME) decision.offsetBytes else 0L
             reportWithinFile(resumeFrom)
-            val failure = attemptDownload(item, target, resumeFrom, reportWithinFile) ?: return
+            val failure = attemptDownload(item, target, resumeFrom, reportWithinFile)
+            if (failure == null) {
+                verifyOrReject(item, target)
+                return
+            }
             val giveUp = attempt >= MAX_ATTEMPTS || !isRetryable(failure)
             if (giveUp) throw describedFailure(item, failure, attempt)
             delay(RETRY_BACKOFF_MS[attempt - 1])
             attempt++
         }
+    }
+
+    // Rule 4/#7: a file is only trusted once its hash matches a pinned expectation. Runs whenever
+    // [target] is complete - whether it was just downloaded or already sat on disk from an earlier
+    // (possibly interrupted-after-this-file) attempt, since a SKIP never re-verified before. A
+    // `null` expectedSha256 (every browsed-repo item, and any curated file whose real hash wasn't
+    // obtainable - see [HfDownloadItem.expectedSha256]) has nothing to check against and is left
+    // alone: that is an honest "not verified", not a silent pass dressed up as one.
+    private fun verifyOrReject(
+        item: HfDownloadItem,
+        target: File,
+    ) {
+        val expected = item.expectedSha256 ?: return
+        val actual = target.inputStream().use { Sha256Verifier.hashHex(it) }
+        if (Sha256Verifier.matches(actual, expected)) return
+        target.delete()
+        throw describedFailure(
+            item,
+            Sha256MismatchException(
+                "downloaded file does not match the pinned checksum (expected $expected, got $actual) - deleted",
+            ),
+            attempts = 1,
+        )
     }
 
     // Fail fast (before spending bandwidth) when a file's advertised size can't fit free storage -

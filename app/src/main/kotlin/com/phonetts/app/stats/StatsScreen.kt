@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.DiagnosticsEntry
@@ -52,6 +53,12 @@ private fun SectionHeader(title: String) {
     Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 }
 
+// Every [ListItem] on this screen is read-only (none are clickable) - without this, its
+// headline/supporting/trailing Text each land as their own separate TalkBack stop, so a single fact
+// like "Total listening time: 5h 3m" reads as two disconnected swipes instead of one (issue #141 rule
+// 3, "merge composite rows"). Shared as one val since the modifier itself carries no per-row state.
+private val MergedListItem: Modifier = Modifier.semantics(mergeDescendants = true) {}
+
 // --- Listening ------------------------------------------------------------------------------------
 
 @Composable
@@ -70,16 +77,19 @@ private fun ListeningSection(state: StatsViewModel.UiState) {
                 ListItem(
                     headlineContent = { Text("Total listening time") },
                     supportingContent = { Text(formatDuration(state.usage.totalListeningMillis)) },
+                    modifier = MergedListItem,
                 )
                 HorizontalDivider()
                 ListItem(
                     headlineContent = { Text("Words spoken") },
                     supportingContent = { Text(formatCount(state.usage.totalWordsSpoken)) },
+                    modifier = MergedListItem,
                 )
                 HorizontalDivider()
                 ListItem(
                     headlineContent = { Text("Generations run") },
                     supportingContent = { Text(formatCount(state.usage.generationCount)) },
+                    modifier = MergedListItem,
                 )
                 if (state.topPlayedModels.isNotEmpty()) {
                     HorizontalDivider()
@@ -88,6 +98,7 @@ private fun ListeningSection(state: StatsViewModel.UiState) {
                         ListItem(
                             headlineContent = { Text(row.displayName) },
                             trailingContent = { Text("${row.playCount}×") },
+                            modifier = MergedListItem,
                         )
                     }
                 }
@@ -111,11 +122,13 @@ private fun ModelsAndStorageSection(state: StatsViewModel.UiState) {
                 ListItem(
                     headlineContent = { Text("Downloaded models") },
                     supportingContent = { Text(formatCount(state.modelCount.toLong())) },
+                    modifier = MergedListItem,
                 )
                 HorizontalDivider()
                 ListItem(
                     headlineContent = { Text("Storage used") },
                     supportingContent = { Text(ByteFormat.format(state.totalStorageBytes)) },
+                    modifier = MergedListItem,
                 )
                 HorizontalDivider()
                 ListItem(
@@ -127,6 +140,7 @@ private fun ModelsAndStorageSection(state: StatsViewModel.UiState) {
                                 "${state.flaggedModelCount} flagged",
                         )
                     },
+                    modifier = MergedListItem,
                 )
                 state.modelStorageRows.forEach { row ->
                     HorizontalDivider()
@@ -134,6 +148,7 @@ private fun ModelsAndStorageSection(state: StatsViewModel.UiState) {
                         headlineContent = { Text(row.displayName) },
                         supportingContent = { Text(peakRamLabel(row.observedPeakRamBytes)) },
                         trailingContent = { Text(ByteFormat.format(row.sizeBytes)) },
+                        modifier = MergedListItem,
                     )
                 }
             }
@@ -165,6 +180,7 @@ private fun BenchmarksSection(state: StatsViewModel.UiState) {
                         headlineContent = { Text(row.displayName) },
                         supportingContent = { Text("${row.sampleCount} sample(s) · ${trendLabel(row)}") },
                         trailingContent = { Text("${fmt2(row.latestRealTimeFactor)}×") },
+                        modifier = MergedListItem,
                     )
                 }
             }
@@ -203,11 +219,13 @@ private fun DownloadsSection(state: StatsViewModel.UiState) {
                 ListItem(
                     headlineContent = { Text("Failed downloads") },
                     supportingContent = { Text(formatCount(health.failureCount.toLong())) },
+                    modifier = MergedListItem,
                 )
                 HorizontalDivider()
                 ListItem(
                     headlineContent = { Text("Downloaded, no engine yet") },
                     supportingContent = { Text(formatCount(health.noEngineYetCount.toLong())) },
+                    modifier = MergedListItem,
                 )
                 health.recent.forEach { entry ->
                     HorizontalDivider()
@@ -224,6 +242,7 @@ private fun DiagnosticsRow(entry: DiagnosticsEntry) {
         headlineContent = { Text(entry.modelId) },
         supportingContent = { Text("${entry.detail} · ${formatTimestamp(entry.atMs)}") },
         trailingContent = { Text(kindLabel(entry.kind)) },
+        modifier = MergedListItem,
     )
 }
 

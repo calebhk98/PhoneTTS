@@ -33,6 +33,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.phonetts.app.ui.pickers.ModelPicker
@@ -133,16 +137,25 @@ private fun ModeSelector(
     }
 }
 
+// The filled-vs-outlined styling is the only cue a sighted user gets that this is a two-way toggle,
+// not a plain button - TalkBack needs the `selected` semantics spelled out explicitly (issue #141
+// rule 4), since a plain Button/OutlinedButton carries no selected state on its own the way a real
+// Tab/NavigationBarItem does.
 @Composable
 private fun ModeButton(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val stateModifier =
+        Modifier.semantics {
+            role = Role.Tab
+            this.selected = selected
+        }
     if (selected) {
-        Button(onClick = onClick) { Text(label) }
+        Button(onClick = onClick, modifier = stateModifier) { Text(label) }
     } else {
-        OutlinedButton(onClick = onClick) { Text(label) }
+        OutlinedButton(onClick = onClick, modifier = stateModifier) { Text(label) }
     }
 }
 
@@ -397,7 +410,13 @@ private fun RosterBuilder(
         Text("Bracket roster (${roster.size})", style = MaterialTheme.typography.titleMedium)
         roster.forEach { entry ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                // mergeDescendants = true (issue #141): the bare "Remove" label says nothing about
+                // WHICH entry out of context - merging the row folds the entry's own label in, so
+                // TalkBack announces "<entry>, Remove" as a single node instead of two disconnected ones.
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {},
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -517,14 +536,18 @@ private fun RankingTable(
             val hasAudio = row.realTimeFactor != null
             val isFavorite = row.modelId in favoriteModelIds
             Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("#${row.place} - ${row.label}", modifier = Modifier.weight(1f))
-                    Text(row.realTimeFactor?.let { "RTF %.2fx".format(it) } ?: "RTF -")
+                // mergeDescendants = true (issue #141 rule 3): place/label, RTF, and judged-wins
+                // announce as one stop; the Replay/Export/Favorite buttons below stay separate.
+                Column(modifier = Modifier.semantics(mergeDescendants = true) {}) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("#${row.place} - ${row.label}", modifier = Modifier.weight(1f))
+                        Text(row.realTimeFactor?.let { "RTF %.2fx".format(it) } ?: "RTF -")
+                    }
+                    Text("Judged wins: ${row.winsRecorded}", style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Judged wins: ${row.winsRecorded}", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onReplay(row.entryId) }, enabled = hasAudio) { Text("Replay") }
                     // "Export WAV", not "Save": this writes the clip to a .wav file via the system
@@ -559,7 +582,12 @@ private fun FlaggedReviewSection(
         )
         rows.forEach { row ->
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                // Same reasoning as RosterBuilder's roster row: fold the model's own label into the
+                // bare "Delete" button so TalkBack says which model, not just the action (issue #141).
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .semantics(mergeDescendants = true) {},
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

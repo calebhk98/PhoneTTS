@@ -88,6 +88,11 @@ private fun BrowseTabContent(graph: AppGraph, ttsViewModel: TtsViewModel) {
                             notifier = DownloadNotifier(graph.appContext),
                             benchmarkHistory = graph.benchmarkHistory,
                             knownEngineIds = graph.engineRegistry.list().map { it.id },
+                            // Issue #137: the same TOTAL-ram figure ModelManagementViewModel passes
+                            // below for the post-download warning, now also wired to Browse so the
+                            // "may not fit this device" warning appears at the download decision
+                            // point too.
+                            totalRamBytes = { DeviceInfo.totalRamBytes(graph.appContext) },
                         )
                     }
                 },

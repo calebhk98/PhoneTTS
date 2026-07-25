@@ -71,6 +71,7 @@ import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.RunCompatibility
 import com.phonetts.core.download.hf.needsRtf
 import com.phonetts.core.download.hf.needsSize
+import com.phonetts.core.model.DeviceRamFit
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
@@ -282,6 +283,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                                 onCancel = { viewModel.cancelDownload(model.id) },
                                 onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.repoId)) },
                             ),
+                        totalRamBytes = viewModel.deviceTotalRamBytes,
                     )
                 }
             }
@@ -335,6 +337,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                                     onCancel = { viewModel.cancelDownload(voice.id) },
                                     onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(voice.repoId)) },
                                 ),
+                            totalRamBytes = viewModel.deviceTotalRamBytes,
                         )
                     }
                     if (filteredPiperVoices.isEmpty()) {
@@ -376,6 +379,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                             estimate = state.sizeEstimates[model.id],
                             loading = model.id in state.sizeLoading,
                             onLoad = { viewModel.loadSize(model.id) },
+                            totalRamBytes = viewModel.deviceTotalRamBytes,
                         ),
                     actions =
                         RowActions(
@@ -1033,11 +1037,17 @@ private data class RowActions(
 /** A result row's on-demand size lookup (issue #7): the estimate once fetched, whether a fetch is
  * in flight, and how to trigger one - bundled into one parameter for the same reason as [RowActions].
  * The fetch is now triggered automatically (bug #4 - no more "Show download size" tap gate); [onLoad]
- * is idempotent (see [HfBrowseViewModel.loadSize]) so calling it once per row composition is safe. */
+ * is idempotent (see [HfBrowseViewModel.loadSize]) so calling it once per row composition is safe.
+ * [totalRamBytes] rides along here too (issue #137: surface the "may not fit this device" warning
+ * at the Browse/download decision point, not only on the Manage screen after downloading) rather
+ * than as its own [ModelRow] parameter, to stay under detekt's LongParameterList limit - it isn't
+ * really about size specifically, but this is the one bundle every row already carries a byte count
+ * through. */
 private data class SizeState(
     val estimate: HfSizeEstimate?,
     val loading: Boolean,
     val onLoad: () -> Unit,
+    val totalRamBytes: Long = 0L,
 )
 
 @Composable
@@ -1047,6 +1057,7 @@ private fun RecommendedRow(
     queued: Boolean,
     isInstalled: Boolean,
     actions: RowActions,
+    totalRamBytes: Long = 0L,
 ) {
     ModelCard {
         Row(
@@ -1061,7 +1072,13 @@ private fun RecommendedRow(
                 // Bug #5: a curated model's approximate size is already known up front (no network
                 // round trip needed), so its param/speed hint can be derived immediately too.
                 val fileNames = remember(model.id) { model.files.map { it.localName } }
-                SpeedHintLine(totalBytes = model.approxSizeMb.toLong() * BYTES_PER_MB, precisionHints = fileNames)
+                val approxBytes = model.approxSizeMb.toLong() * BYTES_PER_MB
+                SpeedHintLine(totalBytes = approxBytes, precisionHints = fileNames)
+                // Issue #137: the "may not fit this device" warning used to exist only on the Manage
+                // screen, AFTER a model was already downloaded - too late to inform the choice this
+                // screen is actually for. A curated model's approximate size is known up front, so
+                // this can warn before the tap, not after.
+                WontFitWarning(peakRamBytes = approxBytes, totalRamBytes = totalRamBytes)
             }
             DownloadControl(progress != null, isInstalled, actions.onDownload, actions.onCancel)
         }
@@ -1105,6 +1122,12 @@ private fun ModelRow(
                 CompatibilityBadge(compatibility)
                 SizeLine(sizeState)
                 SpeedHintLine(totalBytes = sizeState.estimate?.knownBytes, precisionHints = model.tags)
+                // Issue #137: same warning as the Manage screen shows after download
+                // (ModelManagementScreen.wontFitWarning), reusing the same DeviceRamFit logic - but
+                // surfaced HERE, at the Browse/download decision point, using the fetched download
+                // size as the pre-download RAM proxy (there is no ModelDescriptor/engine yet to carry
+                // a declared resourceCost estimate for a repo that isn't downloaded).
+                WontFitWarning(peakRamBytes = sizeState.estimate?.knownBytes, totalRamBytes = sizeState.totalRamBytes)
             }
             DownloadControl(progress != null, isInstalled, actions.onDownload, actions.onCancel)
         }
@@ -1190,6 +1213,34 @@ private fun SpeedHintLine(
         "~${CountFormat.formatParamCount(speed.paramCount)} params · " +
             "~${formatRealtimeMultiple(speed.realtimeMultiple)}x real-time",
         style = MaterialTheme.typography.bodySmall,
+    )
+}
+
+/**
+ * "May not fit this device" warning at the Browse/download decision point (issue #137 - previously
+ * this only appeared on the Manage screen, AFTER a model was already downloaded, which is too late
+ * to inform the choice). Reuses [DeviceRamFit.modelExceedsDeviceRam] - the exact same fit test
+ * [ModelManagementScreen]'s post-download warning uses - rather than a second threshold anywhere
+ * (spec rule 1 SSOT: a fact/decision like "does this fit" must have exactly one authority). The one
+ * real difference from the Manage screen: there, [peakRamBytes] is the engine's declared
+ * `resourceCost.approxPeakRamBytes` (or an observed peak); here, before download, there is no
+ * ModelDescriptor/engine assigned yet, so the best honest stand-in is the model's own download size
+ * (already fetched/known for this exact row - see [SizeLine]/[RecommendedRow]'s approxSizeMb) -
+ * labeled "(estimated)" so it never reads as a verified measurement. Renders nothing when the size
+ * isn't known yet, or when [DeviceRamFit] says it fits (never shown as a "tight but OK" tier -
+ * spec/DeviceRamFit's own rule: only a genuine won't-fit warns).
+ */
+@Composable
+private fun WontFitWarning(
+    peakRamBytes: Long?,
+    totalRamBytes: Long,
+) {
+    if (peakRamBytes == null) return
+    if (!DeviceRamFit.modelExceedsDeviceRam(peakRamBytes, totalRamBytes)) return
+    Text(
+        "May not fit this device - est. ~${ByteFormat.format(peakRamBytes)}+ RAM needed",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
     )
 }
 

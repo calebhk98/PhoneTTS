@@ -2,11 +2,21 @@ package com.phonetts.core.download.hf
 
 import com.phonetts.core.download.SafePath
 
-/** One file to fetch: where from ([url]) and where it goes inside the model folder ([relativePath]). */
+/**
+ * One file to fetch: where from ([url]) and where it goes inside the model folder ([relativePath]).
+ *
+ * [expectedSha256] is the pinned hash to verify the downloaded bytes against - populated ONLY for
+ * curated [com.phonetts.core.download.builtin.BuiltInModel] files whose hash was actually sourced
+ * from the real upstream file (see [com.phonetts.core.download.builtin.BuiltInCatalog]). It is
+ * always `null` for a browsed Hugging Face repo: HF's ETags are not stable content hashes, so there
+ * is no known-good value to check an arbitrary repo file against - that's a real constraint, not an
+ * oversight. A `null` hash means "not verifiable" - never a silent "trust it".
+ */
 data class HfDownloadItem(
     val url: String,
     val relativePath: String,
     val sizeBytes: Long?,
+    val expectedSha256: String? = null,
 )
 
 /**

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
 import com.phonetts.core.prefs.LibraryDocument
+import com.phonetts.core.prefs.LibrarySort
 import com.phonetts.core.text.DocumentId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +25,14 @@ import kotlinx.coroutines.launch
  * [AppGraph.documentMemory] by the SAME content-derived id ([DocumentId]) this library saves under -
  * so [Row.hasResumePoint] simply reports whether that existing lookup would find something, letting
  * the screen ask "resume, or start over?" before opening.
+ *
+ * [AppGraph.documentLibrary] (issue #139) now lists/searches over small METADATA only, so this class
+ * hydrates each visible row's full text with a follow-up [com.phonetts.core.prefs.DocumentLibrary.get]
+ * - opening a document still needs its full text (see [com.phonetts.app.library.ReadingLibraryScreen],
+ * which passes the whole [LibraryDocument] straight through to the reader), so visiting this screen
+ * still reads every currently-listed book once, same as before the storage change. What #139 actually
+ * fixes is everything ELSE: renaming/deleting/adding no longer rewrites every other saved book's text,
+ * and the metadata index alone (not the whole library) is what's touched at each of those points.
  */
 class ReadingLibraryViewModel(
     private val graph: AppGraph,
@@ -38,6 +47,10 @@ class ReadingLibraryViewModel(
         val status: String? = null,
         /** Non-null while the rename dialog is open for this document id. */
         val renamingId: String? = null,
+        /** Current title/content search filter; blank means "show everything". */
+        val query: String = "",
+        /** Current list order. */
+        val sort: LibrarySort = LibrarySort.RECENT,
     )
 
     private val mutableState = MutableStateFlow(UiState())
@@ -50,13 +63,30 @@ class ReadingLibraryViewModel(
         refresh()
     }
 
-    /** Re-read the saved documents - call after a save/rename/delete, or when the screen shows. */
+    /** Re-read the saved documents (honoring the current [UiState.query]/[UiState.sort]) - call after any mutation. */
     fun refresh() {
+        val query = mutableState.value.query
+        val sort = mutableState.value.sort
+        val metas =
+            if (query.isBlank()) graph.documentLibrary.list(sort) else graph.documentLibrary.search(query, sort)
         val rows =
-            graph.documentLibrary.list().map { document ->
-                Row(document, graph.documentMemory.resume(document.id) != null)
+            metas.mapNotNull { meta ->
+                val document = graph.documentLibrary.get(meta.id) ?: return@mapNotNull null
+                Row(document, graph.documentMemory.resume(meta.id) != null)
             }
         mutableState.update { it.copy(rows = rows) }
+    }
+
+    /** Updates the title/content search filter and re-runs [refresh] against it. */
+    fun setQuery(query: String) {
+        mutableState.update { it.copy(query = query) }
+        refresh()
+    }
+
+    /** Changes the list order and re-runs [refresh] against it. */
+    fun setSort(sort: LibrarySort) {
+        mutableState.update { it.copy(sort = sort) }
+        refresh()
     }
 
     /**

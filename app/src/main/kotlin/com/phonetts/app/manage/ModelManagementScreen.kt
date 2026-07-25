@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -207,15 +208,15 @@ fun ModelManagementScreen(
                                 totalRamBytes = state.totalRamBytes,
                                 facts = state.factsByModelId[entry.usage.descriptor.modelId],
                                 disambiguate = entry.usage.descriptor.displayName in duplicateNames,
-                                isDeleting = state.deletingId == entry.usage.descriptor.modelId,
+                                isDeleting = entry.usage.descriptor.modelId in state.deletingIds,
                                 onDelete = { viewModel.delete(entry.usage.descriptor.modelId) },
                             )
                         is ManagedModelEntry.Unresolved ->
                             UnresolvedUsageRow(
                                 unresolved = entry.usage,
                                 selectableEngines = state.selectableEngines,
-                                isDeleting = state.deletingUnresolvedId == entry.usage.bundleId,
-                                isAssigning = state.assigningUnresolvedId == entry.usage.bundleId,
+                                isDeleting = entry.usage.bundleId in state.deletingUnresolvedIds,
+                                isAssigning = entry.usage.bundleId in state.assigningUnresolvedIds,
                                 onDelete = { viewModel.deleteUnresolved(entry.usage.bundleId) },
                                 onAssignEngine = { engineId -> viewModel.assignEngine(entry.usage.bundleId, engineId) },
                             )
@@ -533,7 +534,10 @@ private fun ModelUsageRow(
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
+            // mergeDescendants = true (issue #141 rule 3): the name/metadata/disambiguating-id Text
+            // nodes announce as ONE TalkBack stop instead of up to three, while the trailing "More
+            // actions" IconButton (or the delete spinner) stays a separate, individually reachable node.
+            Column(modifier = Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
                 Text(usage.descriptor.displayName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     metadataLine(usage, peakRamBytes),
@@ -706,7 +710,9 @@ private fun UnresolvedUsageRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            // Same mergeDescendants reasoning as ModelUsageRow above: one announced block for the
+            // bundle's own three lines, Delete stays its own reachable node.
+            Column(modifier = Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
                 Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
                 Text("Already downloaded (" + ByteFormat.format(unresolved.sizeBytes) + ") · $NO_ENGINE_YET_LABEL")
                 Text("Redownloading won't help - " + unresolved.reason, style = MaterialTheme.typography.bodySmall)

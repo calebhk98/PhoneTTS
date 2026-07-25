@@ -12,10 +12,20 @@ import com.phonetts.core.download.hf.HfEndpoints
 // stays the single source of truth. These are the models proven to produce valid audio in
 // docs/MODEL-VERIFICATION.md.
 
-/** One file of a built-in model: where it lives in the repo, and its name inside the model folder. */
+/**
+ * One file of a built-in model: where it lives in the repo, and its name inside the model folder.
+ *
+ * [sha256] is the file's pinned SHA-256, hex-encoded - sourced by actually hashing the real
+ * upstream bytes at authoring time (never fabricated: rule 4, fail closed). A curated model IS a
+ * fixed, project-controlled set (unlike an arbitrary browsed repo), so unlike Hugging Face's ETags
+ * (which are not stable content hashes) this value is checkable. Left `null` only when a genuine
+ * hash could not be sourced for that file - the downloader then skips verification for it rather
+ * than pretending to have checked something it didn't.
+ */
 data class BuiltInFile(
     val repoPath: String,
     val localName: String,
+    val sha256: String? = null,
 )
 
 data class BuiltInModel(
@@ -43,6 +53,7 @@ data class BuiltInModel(
                 url = HfEndpoints.resolveUrl(repoId, revision, file.repoPath),
                 relativePath = file.localName,
                 sizeBytes = null,
+                expectedSha256 = file.sha256,
             )
         }
 }

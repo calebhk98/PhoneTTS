@@ -21,6 +21,7 @@ import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
 import com.phonetts.core.resolver.SelectableEngine
+import com.phonetts.core.session.SessionStateStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -64,9 +65,26 @@ import kotlinx.coroutines.withContext
  * NOTE for whoever wires this next: [benchmarkHistory] and [deviceName] default to "not available"
  * so this class stays constructible exactly as it was before this feature (no other file needed to
  * change). To actually surface MEASURED (not just predicted) RTF here, the call site
- * (`MainActivity.kt`'s `ModelManagementViewModel(...)` initializer) should pass
+ * (`VoicesHubScreen.kt`'s `DownloadedTabContent`, which builds this class) should pass
  * `graph.benchmarkHistory` and `graph.deviceName` - both already exist on `AppGraph` for the
  * Benchmark screen, so no `AppGraph` change is needed, only that one call site.
+ *
+ * Issue #131 follow-up: [sessionState] (null by default, same fail-open-to-"not wired" rationale as
+ * [benchmarkHistory] above) is where this screen's sort key/direction, name query, and
+ * origin/engine/size filters are seeded from at construction ([initialUiState]) and written back to
+ * on every change (see each setter's [persistManage] call). Before this, [SessionStateStore.manage]
+ * existed and was faithfully unit-tested in isolation, but nothing in `:app` ever called it or
+ * [SessionStateStore.updateManage] - the exact "built but never wired" defect this issue tracks (see
+ * [SessionStateStore]'s own kdoc). A restored value this build no longer understands (a sort key
+ * that was renamed, an engine that was uninstalled) is DROPPED in favor of the default rather than
+ * applied blind - see [restoreSortKey]/[restoreEngineFilter] - so a stale document can never leave
+ * the screen crashed or filtered down to nothing with no visible way out.
+ *
+ * EXTERNAL WIRING REQUIRED: [sessionState] defaults to `null` so every existing call site (including
+ * plain unit tests constructing this class directly) keeps compiling unchanged. The one real call
+ * site, `VoicesHubScreen.kt`'s `DownloadedTabContent` (the `app/ui/nav` package, owned by another
+ * in-flight change), needs one added line to actually persist anything on device:
+ * `sessionState = graph.sessionState` in its `ModelManagementViewModel(...)` initializer.
  */
 class ModelManagementViewModel(
     private val modelManager: ModelManager,
@@ -78,6 +96,10 @@ class ModelManagementViewModel(
     private val totalRamBytes: () -> Long = availableRamBytes,
     private val benchmarkHistory: BenchmarkHistory? = null,
     private val deviceName: String = "",
+    // Issue #131: persists sort/query/filters across process death. Null (the default) means "not
+    // wired at this call site" - the screen behaves exactly as it did before this feature, same
+    // fail-open rationale as [benchmarkHistory]/[deviceName] above. See the class kdoc NOTE.
+    private val sessionState: SessionStateStore? = null,
 ) : ViewModel() {
     data class UiState(
         val usage: List<ModelUsage> = emptyList(),
@@ -90,16 +112,24 @@ class ModelManagementViewModel(
         val availableRamBytes: Long = 0L,
         /** This device's TOTAL RAM - the only figure [com.phonetts.core.model.DeviceRamFit] checks. */
         val totalRamBytes: Long = 0L,
-        val deletingId: String? = null,
+        /** modelIds currently being deleted (issue: single-slot progress state) - a Set, not a single
+         * nullable slot, so deleting two rows in quick succession shows a spinner on BOTH until each
+         * one's own delete finishes, instead of the second overwriting the first and whichever
+         * finishes first clearing the spinner for the other still-mid-delete row. Mirrors
+         * [com.phonetts.app.hf.HfBrowseViewModel]'s `queuedDownloadIds`, which already models
+         * concurrent per-id state correctly. */
+        val deletingIds: Set<String> = emptySet(),
         val error: String? = null,
         /** Downloaded bundles no engine claimed (issue #8) - each offers a manual engine picker. */
         val unresolved: List<UnresolvedModelUsage> = emptyList(),
-        val deletingUnresolvedId: String? = null,
+        /** bundleIds of unresolved bundles currently being deleted - see [deletingIds]'s kdoc. */
+        val deletingUnresolvedIds: Set<String> = emptySet(),
         /** Engines a manual pick can offer for an unresolved bundle - the same registered set the
          * resolver's auto-detection already checks (SSOT: no engine name is hardcoded in the UI). */
         val selectableEngines: List<SelectableEngine> = emptyList(),
-        /** bundleId currently being assigned an engine, so its row shows a spinner, not the picker. */
-        val assigningUnresolvedId: String? = null,
+        /** bundleIds currently being assigned an engine, so their rows show a spinner, not the picker -
+         * see [deletingIds]'s kdoc. */
+        val assigningUnresolvedIds: Set<String> = emptySet(),
         /** Where models are stored right now (issue #4/#5) - the app-private default or a picked folder. */
         val storageDescription: String = "",
         /** Feedback from the last storage-location action (folder picked / rejected / reset). */
@@ -125,11 +155,86 @@ class ModelManagementViewModel(
             get() = usage.map { it.descriptor.engineId }.distinct().sorted()
     }
 
-    private val mutableState = MutableStateFlow(UiState())
+    private val mutableState = MutableStateFlow(initialUiState())
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
     init {
         refresh()
+    }
+
+    /**
+     * The sort/query/filters this screen starts with (issue #131) - restored from
+     * [SessionStateStore.manage] when [sessionState] is wired, validated against the models actually
+     * on disk RIGHT NOW so a stale document can never resurrect a choice that no longer makes sense
+     * (rule 4's fail-closed spirit applied to persistence, not just model detection). [sessionState]
+     * being `null` (no call site wired yet) or the document being empty (first-ever launch) both
+     * fall through to [UiState]'s ordinary defaults.
+     */
+    private fun initialUiState(): UiState {
+        val saved = sessionState?.manage() ?: return UiState()
+        val knownEngineIds = modelManager.usage().map { it.descriptor.engineId }.toSet()
+        return UiState(
+            sort = ManagedSort(key = restoreSortKey(saved.sortKey), ascending = saved.ascending),
+            query = saved.query,
+            originFilter = restoreOrigin(saved.filters[FILTER_ORIGIN]),
+            engineFilter = restoreEngineFilter(saved.filters[FILTER_ENGINE], knownEngineIds),
+            minSizeBytes = saved.filters[FILTER_MIN_SIZE]?.toLongOrNull(),
+            maxSizeBytes = saved.filters[FILTER_MAX_SIZE]?.toLongOrNull(),
+        )
+    }
+
+    // A sort key this build no longer has (an enum value renamed/removed) falls back to the default
+    // rather than crashing ManagedSortKey.valueOf or silently sorting by a null key.
+    private fun restoreSortKey(raw: String?): SortKey = SortKey.entries.find { it.name == raw } ?: Sort.DEFAULT.key
+
+    // Same fail-closed rule for Origin - a persisted name this build's Origin enum no longer has
+    // (or nothing ever saved) just means "no restriction", never a crash.
+    private fun restoreOrigin(raw: String?): Origin? = raw?.let { name -> Origin.entries.find { it.name == name } }
+
+    // The one filter that can genuinely go stale in a way that traps the user: a specific engine id
+    // saved from a model that has since been deleted/uninstalled. Falls back to [ManagedEngineFilter.All]
+    // rather than leaving the list showing zero rows with no visible way to reset it.
+    private fun restoreEngineFilter(
+        raw: String?,
+        knownEngineIds: Set<String>,
+    ): ManagedEngineFilter {
+        if (raw == null) return ManagedEngineFilter.All
+        if (raw == FILTER_ENGINE_NO_ENGINE) return ManagedEngineFilter.NoEngine
+        val id = raw.removePrefix(FILTER_ENGINE_SPECIFIC_PREFIX)
+        val isSpecific = raw.startsWith(FILTER_ENGINE_SPECIFIC_PREFIX) && id in knownEngineIds
+        return if (isSpecific) ManagedEngineFilter.Specific(id) else ManagedEngineFilter.All
+    }
+
+    // Mirrors the just-updated [mutableState] into [sessionState] (issue #131) - called from every
+    // setter below so a process death never has to catch up on more than the one change just made.
+    // A no-op (besides the read) when [sessionState] is null, matching every other optional wiring
+    // in this class.
+    private fun persistManage() {
+        val current = mutableState.value
+        sessionState?.updateManage {
+            it.copy(
+                sortKey = current.sort.key.name,
+                ascending = current.sort.ascending,
+                query = current.query,
+                filters = manageFilters(current),
+            )
+        }
+    }
+
+    // Encodes the origin/engine/size filters as the plain string map ListViewSession carries (issue
+    // #131) - a key is simply omitted when that filter is at its default, so an old persisted
+    // document with fewer keys than a newer build's UiState still round-trips cleanly.
+    private fun manageFilters(state: UiState): Map<String, String> {
+        val map = mutableMapOf<String, String>()
+        state.originFilter?.let { map[FILTER_ORIGIN] = it.name }
+        when (val engine = state.engineFilter) {
+            is ManagedEngineFilter.All -> Unit
+            is ManagedEngineFilter.NoEngine -> map[FILTER_ENGINE] = FILTER_ENGINE_NO_ENGINE
+            is ManagedEngineFilter.Specific -> map[FILTER_ENGINE] = FILTER_ENGINE_SPECIFIC_PREFIX + engine.engineId
+        }
+        state.minSizeBytes?.let { map[FILTER_MIN_SIZE] = it.toString() }
+        state.maxSizeBytes?.let { map[FILTER_MAX_SIZE] = it.toString() }
+        return map
     }
 
     /** Re-read the catalog + sizes + RAM estimates - call after a delete, or when the screen shows. */
@@ -181,13 +286,13 @@ class ModelManagementViewModel(
     }
 
     fun delete(modelId: String) {
-        mutableState.update { it.copy(deletingId = modelId, error = null) }
+        mutableState.update { it.copy(deletingIds = it.deletingIds + modelId, error = null) }
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { modelManager.remove(modelId) } }
-                .onSuccess { mutableState.update { it.copy(deletingId = null) } }
+                .onSuccess { mutableState.update { it.copy(deletingIds = it.deletingIds - modelId) } }
                 .onFailure { e ->
                     val error = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
-                    mutableState.update { it.copy(deletingId = null, error = error) }
+                    mutableState.update { it.copy(deletingIds = it.deletingIds - modelId, error = error) }
                 }
             refresh()
         }
@@ -195,13 +300,15 @@ class ModelManagementViewModel(
 
     /** Delete an unidentified bundle's files (issue #8) - the user reclaiming space on a dead download. */
     fun deleteUnresolved(bundleId: String) {
-        mutableState.update { it.copy(deletingUnresolvedId = bundleId, error = null) }
+        mutableState.update { it.copy(deletingUnresolvedIds = it.deletingUnresolvedIds + bundleId, error = null) }
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { modelManager.removeUnresolved(bundleId) } }
-                .onSuccess { mutableState.update { it.copy(deletingUnresolvedId = null) } }
+                .onSuccess { mutableState.update { it.copy(deletingUnresolvedIds = it.deletingUnresolvedIds - bundleId) } }
                 .onFailure { e ->
                     val error = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
-                    mutableState.update { it.copy(deletingUnresolvedId = null, error = error) }
+                    mutableState.update {
+                        it.copy(deletingUnresolvedIds = it.deletingUnresolvedIds - bundleId, error = error)
+                    }
                 }
             refresh()
         }
@@ -220,13 +327,15 @@ class ModelManagementViewModel(
         bundleId: String,
         engineId: String,
     ) {
-        mutableState.update { it.copy(assigningUnresolvedId = bundleId, error = null) }
+        mutableState.update { it.copy(assigningUnresolvedIds = it.assigningUnresolvedIds + bundleId, error = null) }
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { modelManager.assignEngine(bundleId, engineId) } }
-                .onSuccess { mutableState.update { it.copy(assigningUnresolvedId = null) } }
+                .onSuccess { mutableState.update { it.copy(assigningUnresolvedIds = it.assigningUnresolvedIds - bundleId) } }
                 .onFailure { e ->
                     val error = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
-                    mutableState.update { it.copy(assigningUnresolvedId = null, error = error) }
+                    mutableState.update {
+                        it.copy(assigningUnresolvedIds = it.assigningUnresolvedIds - bundleId, error = error)
+                    }
                 }
             refresh()
         }
@@ -276,28 +385,33 @@ class ModelManagementViewModel(
     /** Choose which field the downloaded-models list is sorted by (issue #115). */
     fun setSortKey(key: SortKey) {
         mutableState.update { it.copy(sort = it.sort.copy(key = key)) }
+        persistManage()
     }
 
     /** Flip the sort between ascending and descending (issue #115). */
     fun toggleSortDirection() {
         mutableState.update { it.copy(sort = it.sort.copy(ascending = !it.sort.ascending)) }
+        persistManage()
     }
 
     /** Update the name filter applied to the downloaded-models list (issue #115). */
     fun setQuery(query: String) {
         mutableState.update { it.copy(query = query) }
+        persistManage()
     }
 
     /** Restrict the downloaded-models list to one [Origin], or null to clear (issue: downloaded
      * models has only a name filter). */
     fun setOriginFilter(origin: Origin?) {
         mutableState.update { it.copy(originFilter = origin) }
+        persistManage()
     }
 
     /** Restrict the downloaded-models list to one engine, "No engine", or [ManagedEngineFilter.All]
      * (issue: downloaded models has only a name filter). */
     fun setEngineFilter(filter: ManagedEngineFilter) {
         mutableState.update { it.copy(engineFilter = filter) }
+        persistManage()
     }
 
     /** Apply a min/max on-disk size bound (bytes; either may be null) to the downloaded-models list
@@ -307,6 +421,7 @@ class ModelManagementViewModel(
         maxSizeBytes: Long?,
     ) {
         mutableState.update { it.copy(minSizeBytes = minSizeBytes, maxSizeBytes = maxSizeBytes) }
+        persistManage()
     }
 
     /** Clear the origin/engine/size filters (name filter and sort are untouched). */
@@ -314,6 +429,7 @@ class ModelManagementViewModel(
         mutableState.update {
             it.copy(originFilter = null, engineFilter = ManagedEngineFilter.All, minSizeBytes = null, maxSizeBytes = null)
         }
+        persistManage()
     }
 
     companion object {
@@ -337,6 +453,16 @@ class ModelManagementViewModel(
                 )
             return ManagedModelListView.visible(entries, state.factsByModelId, state.sort, filter)
         }
+
+        // Persisted-filter map keys (issue #131) - see [manageFilters]/[initialUiState]. Plain string
+        // keys into the session store's ListViewSession.filters map, matching the "screen-specific
+        // filters need no schema change" contract that map already documents.
+        private const val FILTER_ORIGIN = "origin"
+        private const val FILTER_ENGINE = "engine"
+        private const val FILTER_MIN_SIZE = "minSize"
+        private const val FILTER_MAX_SIZE = "maxSize"
+        private const val FILTER_ENGINE_NO_ENGINE = "no-engine"
+        private const val FILTER_ENGINE_SPECIFIC_PREFIX = "specific:"
     }
 }
 

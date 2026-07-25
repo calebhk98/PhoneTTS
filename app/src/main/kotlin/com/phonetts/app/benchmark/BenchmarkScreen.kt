@@ -30,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -200,6 +202,10 @@ private fun TableRow(row: BenchmarkViewModel.Row) {
     )
 }
 
+// mergeDescendants = true (issue #141 rule 3): eight narrow numeric cells would otherwise be eight
+// separate, hard-to-follow TalkBack stops per row; a spelled-out contentDescription (units and column
+// meaning included, since the on-screen cell text alone - "0.45" - says nothing out loud) replaces
+// them with one stop that reads like a sentence, for both the header and each data row.
 @Composable
 private fun TableRow(
     model: String,
@@ -214,7 +220,12 @@ private fun TableRow(
 ) {
     val weight = if (header) FontWeight.Bold else FontWeight.Normal
     Row(
-        modifier = Modifier.padding(vertical = 6.dp),
+        modifier =
+            Modifier
+                .padding(vertical = 6.dp)
+                .semantics(mergeDescendants = true) {
+                    contentDescription = tableRowContentDescription(header, model, rtf, audio, gen, ttfa, load, ramUsed, estRam)
+                },
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Cell(model, MODEL_COL_WIDTH, weight)
@@ -228,18 +239,44 @@ private fun TableRow(
     }
 }
 
+private fun tableRowContentDescription(
+    header: Boolean,
+    model: String,
+    rtf: String,
+    audio: String,
+    gen: String,
+    ttfa: String,
+    load: String,
+    ramUsed: String,
+    estRam: String,
+): String =
+    if (header) {
+        "Table header: model, RTF, audio seconds, generation seconds, time to first audio seconds, " +
+            "load seconds, RAM used, estimated RAM"
+    } else {
+        "$model: RTF $rtf, audio $audio seconds, generation $gen seconds, time to first audio $ttfa seconds, " +
+            "load $load seconds, RAM used $ramUsed, estimated RAM $estRam"
+    }
+
 // A failed model: name in the first column, then the captured reason (crash message, or the
 // implausible-output note) spanning the remaining columns instead of a wall of dashes, so the user
 // can tell a crash from an OOM from a wrong-language model at a glance (issues #110, benchmark 0.06s).
+//
+// mergeDescendants = true (issue #141 rule 3): a bare table row would otherwise read as two separate
+// TalkBack stops ("KittenTTS", then, out of context, "failed: OOM") - merged, it announces as one.
 @Composable
 private fun FailedRow(row: BenchmarkViewModel.Row) {
+    val reason = "failed" + (row.error?.let { ": $it" } ?: "")
     Row(
-        modifier = Modifier.padding(vertical = 6.dp),
+        modifier =
+            Modifier
+                .padding(vertical = 6.dp)
+                .semantics(mergeDescendants = true) { contentDescription = "${row.displayName}: $reason" },
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Cell(row.displayName, MODEL_COL_WIDTH, FontWeight.Normal)
         Text(
-            "failed" + (row.error?.let { ": $it" } ?: ""),
+            reason,
             modifier = Modifier.width(NUM_COL_WIDTH * FAILED_REASON_COLUMNS),
             color = MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodyMedium,

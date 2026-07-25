@@ -349,6 +349,17 @@ class AppGraph(context: Context) {
     // display names/extensions/MIME from here - no format string is hardcoded in the UI (SSOT).
     val exportFormats = ExportFormats.available(appContext)
 
+    // Drives the actual folder rescan behind [hydrate] (issue: overlapping catalog hydration races).
+    // Retains the launched Job (cancelling any prior one before starting a new one) and serializes
+    // the scan body behind a Mutex, so a stale scan of an OLD models folder can never write catalog
+    // entries after a newer [relocateStorage]'s `catalog.clear()` - see [CatalogHydrator]'s own kdoc.
+    private val catalogHydrator =
+        CatalogHydrator(
+            scope = appScope,
+            folders = { modelsBaseDir().resolve(ModelStorage.MODELS_DIR).listFiles()?.filter { it.isDirectory } ?: emptyList() },
+            importFolder = { path -> importer.import(path) },
+        )
+
     /**
      * Re-import previously downloaded/sideloaded model folders so the catalog is repopulated on
      * every launch (a saved override makes each re-resolve fast). Best-effort per folder - a
@@ -364,12 +375,10 @@ class AppGraph(context: Context) {
         // large library can't stall the first frame for many seconds at launch: the catalog bumps its
         // revision as each model lands, and the home screen (TtsViewModel) re-reads the list on that
         // signal, so models appear as they resolve instead of the UI blocking on the whole scan. The
-        // catalog is @Synchronized, so background mutation is safe.
-        appScope.launch(Dispatchers.IO) {
-            val modelsDir = modelsBaseDir().resolve(ModelStorage.MODELS_DIR)
-            val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
-            folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
-        }
+        // catalog is @Synchronized, so background mutation is safe. [catalogHydrator] retains the Job
+        // and cancels any prior scan first, so calling this again (e.g. from [relocateStorage]) can't
+        // race a still-running earlier scan.
+        catalogHydrator.rescan()
         registerBuiltInDescriptors()
     }
 
