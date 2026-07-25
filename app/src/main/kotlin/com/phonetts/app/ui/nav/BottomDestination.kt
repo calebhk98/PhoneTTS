@@ -1,8 +1,8 @@
 package com.phonetts.app.ui.nav
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.LibraryBooks
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -26,7 +26,7 @@ import com.phonetts.app.Screen
  */
 enum class BottomDestination(val label: String, val icon: ImageVector, val screen: Screen) {
     HOME("Home", Icons.Filled.AutoStories, Screen.MAIN),
-    LIBRARY("Library", Icons.Filled.LibraryBooks, Screen.LIBRARY),
+    LIBRARY("Library", Icons.AutoMirrored.Filled.LibraryBooks, Screen.LIBRARY),
     VOICES("Voices", Icons.Filled.RecordVoiceOver, Screen.VOICES),
     SETTINGS("Settings", Icons.Filled.Settings, Screen.SETTINGS),
 }

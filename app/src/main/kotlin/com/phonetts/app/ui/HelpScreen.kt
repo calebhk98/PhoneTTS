@@ -5,23 +5,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,33 +21,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.builtin.BuiltInCatalog
-import com.phonetts.core.prefs.AppTheme
-import com.phonetts.core.update.ApkDownloadState
-import com.phonetts.core.update.UpdateStatus
 
 /**
  * In-app help: how to add a voice model, which recommended models exist (read from
  * [BuiltInCatalog] so this can never drift from the actual one-tap list), what a bring-your-own
- * model needs per engine, and troubleshooting. Pure guidance UI - it names no model fact that
- * drives another control; the recommended list is the single source of truth it derives from.
+ * model needs per engine, and troubleshooting - plus the durable error log and a way back into the
+ * first-run walkthrough. Pure guidance UI: no stateful preference lives here anymore - the theme
+ * picker and "About & updates" moved to Settings, since a stateful control doesn't belong on a help
+ * page. It names no model fact that drives another control; the recommended list is the single
+ * source of truth it derives from.
  */
 @Composable
 fun HelpScreen(
-    currentVersion: String,
-    update: UpdateStatus?,
-    updateDownload: ApkDownloadState,
-    checkStatus: String?,
-    onCheckForUpdates: () -> Unit,
-    onDownloadUpdate: () -> Unit,
-    onCancelUpdateDownload: () -> Unit,
-    repoUrl: String,
-    currentTheme: AppTheme,
-    onThemeSelected: (AppTheme) -> Unit,
     // The durable error log's rows, newest-first, already formatted to one line each (see
     // MainActivity). Surfaced here (issue #109) so the user has a copyable "why" when a model - e.g. a
     // LiteRT .tflite - fails to load or run, or the app itself crashed (each such row is tagged
@@ -65,28 +46,19 @@ fun HelpScreen(
     // Forgets every recorded error/crash (durableErrorLog.clear()). Defaults to a no-op so this screen
     // still compiles/previews standalone; MainActivity wires the real store.
     onClearErrorLog: () -> Unit = {},
+    // Replays the first-run walkthrough on demand (onboarding itself stays a first-run-only flow,
+    // not a nav destination - this is its one other entry point). Defaults to a no-op so this screen
+    // still compiles/previews standalone.
+    onReplayTutorial: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        UpdatesSection(
-            currentVersion = currentVersion,
-            update = update,
-            updateDownload = updateDownload,
-            checkStatus = checkStatus,
-            onCheckForUpdates = onCheckForUpdates,
-            onDownloadUpdate = onDownloadUpdate,
-            onCancelUpdateDownload = onCancelUpdateDownload,
-            repoUrl = repoUrl,
-        )
-
-        ThemeSection(currentTheme, onThemeSelected)
-
         Section("Getting a voice") {
-            Bullet("Tap Browse models → the Recommended (one-tap) section for a working voice in one tap.")
-            Bullet("Or search Hugging Face in Browse models and tap Download on a result.")
-            Bullet("Or Sideload folder to add a model you already copied onto the phone.")
+            Bullet("Tap Voices → Browse → the Recommended (one-tap) section for a working voice in one tap.")
+            Bullet("Or search Hugging Face in Voices → Browse and tap Download on a result.")
+            Bullet("Or use \"Add model\" on Voices → Downloaded to import a model you already copied onto the phone.")
             Bullet("Everything after the download runs fully offline - no network is used to speak.")
         }
 
@@ -147,7 +119,12 @@ fun HelpScreen(
                 "It asked me to pick an engine?",
                 "It couldn't identify the model - pick the matching engine; it's remembered.",
             )
-            Q("Freeing space?", "Manage models shows each model's size and lets you delete it.")
+            Q("Freeing space?", "Voices → Downloaded shows each model's size and lets you delete it.")
+        }
+
+        Section("Tutorial") {
+            Body("Replay the first-run walkthrough - the same one shown the first time the app was opened.")
+            OutlinedButton(onClick = onReplayTutorial) { Text("Replay tutorial") }
         }
     }
 }
@@ -225,71 +202,6 @@ private fun ErrorLogDialog(
             }
         },
     )
-}
-
-// Version + a manual update check. The app also checks automatically at launch (silent unless a
-// newer build exists); this button lets the user re-check on demand and always gives feedback -
-// "Up to date (v…)", a download offer, or a note when the check couldn't reach GitHub. Installing is
-// always the user's choice (offer, never force): the download runs in-app with visible progress and
-// the OS installer is the final gate - see UpdateActions, which the Home banner shares.
-@Composable
-private fun UpdatesSection(
-    currentVersion: String,
-    update: UpdateStatus?,
-    updateDownload: ApkDownloadState,
-    checkStatus: String?,
-    onCheckForUpdates: () -> Unit,
-    onDownloadUpdate: () -> Unit,
-    onCancelUpdateDownload: () -> Unit,
-    repoUrl: String,
-) {
-    val uriHandler = LocalUriHandler.current
-    Section("About & updates") {
-        Body("Version $currentVersion")
-        OutlinedButton(onClick = onCheckForUpdates) { Text("Check for updates") }
-        update?.let { available ->
-            UpdateActions(available, updateDownload, onDownloadUpdate, onCancelUpdateDownload)
-        }
-        OutlinedButton(onClick = { uriHandler.openUri(repoUrl) }) { Text("View on GitHub") }
-        checkStatus?.let { Body(it) }
-    }
-}
-
-// The reading-friendly theme picker (issue #12: a dropdown, not one radio row per theme). Options
-// are derived from AppTheme.entries and labeled by AppTheme.displayName (SSOT: the enum is the
-// single authority for which themes exist and what they're called), so adding a scheme needs no
-// edit here.
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ThemeSection(
-    currentTheme: AppTheme,
-    onThemeSelected: (AppTheme) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Section("Appearance") {
-        Body("Pick a color theme - sepia and true-black are tuned for long reading / OLED battery.")
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-            TextField(
-                value = currentTheme.displayName,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Theme") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-            )
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                AppTheme.entries.forEach { theme ->
-                    DropdownMenuItem(
-                        text = { Text(theme.displayName) },
-                        onClick = {
-                            onThemeSelected(theme)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-        }
-    }
 }
 
 @Composable

@@ -23,9 +23,13 @@ import com.phonetts.app.ui.MixVoicesScreen
 import com.phonetts.app.ui.MixVoicesViewModel
 import com.phonetts.app.ui.OnboardingScreen
 import com.phonetts.app.ui.SettingsScreen
+import com.phonetts.app.ui.SettingsUpdateActions
+import com.phonetts.app.ui.SettingsUpdateInfo
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
+import com.phonetts.app.ui.nav.VoicesHubScreen
+import com.phonetts.app.ui.nav.VoicesTab
 import com.phonetts.app.ui.theme.PhoneTtsTheme
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.prefs.AppTheme
@@ -153,35 +157,47 @@ class ScreenSmokeTest {
             Screen.COMPARE to {
                 CompareScreen(CompareViewModel(graph, initialText = ""))
             },
-            Screen.STATS to {
-                StatsScreen(
-                    StatsViewModel(
-                        usageStats = graph.usageStatsStore,
-                        modelManager = graph.modelManager,
-                        resourceUsageStore = graph.resourceUsageStore,
-                        benchmarkHistory = graph.benchmarkHistory,
-                        favoritesStore = graph.favoritesStore,
-                        downloadDiagnosticsLog = graph.hfDownloader.diagnosticsLog,
-                        deviceName = graph.deviceName,
-                    ),
+            // Selected tab is Downloaded (not Browse): Browse's real HfBrowseViewModel triggers a
+            // network search from its init{} (best-effort/runCatching, but still real DNS/HTTP -
+            // Screen.BROWSE's own renderer above deliberately avoids that with an offline
+            // ViewModel). Downloaded/Mix/Compare are all network-free, and this still exercises the
+            // hub's own scaffold + SecondaryTabRow that Screen.BROWSE/MANAGE/MIX/COMPARE's individual
+            // renderers don't touch.
+            Screen.VOICES to {
+                VoicesHubScreen(
+                    graph = graph,
+                    ttsViewModel = ttsViewModel,
+                    selectedTab = VoicesTab.DOWNLOADED,
+                    onSelectTab = {},
                 )
             },
             Screen.SETTINGS to {
-                SettingsScreen(ttsViewModel)
+                SettingsScreen(
+                    viewModel = ttsViewModel,
+                    updateInfo =
+                        SettingsUpdateInfo(
+                            currentVersion = "test",
+                            update = null,
+                            updateDownload = ApkDownloadState.Idle,
+                            checkStatus = null,
+                            repoUrl = "https://example.invalid/owner/repo",
+                        ),
+                    updateActions =
+                        SettingsUpdateActions(
+                            onCheckForUpdates = {},
+                            onDownloadUpdate = {},
+                            onCancelUpdateDownload = {},
+                        ),
+                    currentTheme = AppTheme.SYSTEM,
+                    onThemeSelected = {},
+                    onNavigateRow = {},
+                )
             },
             Screen.HELP to {
                 HelpScreen(
-                    currentVersion = "test",
-                    update = null,
-                    updateDownload = ApkDownloadState.Idle,
-                    checkStatus = null,
-                    onCheckForUpdates = {},
-                    onDownloadUpdate = {},
-                    onCancelUpdateDownload = {},
-                    repoUrl = "https://example.invalid/owner/repo",
-                    currentTheme = AppTheme.SYSTEM,
-                    onThemeSelected = {},
                     errorLogEntries = emptyList(),
+                    onClearErrorLog = {},
+                    onReplayTutorial = {},
                 )
             },
         )

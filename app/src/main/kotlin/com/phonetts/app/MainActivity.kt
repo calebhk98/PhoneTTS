@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,13 +19,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.phonetts.app.playback.PlaybackService
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import android.net.ConnectivityManager
-import android.net.Network
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -35,40 +34,41 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.phonetts.app.benchmark.BenchmarkScreen
 import com.phonetts.app.benchmark.BenchmarkViewModel
-import com.phonetts.app.compare.CompareScreen
-import com.phonetts.app.compare.CompareViewModel
-import com.phonetts.app.device.DeviceInfo
-import com.phonetts.app.hf.DownloadNotifier
-import com.phonetts.app.hf.HfBrowseScreen
-import com.phonetts.app.hf.HfBrowseViewModel
 import com.phonetts.app.library.ReadingLibraryScreen
 import com.phonetts.app.library.ReadingLibraryViewModel
-import com.phonetts.app.manage.ModelManagementScreen
-import com.phonetts.app.manage.ModelManagementViewModel
 import com.phonetts.app.stats.StatsScreen
 import com.phonetts.app.stats.StatsViewModel
 import com.phonetts.app.ui.HelpScreen
-import com.phonetts.app.ui.MixVoicesScreen
-import com.phonetts.app.ui.MixVoicesViewModel
-import com.phonetts.app.ui.NavAction
-import com.phonetts.app.ui.NavDrawerScaffold
 import com.phonetts.app.ui.OnboardingScreen
 import com.phonetts.app.ui.SettingsScreen
+import com.phonetts.app.ui.SettingsUpdateActions
+import com.phonetts.app.ui.SettingsUpdateInfo
 import com.phonetts.app.ui.SleepTimerHandle
 import com.phonetts.app.ui.TtsScreen
 import com.phonetts.app.ui.TtsViewModel
+import com.phonetts.app.ui.nav.AppNavigationBar
+import com.phonetts.app.ui.nav.SimpleScaffold
+import com.phonetts.app.ui.nav.VoicesHubScreen
+import com.phonetts.app.ui.nav.VoicesTab
+import com.phonetts.app.ui.nav.voicesTabFor
 import com.phonetts.app.ui.theme.PhoneTtsTheme
 import com.phonetts.core.prefs.AppTheme
 
-// Not private: shared with NavDrawerScaffold (app/ui), which every sub-page uses to list every
-// destination in its own hamburger drawer (issue #1) - the same enum TtsScreen's drawer navigates.
-enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE, SETTINGS, STATS }
+/**
+ * Every screen in the app. The navigation model derived from this enum lives in
+ * `com.phonetts.app.ui.nav` (see [com.phonetts.app.ui.nav.BottomDestination],
+ * [com.phonetts.app.ui.nav.VoicesTab], [com.phonetts.app.ui.nav.SettingsRow]) rather than a single
+ * hamburger drawer list: MAIN/LIBRARY/VOICES/SETTINGS are the 4 bottom-nav places; BROWSE/MANAGE/
+ * MIX/COMPARE are tabs inside the Voices hub; STATS/BENCHMARK/HELP are rows under Settings;
+ * ONBOARDING is a first-run-only flow, never a nav destination. [NavigationReachabilityTest] (app
+ * test sources) guards every value here against becoming unreachable.
+ */
+enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE, SETTINGS, STATS, VOICES }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -231,6 +231,13 @@ private fun PlaybackService.LocalBinder?.toSleepTimerHandle(): SleepTimerHandle 
     }
 }
 
+/**
+ * The app's whole navigation state: which [Screen] is current, and (only meaningful while on
+ * [Screen.VOICES]) which [VoicesTab] the hub is showing. Onboarding is a special case rendered
+ * full-bleed with no bottom nav at all, exactly as before; everything else sits inside one
+ * [Scaffold] whose `bottomBar` is the always-present [AppNavigationBar] (native IA: a bottom nav
+ * bar for 3-5 places, never a hamburger drawer - see `com.phonetts.app.ui.nav.BottomDestination`).
+ */
 @Composable
 private fun AppNav(
     graph: AppGraph,
@@ -245,6 +252,7 @@ private fun AppNav(
     var screen by remember {
         mutableStateOf(if (graph.onboardingState.hasSeenOnboarding()) Screen.MAIN else Screen.ONBOARDING)
     }
+    var voicesTab by remember { mutableStateOf(VoicesTab.BROWSE) }
     val binder by binderState
 
     // Load shared/handed-in text into the reader once, when the activity was opened via a share.
@@ -252,223 +260,200 @@ private fun AppNav(
         sharedText?.let(ttsViewModel::setText)
     }
 
-    when (screen) {
-        Screen.ONBOARDING ->
-            OnboardingScreen(
-                onFinish = {
-                    graph.onboardingState.markSeen()
-                    screen = Screen.MAIN
-                },
+    if (screen == Screen.ONBOARDING) {
+        OnboardingScreen(
+            onFinish = {
+                graph.onboardingState.markSeen()
+                screen = Screen.MAIN
+            },
+        )
+        return
+    }
+
+    // Every navigation request goes through here. A request for one of the Voices hub's own
+    // screens (Browse/Manage/Mix/Compare) opens the hub on that tab instead of treating it as a
+    // standalone destination - "which voice do I use" is one place, not four.
+    val navigateTo: (Screen) -> Unit = { target ->
+        val tab = voicesTabFor(target)
+        if (tab != null) {
+            voicesTab = tab
+            screen = Screen.VOICES
+        } else {
+            screen = target
+        }
+    }
+
+    Scaffold(
+        bottomBar = { AppNavigationBar(current = screen, onSelect = navigateTo) },
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            AppNavContent(
+                screen = screen,
+                voicesTab = voicesTab,
+                graph = graph,
+                ttsViewModel = ttsViewModel,
+                binder = binder,
+                theme = theme,
+                onThemeSelected = onThemeSelected,
+                onNavigate = navigateTo,
+                onSelectVoicesTab = { voicesTab = it },
+                onBackToSettings = { screen = Screen.SETTINGS },
             )
-        Screen.MAIN ->
-            TtsScreen(
-                viewModel = ttsViewModel,
-                onNavigate = { screen = it },
-                appVersion = BuildConfig.VERSION_NAME,
-                sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
-            )
-        Screen.BROWSE -> {
-            val hfViewModel: HfBrowseViewModel =
-                viewModel(
-                    factory =
-                        viewModelFactory {
-                            initializer {
-                                HfBrowseViewModel(
-                                    graph.hfCatalog,
-                                    graph.hfDownloader,
-                                    graph.catalog,
-                                    isRuntimeAvailable = { id -> graph.runtimeRegistry.get(id)?.isAvailable() == true },
-                                    // Turns on the per-download progress notification (#70); null would
-                                    // silently disable it. Uses the app context - no Activity leak.
-                                    notifier = DownloadNotifier(graph.appContext),
-                                    // Feeds the RTF sort/filter (issue: real-time-factor sort) from the
-                                    // SAME persisted history the Benchmarks screen writes to - never a
-                                    // second measurement path.
-                                    benchmarkHistory = graph.benchmarkHistory,
-                                    // The registered engine ids feed the Browse "Engine type" filter
-                                    // (issue #107); without them the dropdown only offers "Other".
-                                    knownEngineIds = graph.engineRegistry.list().map { it.id },
-                                )
-                            }
-                        },
-                )
-            // Auto-resume interrupted downloads when connectivity returns while Browse is open
-            // (issue #105). Scoped to this screen so the callback is registered only while it matters.
-            DisposableEffect(hfViewModel) {
-                val connectivity = graph.appContext.getSystemService(ConnectivityManager::class.java)
-                val callback =
-                    object : ConnectivityManager.NetworkCallback() {
-                        override fun onAvailable(network: Network) = hfViewModel.onConnectivityAvailable()
-                    }
-                connectivity?.registerDefaultNetworkCallback(callback)
-                onDispose { connectivity?.unregisterNetworkCallback(callback) }
-            }
-            BackScaffold(title = "Browse models", current = Screen.BROWSE, onNavigate = { target ->
-                ttsViewModel.refreshModels() // pick up anything downloaded while browsing
-                screen = target
-            }) { HfBrowseScreen(hfViewModel) }
-        }
-        Screen.MANAGE -> {
-            val manageViewModel: ModelManagementViewModel =
-                viewModel(
-                    factory =
-                        viewModelFactory {
-                            initializer {
-                                ModelManagementViewModel(
-                                    modelManager = graph.modelManager,
-                                    resourceUsage = graph.resourceUsageStore,
-                                    availableRamBytes = graph::availableRamBytes,
-                                    // TOTAL ram, not free - the only figure that decides whether a
-                                    // model can physically fit (DeviceRamFit); AppGraph itself is
-                                    // off-limits here, so this calls DeviceInfo directly off its
-                                    // already-public appContext instead of adding a new AppGraph
-                                    // method.
-                                    totalRamBytes = { DeviceInfo.totalRamBytes(graph.appContext) },
-                                    // Enables a MEASURED real-time factor per model (from past
-                                    // benchmarks on this device) instead of only the estimate.
-                                    benchmarkHistory = graph.benchmarkHistory,
-                                    deviceName = graph.deviceName,
-                                )
-                            }
-                        },
-                )
-            BackScaffold(title = "Downloaded models", current = Screen.MANAGE, onNavigate = { target ->
-                ttsViewModel.refreshModels() // a delete removes it from the model dropdown too
-                screen = target
-            }) { ModelManagementScreen(manageViewModel) }
-        }
-        Screen.BENCHMARK -> {
-            val benchmarkViewModel: BenchmarkViewModel =
-                viewModel(factory = viewModelFactory { initializer { BenchmarkViewModel(graph) } })
-            BackScaffold(title = "Benchmarks", current = Screen.BENCHMARK, onNavigate = { screen = it }) {
-                BenchmarkScreen(benchmarkViewModel)
-            }
-        }
-        Screen.MIX -> {
-            val ttsState by ttsViewModel.state.collectAsState()
-            // Not keyed to the main screen's selected model (issue #11) - Mix voices picks its own
-            // model from the whole catalog, so it works even before anything is selected on MAIN.
-            val mixViewModel: MixVoicesViewModel =
-                viewModel(factory = viewModelFactory { initializer { MixVoicesViewModel(graph, ttsState.selected) } })
-            BackScaffold(title = "Mix voices", current = Screen.MIX, onNavigate = { target ->
-                ttsViewModel.refreshModels() // a saved mix may have become selectable
-                screen = target
-            }) { MixVoicesScreen(mixViewModel) }
-        }
-        Screen.LIBRARY -> {
-            val ttsState by ttsViewModel.state.collectAsState()
-            val libraryViewModel: ReadingLibraryViewModel =
-                viewModel(factory = viewModelFactory { initializer { ReadingLibraryViewModel(graph, ttsState.text) } })
-            BackScaffold(title = "Reading library", current = Screen.LIBRARY, onNavigate = { screen = it }) {
-                ReadingLibraryScreen(
-                    viewModel = libraryViewModel,
-                    onOpen = { document, resume ->
-                        // Loads the saved text into the SAME main-screen TtsViewModel the reader
-                        // already uses; setText() itself looks up any saved DocumentMemory position
-                        // for this content-derived id, so "resume" just reuses resumeFromSaved() -
-                        // no second resume mechanism.
-                        ttsViewModel.setText(document.text)
-                        if (resume) ttsViewModel.resumeFromSaved()
-                        screen = Screen.MAIN
-                    },
-                )
-            }
-        }
-        Screen.COMPARE -> {
-            val ttsState by ttsViewModel.state.collectAsState()
-            val compareViewModel: CompareViewModel =
-                viewModel(factory = viewModelFactory { initializer { CompareViewModel(graph, ttsState.text) } })
-            BackScaffold(title = "Compare voices (A/B)", current = Screen.COMPARE, onNavigate = { target ->
-                compareViewModel.stop()
-                screen = target
-            }) { CompareScreen(compareViewModel) }
-        }
-        Screen.SETTINGS -> {
-            BackScaffold(title = "Settings", current = Screen.SETTINGS, onNavigate = { screen = it }) {
-                SettingsScreen(ttsViewModel)
-            }
-        }
-        Screen.STATS -> {
-            val statsViewModel: StatsViewModel =
-                viewModel(
-                    factory =
-                        viewModelFactory {
-                            initializer {
-                                StatsViewModel(
-                                    usageStats = graph.usageStatsStore,
-                                    modelManager = graph.modelManager,
-                                    resourceUsageStore = graph.resourceUsageStore,
-                                    benchmarkHistory = graph.benchmarkHistory,
-                                    favoritesStore = graph.favoritesStore,
-                                    downloadDiagnosticsLog = graph.hfDownloader.diagnosticsLog,
-                                    deviceName = graph.deviceName,
-                                )
-                            }
-                        },
-                )
-            BackScaffold(title = "Stats", current = Screen.STATS, onNavigate = { screen = it }) {
-                StatsScreen(statsViewModel)
-            }
-        }
-        Screen.HELP -> {
-            val ttsState by ttsViewModel.state.collectAsState()
-            BackScaffold(title = "Help", current = Screen.HELP, onNavigate = { screen = it }) {
-                HelpScreen(
-                    currentVersion = BuildConfig.VERSION_NAME,
-                    update = ttsState.update,
-                    updateDownload = ttsState.updateDownload,
-                    checkStatus = ttsState.updateCheckStatus,
-                    onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
-                    onDownloadUpdate = ttsViewModel::downloadUpdate,
-                    onCancelUpdateDownload = ttsViewModel::cancelUpdateDownload,
-                    repoUrl = "https://github.com/${AppGraph.REPO_OWNER}/${AppGraph.REPO_NAME}",
-                    currentTheme = theme,
-                    onThemeSelected = onThemeSelected,
-                    // The durable error log's rows, newest-first, one formatted line each so the user
-                    // has a copyable "why" a model (e.g. a LiteRT .tflite) failed to load or run.
-                    errorLogEntries =
-                        graph.durableErrorLog.entries().map { "[${it.source}] ${it.message}" },
-                    // Crash rows are written by CrashReporter's uncaught-exception handler and read
-                    // back here, so Help's copy/clear actually has something to show after a crash.
-                    onClearErrorLog = { graph.durableErrorLog.clear() },
-                )
-            }
         }
     }
 }
 
-// Every sub-page's topBar: a hamburger drawer (issue #1) listing every destination, so no sub-page
-// strands the user with only a back arrow. [current] is this screen's own [Screen] value so the
-// drawer highlights it; [onNavigate] receives whichever destination the arrow (always MAIN) or the
-// drawer picks, so each call site's own leaving-this-screen cleanup (refreshModels, stop, …) runs
-// no matter which way the user leaves.
+/** The actual per-[Screen] content, split out of [AppNav] purely to keep that function short. */
 @Composable
-private fun BackScaffold(
-    title: String,
-    current: Screen,
+private fun AppNavContent(
+    screen: Screen,
+    voicesTab: VoicesTab,
+    graph: AppGraph,
+    ttsViewModel: TtsViewModel,
+    binder: PlaybackService.LocalBinder?,
+    theme: AppTheme,
+    onThemeSelected: (AppTheme) -> Unit,
     onNavigate: (Screen) -> Unit,
-    content: @Composable () -> Unit,
+    onSelectVoicesTab: (VoicesTab) -> Unit,
+    onBackToSettings: () -> Unit,
 ) {
-    // "Import model from folder" is a drawer entry like any other now, so EVERY screen that uses
-    // this scaffold can start an import - including Downloaded models, where wanting to add a model
-    // is most obvious and where it previously wasn't offered at all. The launcher is owned here so
-    // each screen doesn't need its own.
-    val ttsViewModel: TtsViewModel = viewModel(LocalContext.current as ComponentActivity)
-    val importLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            uri?.let(ttsViewModel::sideloadFolder)
-        }
-    NavDrawerScaffold(
-        title = title,
-        current = current,
-        onNavigate = onNavigate,
-        onBack = { onNavigate(Screen.MAIN) },
-        onAction = { action ->
-            when (action) {
-                NavAction.IMPORT_MODEL_FOLDER -> importLauncher.launch(null)
-            }
-        },
-        appVersion = BuildConfig.VERSION_NAME,
-        content = content,
-    )
+    when (screen) {
+        Screen.MAIN ->
+            TtsScreen(
+                viewModel = ttsViewModel,
+                onNavigate = onNavigate,
+                appVersion = BuildConfig.VERSION_NAME,
+                sleepTimer = remember(binder) { binder.toSleepTimerHandle() },
+            )
+        Screen.LIBRARY -> LibraryDestination(graph, ttsViewModel, onNavigateHome = { onNavigate(Screen.MAIN) })
+        Screen.VOICES ->
+            VoicesHubScreen(
+                graph = graph,
+                ttsViewModel = ttsViewModel,
+                selectedTab = voicesTab,
+                onSelectTab = onSelectVoicesTab,
+            )
+        Screen.SETTINGS -> SettingsDestination(graph, ttsViewModel, theme, onThemeSelected, onNavigate)
+        Screen.STATS -> StatsDestination(graph, onBackToSettings)
+        Screen.BENCHMARK -> BenchmarkDestination(graph, onBackToSettings)
+        Screen.HELP ->
+            HelpDestination(
+                graph = graph,
+                onBack = onBackToSettings,
+                onReplayTutorial = { onNavigate(Screen.ONBOARDING) },
+            )
+        // Reachable only through the Voices hub: [onNavigate] above always redirects a request for
+        // one of these four to Screen.VOICES plus the matching tab, so `screen` itself is never
+        // actually one of them - kept as an explicit branch so this `when` stays exhaustive against
+        // Screen.entries (a new Screen value that isn't handled anywhere is a compile error).
+        Screen.BROWSE, Screen.MANAGE, Screen.MIX, Screen.COMPARE -> Unit
+        // Handled above, before this composable is ever reached.
+        Screen.ONBOARDING -> Unit
+    }
+}
+
+@Composable
+private fun LibraryDestination(
+    graph: AppGraph,
+    ttsViewModel: TtsViewModel,
+    onNavigateHome: () -> Unit,
+) {
+    val ttsState by ttsViewModel.state.collectAsState()
+    val libraryViewModel: ReadingLibraryViewModel =
+        viewModel(factory = viewModelFactory { initializer { ReadingLibraryViewModel(graph, ttsState.text) } })
+    SimpleScaffold(title = "Library") {
+        ReadingLibraryScreen(
+            viewModel = libraryViewModel,
+            onOpen = { document, resume ->
+                // Loads the saved text into the SAME main-screen TtsViewModel the reader already
+                // uses; setText() itself looks up any saved DocumentMemory position for this
+                // content-derived id, so "resume" just reuses resumeFromSaved() - no second resume
+                // mechanism.
+                ttsViewModel.setText(document.text)
+                if (resume) ttsViewModel.resumeFromSaved()
+                onNavigateHome()
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsDestination(
+    graph: AppGraph,
+    ttsViewModel: TtsViewModel,
+    theme: AppTheme,
+    onThemeSelected: (AppTheme) -> Unit,
+    onNavigate: (Screen) -> Unit,
+) {
+    val ttsState by ttsViewModel.state.collectAsState()
+    SimpleScaffold(title = "Settings") {
+        SettingsScreen(
+            viewModel = ttsViewModel,
+            updateInfo =
+                SettingsUpdateInfo(
+                    currentVersion = BuildConfig.VERSION_NAME,
+                    update = ttsState.update,
+                    updateDownload = ttsState.updateDownload,
+                    checkStatus = ttsState.updateCheckStatus,
+                    repoUrl = "https://github.com/${AppGraph.REPO_OWNER}/${AppGraph.REPO_NAME}",
+                ),
+            updateActions =
+                SettingsUpdateActions(
+                    onCheckForUpdates = ttsViewModel::checkForUpdatesNow,
+                    onDownloadUpdate = ttsViewModel::downloadUpdate,
+                    onCancelUpdateDownload = ttsViewModel::cancelUpdateDownload,
+                ),
+            currentTheme = theme,
+            onThemeSelected = onThemeSelected,
+            onNavigateRow = { row -> onNavigate(row.screen) },
+        )
+    }
+}
+
+@Composable
+private fun StatsDestination(graph: AppGraph, onBack: () -> Unit) {
+    val statsViewModel: StatsViewModel =
+        viewModel(
+            factory =
+                viewModelFactory {
+                    initializer {
+                        StatsViewModel(
+                            usageStats = graph.usageStatsStore,
+                            modelManager = graph.modelManager,
+                            resourceUsageStore = graph.resourceUsageStore,
+                            benchmarkHistory = graph.benchmarkHistory,
+                            favoritesStore = graph.favoritesStore,
+                            downloadDiagnosticsLog = graph.hfDownloader.diagnosticsLog,
+                            deviceName = graph.deviceName,
+                        )
+                    }
+                },
+        )
+    SimpleScaffold(title = "Stats", onBack = onBack) { StatsScreen(statsViewModel) }
+}
+
+@Composable
+private fun BenchmarkDestination(graph: AppGraph, onBack: () -> Unit) {
+    val benchmarkViewModel: BenchmarkViewModel =
+        viewModel(factory = viewModelFactory { initializer { BenchmarkViewModel(graph) } })
+    SimpleScaffold(title = "Benchmarks", onBack = onBack) { BenchmarkScreen(benchmarkViewModel) }
+}
+
+@Composable
+private fun HelpDestination(
+    graph: AppGraph,
+    onBack: () -> Unit,
+    onReplayTutorial: () -> Unit,
+) {
+    SimpleScaffold(title = "Help", onBack = onBack) {
+        HelpScreen(
+            // The durable error log's rows, newest-first, one formatted line each so the user has a
+            // copyable "why" a model (e.g. a LiteRT .tflite) failed to load or run.
+            errorLogEntries = graph.durableErrorLog.entries().map { "[${it.source}] ${it.message}" },
+            // Crash rows are written by CrashReporter's uncaught-exception handler and read back
+            // here, so Help's copy/clear actually has something to show after a crash.
+            onClearErrorLog = { graph.durableErrorLog.clear() },
+            onReplayTutorial = onReplayTutorial,
+        )
+    }
 }

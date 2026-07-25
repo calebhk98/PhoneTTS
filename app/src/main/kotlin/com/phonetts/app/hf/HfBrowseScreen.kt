@@ -1095,9 +1095,12 @@ private fun ModelRow(
                 Text(model.id, fontWeight = FontWeight.Bold)
                 Text("▼ ${model.downloads}   ♥ ${model.likes}", style = MaterialTheme.typography.bodyMedium)
                 // pipelineTag + tags come straight from the HF API response - no extra network call,
-                // just fields the parser already kept that the UI wasn't showing.
-                val tags = listOfNotNull(model.pipelineTag) + model.tags.take(MAX_TAGS_SHOWN)
-                val subtitle = tags.joinToString(" · ")
+                // just fields the parser already kept that the UI wasn't showing. Built in a plain
+                // try/catch, not inline in the Text call (defense-in-depth: a Browse screen must
+                // never crash outright over one row's data - see HfBrowseViewModel's fail-closed
+                // fixes for the same rationale) - a subtitle that can't be built is simply omitted,
+                // never a reason to take the whole result list down.
+                val subtitle = remember(model.id, model.pipelineTag, model.tags) { safeSubtitle(model) }
                 if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall)
                 CompatibilityBadge(compatibility)
                 SizeLine(sizeState)
@@ -1109,6 +1112,15 @@ private fun ModelRow(
         OpenPageLink(actions.onOpenPage)
     }
 }
+
+/** [ModelRow]'s tag/pipeline-tag subtitle line, computed outside of composition proper so an
+ * unexpected exception building it (e.g. a future change to this formatting) can be caught and
+ * turned into "no subtitle" instead of an uncaught crash - see [ModelRow]'s call site. */
+private fun safeSubtitle(model: HfModelSummary): String =
+    runCatching {
+        val tags = listOfNotNull(model.pipelineTag) + model.tags.take(MAX_TAGS_SHOWN)
+        tags.joinToString(" · ")
+    }.getOrDefault("")
 
 /**
  * An honest, file-tree-derived runnability label (issue #108) - greyed out, and never disables the

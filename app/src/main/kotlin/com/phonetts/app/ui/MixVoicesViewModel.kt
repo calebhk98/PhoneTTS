@@ -6,6 +6,8 @@ import com.phonetts.app.AppGraph
 import com.phonetts.app.audio.AudioTrackSink
 import com.phonetts.core.audio.buffer.BufferedPlayback
 import com.phonetts.core.audio.buffer.GeneratedAudio
+import com.phonetts.core.diagnostics.FailureContext
+import com.phonetts.core.diagnostics.FailureExplainer
 import com.phonetts.core.engine.BlendableVoices
 import com.phonetts.core.engine.BlendedVoiceSpec
 import com.phonetts.core.engine.SynthesisParams
@@ -153,7 +155,8 @@ class MixVoicesViewModel(
                     // defect as the reader's transport had, in a second copy of the same pattern.
                     .onFailure { e ->
                         if (e is CancellationException) return@onFailure
-                        mutableState.update { it.copy(status = "Playback failed: ${e.message}") }
+                        val status = FailureExplainer.explain(e, FailureContext.PLAYING)
+                        mutableState.update { it.copy(status = status) }
                     }
             }
     }
@@ -188,7 +191,10 @@ class MixVoicesViewModel(
                 engine.synthesize(phrase, voice.id, SynthesisParams(model.parameters.associate { it.id to it.default }))
                     .collect(audio::append)
             }
-                .onFailure { e -> mutableState.update { it.copy(status = "Preview failed: ${e.message}") } }
+                .onFailure { e ->
+                    val status = FailureExplainer.explain(e, FailureContext.GENERATING)
+                    mutableState.update { it.copy(status = status) }
+                }
         audio.markComplete()
         return result.isSuccess
     }

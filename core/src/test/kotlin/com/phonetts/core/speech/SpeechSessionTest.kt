@@ -7,6 +7,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -35,16 +36,20 @@ class SpeechSessionTest {
             audio = listOf(floatArrayOf(0f), floatArrayOf(1f), floatArrayOf(2f), floatArrayOf(3f), floatArrayOf(4f)),
         )
 
+    // Spaces the FakeEngine's five chunks 1ms apart in virtual time, so a test can attach playback
+    // and pause/resume it WHILE generation is still in flight - a fully-instant flow would finish
+    // generating before play() even started, making "pause does not stop generation" untestable.
+    private fun FakeEngine.spacedSynthesize() = synthesize("text", "v0", SynthesisParams.DEFAULT).onEach { delay(1) }
+
     @Test
     fun pauseDoesNotStopGenerationItKeepsFillingWhilePaused() =
         runTest(UnconfinedTestDispatcher()) {
             val engine = fiveSentenceEngine()
             val session = SpeechSession(backgroundScope, UnconfinedTestDispatcher(testScheduler), RATE)
-            session.start(engine.synthesize("text", "v0", SynthesisParams.DEFAULT))
+            session.start(engine.spacedSynthesize())
+            advanceTimeBy(1)
             runCurrent()
-            // Generation runs eagerly to completion on this dispatcher - confirm it actually
-            // finished producing all five sentences before we even start playing.
-            assertEquals(5, session.producer.ready.value)
+            assertEquals(1, session.producer.ready.value) // only the first sentence has landed so far
 
             val sink = RecordingSink()
             session.play(sink)
@@ -52,11 +57,16 @@ class SpeechSessionTest {
             session.pause()
             runCurrent()
 
-            // Paused: the buffer is untouched by pausing (it was already fully generated), and the
-            // state reflects paused-not-stopped rather than a second, independently-tracked flag.
-            assertTrue(session.state.value.isPaused)
-            assertEquals(5, session.producer.ready.value)
+            // Let the rest of generation finish while playback sits paused.
+            advanceTimeBy(10)
+            runCurrent()
+
+            // The buffer kept growing to completion even though nothing new reached the sink - the
+            // producer never learned playback existed, let alone that it paused.
             assertTrue(session.producer.complete.value)
+            assertEquals(5, session.producer.ready.value)
+            assertTrue(session.state.value.isPaused)
+            assertTrue(sink.chunkCount < 5, "paused playback must not keep delivering chunks")
         }
 
     @Test
@@ -64,7 +74,7 @@ class SpeechSessionTest {
         runTest(UnconfinedTestDispatcher()) {
             val engine = fiveSentenceEngine()
             val session = SpeechSession(backgroundScope, UnconfinedTestDispatcher(testScheduler), RATE)
-            session.start(engine.synthesize("text", "v0", SynthesisParams.DEFAULT))
+            session.start(engine.spacedSynthesize())
             runCurrent()
 
             val sink = RecordingSink()
@@ -72,11 +82,15 @@ class SpeechSessionTest {
             runCurrent()
             session.pause()
             runCurrent()
+            advanceTimeBy(10) // generation finishes in the background while paused
+            runCurrent()
+            val deliveredBeforeResume = sink.chunkCount
             session.resume()
             runCurrent()
 
             assertEquals(5, sink.chunkCount)
             assertEquals(listOf(0f, 1f, 2f, 3f, 4f), sink.recorded.toList())
+            assertTrue(sink.chunkCount > deliveredBeforeResume) // resume actually delivered the rest
             // One synthesize() call for the whole document, however many times play/pause/resume ran.
             assertEquals(1, engine.synthesizeCount)
         }

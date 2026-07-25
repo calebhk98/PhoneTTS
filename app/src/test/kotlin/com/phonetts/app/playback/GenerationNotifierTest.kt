@@ -52,7 +52,7 @@ class GenerationNotifierTest {
 
         notifier.start(totalChunks = 3)
 
-        val active = shadowOf(manager).allNotifications
+        val active = manager.activeNotifications.toList()
         assertEquals(1, active.size)
         assertNotEquals(PLAYBACK_NOTIFICATION_ID, active.single().id)
     }
@@ -64,7 +64,7 @@ class GenerationNotifierTest {
 
         notifier.start(totalChunks = 4)
 
-        val active = shadowOf(manager).allNotifications
+        val active = manager.activeNotifications.toList()
         assertEquals("exactly one row - the media notification, no second one", 1, active.size)
         assertEquals(PLAYBACK_NOTIFICATION_ID, active.single().id)
     }
@@ -85,14 +85,14 @@ class GenerationNotifierTest {
     fun `a previously posted standalone row is withdrawn once playback catches up`() {
         val notifier = GenerationNotifier(context)
         notifier.start(totalChunks = 4) // no playback session yet - posts its own row
-        assertEquals(1, shadowOf(manager).allNotifications.size)
+        assertEquals(1, manager.activeNotifications.toList().size)
 
         serviceController.startCommand(0, 0) // playback notification now up
         notifier.update(
             GenerationStats(audioSecondsProduced = 1.0, wallClockElapsedSeconds = 1.0, chunksDone = 1, totalChunks = 4),
         )
 
-        val active = shadowOf(manager).allNotifications
+        val active = manager.activeNotifications.toList()
         assertEquals(1, active.size)
         assertEquals(PLAYBACK_NOTIFICATION_ID, active.single().id)
     }
@@ -104,7 +104,7 @@ class GenerationNotifierTest {
 
         notifier.clear()
 
-        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        assertTrue(manager.activeNotifications.toList().isEmpty())
         assertNull(GenerationProgressSignal.current)
     }
 
@@ -119,7 +119,7 @@ class GenerationNotifierTest {
             GenerationStats(audioSecondsProduced = 1.0, wallClockElapsedSeconds = 1.0, chunksDone = 1, totalChunks = 2),
         )
 
-        val active = shadowOf(manager).allNotifications
+        val active = manager.activeNotifications.toList()
         assertEquals(1, active.size)
         assertNotEquals(PLAYBACK_NOTIFICATION_ID, active.single().id)
     }

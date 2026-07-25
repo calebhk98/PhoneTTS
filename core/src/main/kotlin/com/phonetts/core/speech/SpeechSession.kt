@@ -5,6 +5,7 @@ import com.phonetts.core.audio.buffer.BufferedPlayback
 import com.phonetts.core.audio.buffer.GeneratedAudio
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -144,6 +145,7 @@ private class ConsumerRun(
  * Pure Kotlin, no Android. [scope] and [dispatcher] are both injected - this class never hardcodes
  * `Dispatchers.Default`/`viewModelScope`, so tests can run it under `TestScope`/`UnconfinedTestDispatcher`.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class SpeechSession(
     private val scope: CoroutineScope,
     private val dispatcher: CoroutineDispatcher,

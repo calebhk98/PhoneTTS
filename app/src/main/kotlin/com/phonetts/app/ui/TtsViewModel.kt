@@ -22,6 +22,8 @@ import com.phonetts.core.audio.transform.PresenceBoost
 import com.phonetts.core.audio.transform.SilenceTrim
 import com.phonetts.core.audio.transform.TempoStretch
 import com.phonetts.core.audio.transform.TransformChain
+import com.phonetts.core.diagnostics.FailureContext
+import com.phonetts.core.diagnostics.FailureExplainer
 import com.phonetts.core.engine.BlendedVoiceCatalog
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
@@ -792,7 +794,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                         it.copy(busy = false, status = "Model loaded", loadedModelId = descriptor.modelId)
                     }
                 }
-                .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Load failed: ${e.message}") } }
+                .onFailure { e ->
+                    val status = FailureExplainer.explain(e, FailureContext.LOADING_MODEL)
+                    mutableState.update { it.copy(busy = false, status = status) }
+                }
         }
     }
 
@@ -1160,7 +1165,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         )
         mutableState.update {
             it.copy(
-                status = "Stopped: ${error.message}",
+                status = FailureExplainer.explain(error, FailureContext.GENERATING),
                 resumeSentenceIndex = resumeIndex.takeIf { idx -> idx > 0 },
             )
         }
@@ -1187,7 +1192,8 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     // an error toast on every skip (device-confirmed: "Skipping forward showed an error").
     private fun reportPlaybackFailure(error: Throwable) {
         if (error is CancellationException) return
-        mutableState.update { it.copy(status = "Playback failed: ${error.message}") }
+        val status = FailureExplainer.explain(error, FailureContext.PLAYING)
+        mutableState.update { it.copy(status = status) }
     }
 
     // Measured listening time for the run that just ended - samples actually delivered to the sink
@@ -1302,7 +1308,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                     val rtf = "%.2f".format(r.realTimeFactor)
                     mutableState.update { it.copy(busy = false, status = "Voice sample: ${rtf}x real-time") }
                 }
-                .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Sample failed: ${e.message}") } }
+                .onFailure { e ->
+                    val status = FailureExplainer.explain(e, FailureContext.GENERATING)
+                    mutableState.update { it.copy(busy = false, status = status) }
+                }
         }
     }
 
@@ -1423,7 +1432,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                     mutableState.update {
                         it.copy(
                             busy = false,
-                            status = "Export failed: ${e.message}",
+                            status = FailureExplainer.explain(e, FailureContext.EXPORTING),
                             resumeSentenceIndex = chunksDone.takeIf { idx -> idx > 0 },
                         )
                     }
@@ -1461,7 +1470,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                     mutableState.update {
                         it.copy(
                             busy = false,
-                            status = "Sideload failed: ${e.message}",
+                            status = FailureExplainer.explain(e, FailureContext.IMPORTING),
                             sideloadFailureExplanation = explanation,
                         )
                     }
@@ -1477,7 +1486,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { graph.fileTextImporter.importText(uri) } }
                 .onSuccess { text -> mutableState.update { it.copy(busy = false, text = text, status = "Imported text") } }
-                .onFailure { e -> mutableState.update { it.copy(busy = false, status = "Import failed: ${e.message}") } }
+                .onFailure { e ->
+                    val status = FailureExplainer.explain(e, FailureContext.IMPORTING)
+                    mutableState.update { it.copy(busy = false, status = status) }
+                }
         }
     }
 

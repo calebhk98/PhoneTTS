@@ -19,12 +19,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,9 +79,19 @@ import com.phonetts.core.resolver.SelectableEngine
  *
  * Also lists downloaded-but-unidentified bundles (issue #8) and a storage-location picker so
  * models can be kept somewhere that survives an uninstall (issue #4/#5).
+ *
+ * "Add model" (issue: "Import model from folder" in the global drawer was bad UI - it's an action,
+ * not a destination) lives here as an `ExtendedFloatingActionButton`: this is the one screen where
+ * wanting to add a model is the obvious next step. [onBrowseHuggingFace] and [onImportFolder] are
+ * callbacks rather than this screen owning navigation/a picker itself - [onImportFolder] is only
+ * handed the picked [Uri], the caller decides what "import" means (sideloading into the catalog).
  */
 @Composable
-fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
+fun ModelManagementScreen(
+    viewModel: ModelManagementViewModel,
+    onBrowseHuggingFace: () -> Unit = {},
+    onImportFolder: (Uri) -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
 
     // Fixes issue #10: this composable re-enters every time the user navigates to this screen (the
@@ -88,127 +100,173 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
     LaunchedEffect(Unit) { viewModel.refresh() }
 
     val clipboard = LocalClipboardManager.current
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Storage used: ${ByteFormat.format(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
-            // Issue: no way to copy the list of downloaded models. Copies a plain-text listing
-            // (name, origin, size, plus the downloaded-but-unclaimed bundles) for pasting into a
-            // note or bug report. Disabled until there's actually something to copy.
-            OutlinedButton(
-                onClick = { clipboard.setText(AnnotatedString(buildModelListText(state))) },
-                enabled = state.usage.isNotEmpty() || state.unresolved.isNotEmpty(),
-            ) { Text("Copy list") }
-        }
-        // Both numbers shown so neither reads as the one that decides whether a model "fits" - that
-        // decision is against total RAM only (see [ramHint]), free RAM is shown purely as context.
-        Text(
-            "Device RAM: ${ByteFormat.format(state.availableRamBytes)} free of " +
-                "${ByteFormat.format(state.totalRamBytes)} total",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        // Bounded so a long error can't grow to cover the screen; full text is still selectable
-        // where it's shown untruncated elsewhere.
-        state.error?.let {
-            Text("Error: $it", maxLines = ERROR_MAX_LINES, overflow = TextOverflow.Ellipsis)
-        }
-
-        StorageLocationSection(
-            description = state.storageDescription,
-            message = state.storageMessage,
-            onFolderPicked = viewModel::chooseFolder,
-            onResetToAppStorage = viewModel::resetStorageLocation,
-        )
-
-        if (state.usage.isEmpty() && state.unresolved.isEmpty()) {
-            Text("No models downloaded yet.")
-        }
-
-        if (state.usage.isNotEmpty() || state.unresolved.isNotEmpty()) {
-            ManageControls(
-                sort = state.sort,
-                query = state.query,
-                onSortKey = viewModel::setSortKey,
-                onToggleDirection = viewModel::toggleSortDirection,
-                onQuery = viewModel::setQuery,
-                filterState =
-                    ManageFilterState(
-                        origin = state.originFilter,
-                        engine = state.engineFilter,
-                        minSizeBytes = state.minSizeBytes,
-                        maxSizeBytes = state.maxSizeBytes,
-                        availableEngineIds = state.availableEngineIds,
-                        hasUnresolved = state.unresolved.isNotEmpty(),
-                    ),
-                filterCallbacks =
-                    ManageFilterCallbacks(
-                        onOrigin = viewModel::setOriginFilter,
-                        onEngine = viewModel::setEngineFilter,
-                        onSize = viewModel::setSizeFilter,
-                        onClear = viewModel::clearAdvancedFilters,
-                    ),
-            )
-        }
-
-        // Issue: sort/filter ignoring engine-less models - a resolved model row AND an unclaimed
-        // bundle row now go through the exact SAME sort/filter pass ([ModelManagementViewModel.
-        // visibleEntries]/[ManagedModelListView]), instead of the unresolved list being appended
-        // afterward raw, unsorted, and unfiltered.
-        val visibleEntries = ModelManagementViewModel.visibleEntries(state)
-
-        // Re-sorting keeps stable item keys (by modelId), so a LazyColumn would otherwise preserve the
-        // scroll anchor and "follow" whatever row was on top - the user changed the order to see the new
-        // top, so snap back to it whenever the sort changes (issue #115). Keyed on the whole Sort so both
-        // a new sort-key and a direction flip trigger it.
-        val listState = rememberLazyListState()
-        LaunchedEffect(state.sort) { listState.animateScrollToItem(0) }
-
-        // Display names collide (several "KittenTTS", two "Kokoro"); the rows sharing a name get their
-        // unique folder id shown underneath to tell them apart (issue #123). Computed once over the
-        // whole visible set so a name is "duplicated" consistently regardless of scroll position. Only
-        // resolved rows carry a real descriptor display name to disambiguate; an unresolved bundle's
-        // id is already unique by construction.
-        val duplicateNames =
-            visibleEntries
-                .filterIsInstance<ManagedModelEntry.Resolved>()
-                .groupingBy { it.usage.descriptor.displayName }
-                .eachCount()
-                .filterValues { it > 1 }
-                .keys
-
-        if ((state.usage.isNotEmpty() || state.unresolved.isNotEmpty()) && visibleEntries.isEmpty()) {
-            Text("No downloaded models match the current filters.", style = MaterialTheme.typography.bodyMedium)
-        }
-
-        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(visibleEntries, key = { it.entryKey() }) { entry ->
-                when (entry) {
-                    is ManagedModelEntry.Resolved ->
-                        ModelUsageRow(
-                            usage = entry.usage,
-                            peakRamBytes = state.peakRamByModelId[entry.usage.descriptor.modelId],
-                            totalRamBytes = state.totalRamBytes,
-                            facts = state.factsByModelId[entry.usage.descriptor.modelId],
-                            disambiguate = entry.usage.descriptor.displayName in duplicateNames,
-                            isDeleting = state.deletingId == entry.usage.descriptor.modelId,
-                            onDelete = { viewModel.delete(entry.usage.descriptor.modelId) },
-                        )
-                    is ManagedModelEntry.Unresolved ->
-                        UnresolvedUsageRow(
-                            unresolved = entry.usage,
-                            selectableEngines = state.selectableEngines,
-                            isDeleting = state.deletingUnresolvedId == entry.usage.bundleId,
-                            isAssigning = state.assigningUnresolvedId == entry.usage.bundleId,
-                            onDelete = { viewModel.deleteUnresolved(entry.usage.bundleId) },
-                            onAssignEngine = { engineId -> viewModel.assignEngine(entry.usage.bundleId, engineId) },
-                        )
-                }
-                HorizontalDivider()
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Storage used: ${ByteFormat.format(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
+                // Issue: no way to copy the list of downloaded models. Copies a plain-text listing
+                // (name, origin, size, plus the downloaded-but-unclaimed bundles) for pasting into a
+                // note or bug report. Disabled until there's actually something to copy.
+                OutlinedButton(
+                    onClick = { clipboard.setText(AnnotatedString(buildModelListText(state))) },
+                    enabled = state.usage.isNotEmpty() || state.unresolved.isNotEmpty(),
+                ) { Text("Copy list") }
             }
+            // Both numbers shown so neither reads as the one that decides whether a model "fits" - that
+            // decision is against total RAM only (see [ramHint]), free RAM is shown purely as context.
+            Text(
+                "Device RAM: ${ByteFormat.format(state.availableRamBytes)} free of " +
+                    "${ByteFormat.format(state.totalRamBytes)} total",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            // Bounded so a long error can't grow to cover the screen; full text is still selectable
+            // where it's shown untruncated elsewhere.
+            state.error?.let {
+                Text("Error: $it", maxLines = ERROR_MAX_LINES, overflow = TextOverflow.Ellipsis)
+            }
+
+            StorageLocationSection(
+                description = state.storageDescription,
+                message = state.storageMessage,
+                onFolderPicked = viewModel::chooseFolder,
+                onResetToAppStorage = viewModel::resetStorageLocation,
+            )
+
+            if (state.usage.isEmpty() && state.unresolved.isEmpty()) {
+                Text("No models downloaded yet.")
+            }
+
+            if (state.usage.isNotEmpty() || state.unresolved.isNotEmpty()) {
+                ManageControls(
+                    sort = state.sort,
+                    query = state.query,
+                    onSortKey = viewModel::setSortKey,
+                    onToggleDirection = viewModel::toggleSortDirection,
+                    onQuery = viewModel::setQuery,
+                    filterState =
+                        ManageFilterState(
+                            origin = state.originFilter,
+                            engine = state.engineFilter,
+                            minSizeBytes = state.minSizeBytes,
+                            maxSizeBytes = state.maxSizeBytes,
+                            availableEngineIds = state.availableEngineIds,
+                            hasUnresolved = state.unresolved.isNotEmpty(),
+                        ),
+                    filterCallbacks =
+                        ManageFilterCallbacks(
+                            onOrigin = viewModel::setOriginFilter,
+                            onEngine = viewModel::setEngineFilter,
+                            onSize = viewModel::setSizeFilter,
+                            onClear = viewModel::clearAdvancedFilters,
+                        ),
+                )
+            }
+
+            // Issue: sort/filter ignoring engine-less models - a resolved model row AND an unclaimed
+            // bundle row now go through the exact SAME sort/filter pass ([ModelManagementViewModel.
+            // visibleEntries]/[ManagedModelListView]), instead of the unresolved list being appended
+            // afterward raw, unsorted, and unfiltered.
+            val visibleEntries = ModelManagementViewModel.visibleEntries(state)
+
+            // Re-sorting keeps stable item keys (by modelId), so a LazyColumn would otherwise preserve the
+            // scroll anchor and "follow" whatever row was on top - the user changed the order to see the new
+            // top, so snap back to it whenever the sort changes (issue #115). Keyed on the whole Sort so both
+            // a new sort-key and a direction flip trigger it.
+            val listState = rememberLazyListState()
+            LaunchedEffect(state.sort) { listState.animateScrollToItem(0) }
+
+            // Display names collide (several "KittenTTS", two "Kokoro"); the rows sharing a name get their
+            // unique folder id shown underneath to tell them apart (issue #123). Computed once over the
+            // whole visible set so a name is "duplicated" consistently regardless of scroll position. Only
+            // resolved rows carry a real descriptor display name to disambiguate; an unresolved bundle's
+            // id is already unique by construction.
+            val duplicateNames =
+                visibleEntries
+                    .filterIsInstance<ManagedModelEntry.Resolved>()
+                    .groupingBy { it.usage.descriptor.displayName }
+                    .eachCount()
+                    .filterValues { it > 1 }
+                    .keys
+
+            if ((state.usage.isNotEmpty() || state.unresolved.isNotEmpty()) && visibleEntries.isEmpty()) {
+                Text("No downloaded models match the current filters.", style = MaterialTheme.typography.bodyMedium)
+            }
+
+            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(visibleEntries, key = { it.entryKey() }) { entry ->
+                    when (entry) {
+                        is ManagedModelEntry.Resolved ->
+                            ModelUsageRow(
+                                usage = entry.usage,
+                                peakRamBytes = state.peakRamByModelId[entry.usage.descriptor.modelId],
+                                totalRamBytes = state.totalRamBytes,
+                                facts = state.factsByModelId[entry.usage.descriptor.modelId],
+                                disambiguate = entry.usage.descriptor.displayName in duplicateNames,
+                                isDeleting = state.deletingId == entry.usage.descriptor.modelId,
+                                onDelete = { viewModel.delete(entry.usage.descriptor.modelId) },
+                            )
+                        is ManagedModelEntry.Unresolved ->
+                            UnresolvedUsageRow(
+                                unresolved = entry.usage,
+                                selectableEngines = state.selectableEngines,
+                                isDeleting = state.deletingUnresolvedId == entry.usage.bundleId,
+                                isAssigning = state.assigningUnresolvedId == entry.usage.bundleId,
+                                onDelete = { viewModel.deleteUnresolved(entry.usage.bundleId) },
+                                onAssignEngine = { engineId -> viewModel.assignEngine(entry.usage.bundleId, engineId) },
+                            )
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+        AddModelFab(
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            onBrowseHuggingFace = onBrowseHuggingFace,
+            onImportFolder = onImportFolder,
+        )
+    }
+}
+
+/** The "Add model" FAB (issue: "Import model from folder" in the global drawer was bad UI - it's an
+ * action, not a destination). A small menu offers the two ways to add a model: browse Hugging Face,
+ * or import a folder already on the phone via the system folder picker. */
+@Composable
+private fun AddModelFab(
+    modifier: Modifier,
+    onBrowseHuggingFace: () -> Unit,
+    onImportFolder: (Uri) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val importLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            uri?.let(onImportFolder)
+        }
+    Box(modifier = modifier) {
+        ExtendedFloatingActionButton(
+            text = { Text("Add model") },
+            icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+            onClick = { expanded = true },
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Browse Hugging Face") },
+                onClick = {
+                    expanded = false
+                    onBrowseHuggingFace()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Import from folder") },
+                onClick = {
+                    expanded = false
+                    importLauncher.launch(null)
+                },
+            )
         }
     }
 }
