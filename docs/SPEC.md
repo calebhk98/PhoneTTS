@@ -3,6 +3,10 @@
 **Audience:** an engineer building this from scratch.
 **Status:** design locked. Build order and architecture below are decided, not suggestions.
 **Scope:** a standalone, fully-offline Android text-to-speech app for personal use.
+**Since this was written:** the abstractions below held, but several details have evolved as the
+app grew past the original five models - see **§12 (addendum)** at the bottom before assuming a
+code sample here is still verbatim-accurate. CLAUDE.md is the living document for current rules
+and practices; this file is the design rationale.
 
 ---
 
@@ -110,6 +114,11 @@ interface VoiceEngine {
 data class Voice(val id: String, val name: String, val language: String)
 ```
 
+*(Superseded in one detail - see §12: `synthesize` now takes a `SynthesisParams` bag, not a bare
+`speed: Float`, so a model can declare tunable parameters beyond speed. A `speed: Float` overload
+still exists for the common case, so this signature's spirit - and every other call site - is
+unchanged.)*
+
 ### 5.2 The text frontend (separate on purpose)
 
 This is where models diverge hardest, so it is **not** part of `VoiceEngine`. It lives inside each engine and the app never sees it.
@@ -130,11 +139,18 @@ Keep runtime behind an interface so adding one later touches nothing else.
 - ONNX Runtime for Android - Piper, KittenTTS, Kokoro, MeloTTS.
 - CosyVoice2 - probably a separate LLM-style runtime. Confirm during Phase 2.1.
 
+*(§12: this second runtime materialized as `NativeTtsRuntime`, a non-ONNX ggml family, and the
+runtime roster has since grown further - ExecuTorch and LiteRT backends also exist alongside ONNX.)*
+
 ### 5.4 The registry (runtime, not static)
 
 The registry holds engine/model registrations **at runtime**. The five built-ins register through the exact same path a sideloaded model does - they are just pre-seeded at startup. **There is no "built-in vs sideloaded" branch downstream.** The only difference is an `origin` field, recorded for display, never used to fork logic.
 
 Consequence: removing a model = removing its engine registration. Nothing else references it. Adding a model = registering it. The UI (Section 7) recomputes itself.
+
+*(§12: "registering it" is now literally automatic - each engine module ships an `EngineProvider`
+found via `java.util.ServiceLoader`, so adding a model is dropping in an `engines/<name>/` module
+with no line anywhere to hand-edit. See CLAUDE.md's "Adding an engine".)*
 
 ### 5.5 The EngineManager (memory)
 
@@ -176,6 +192,13 @@ data class ModelDescriptor(
 )
 ```
 
+*(§12: the real `ModelDescriptor` replaced the fixed `speedRange`/`defaultSpeed` pair with a
+`parameters: List<ModelParameter>` - the dynamic, discovered set of tunable knobs a model actually
+has, of which speed is just the near-universal one. It also gained `assetPaths`, `resourceCost`,
+and `supportsVoiceBlend`. The rule this section states - no model fact as a literal outside this
+layer - is exactly why the field changed shape instead of the UI growing a second speed-shaped
+special case for the first model that needed a different knob.)*
+
 **The rule that makes SSOT real:** no model fact ever appears as a literal outside the descriptor/resolver layer. Not a sample rate, not a voice name, not a speed bound. If any of these shows up hardcoded in the UI or an engine, you now have two sources and the guarantee is already broken. Make this a review reflex (and a detekt rule if you can express it): **a model constant outside the resolver layer is a bug.**
 
 Known per-model facts to verify and place in descriptors (do not trust these blindly - confirm against the actual model files you ship):
@@ -186,7 +209,7 @@ Known per-model facts to verify and place in descriptors (do not trust these bli
 | KittenTTS | 15M / 40M / 80M | 24k | dev-preview; API may shift; English-only for now |
 | Kokoro-82M | 82M | 24k | 54 voices, 8 languages; own g2p (misaki) w/ espeak fallback |
 | MeloTTS | small core + ~94M BERT | 44.1k | multilingual; heavier real footprint |
-| CosyVoice2-0.5B | ~500M | **verify** | autoregressive, non-deterministic, multi-component |
+| CosyVoice2-0.5B | ~500M | 24k (§12: confirmed - see docs/COSYVOICE2.md) | autoregressive, non-deterministic, multi-component |
 
 ---
 
@@ -269,7 +292,7 @@ Write tests for:
 This is a personal/local app, but you still want removability to actually work, and you shouldn't hardcode facts you haven't checked.
 
 - **Licenses:** Kokoro (Apache-2.0), KittenTTS (Apache-2.0), MeloTTS (MIT) are permissive. **Piper:** original code is MIT, but the actively maintained fork may carry a different (possibly copyleft) license - check the specific fork you build against. **CosyVoice2:** confirm its license before relying on it. Requirement #6 (clean removal) exists precisely so any of these can be pulled later without collateral damage.
-- **Per-model facts** (sample rate, voice list, speed bounds, param name): confirm against the real model files you ship and put them in descriptors. The table in 5.7 is a starting point, not gospel - CosyVoice2's sample rate in particular is marked "verify."
+- **Per-model facts** (sample rate, voice list, speed bounds, param name): confirm against the real model files you ship and put them in descriptors. The table in 5.7 is a starting point, not gospel - CosyVoice2's sample rate, marked "verify" when this was written, is now confirmed at 24 kHz (see §12 and `docs/COSYVOICE2.md`).
 
 ---
 
@@ -284,3 +307,61 @@ This is a personal/local app, but you still want removability to actually work, 
 7. Set up **git pre-commit** (ktlint, detekt, tests).
 
 At the end of Phase 1 nothing produces audio, but every seam is testable and green. Then start Phase 2 at CosyVoice2.
+
+---
+
+## 12. Since this was written (addendum)
+
+This section is **not** a rewrite of the design above - the abstractions, the build order, and the
+rules all held. It records where the implementation has since grown a detail this document
+doesn't mention, so a reader doesn't mistake a Phase-1-era code sample for the current API. For
+day-to-day rules and practices, CLAUDE.md is the living document; this addendum only closes the gap
+between what's written above and what the code actually does today.
+
+- **Far more than five models.** The registry now holds many more engines than the original launch
+  five (Piper, KittenTTS, Kokoro, MeloTTS, CosyVoice2/3, plus MMS, F5-TTS, and several
+  native-runtime/experimental engines - see `engines/` on disk for the current set, since a written
+  count here would itself become another stale number). None of this required touching the
+  registry, resolver, or UI - which is exactly what §2's "the app does not know about five models"
+  promised.
+- **Engine registration is auto-discovered, not hand-registered.** §5.4 describes the registry as
+  "runtime, not static," which held - but registering an engine module into the *build* also became
+  automatic. `settings.gradle.kts` includes every directory under `engines/` that has its own
+  `build.gradle.kts`, and `app/build.gradle.kts`/`integration/build.gradle.kts` derive their engine
+  dependency lists the same way from `rootProject.subprojects`. There is no `include()` line or
+  `runtimeOnly()` line to add or forget anymore. Each engine module ships one `EngineProvider`
+  (`com.phonetts.core.engine.EngineProvider`), found via `java.util.ServiceLoader` at startup - see
+  CLAUDE.md's "Adding an engine." (This replaced an actual hand-maintained include/runtimeOnly list
+  that had already drifted - four engine modules existed and compiled but were silently absent from
+  the shipped APK because nothing added them to `app/build.gradle.kts`.)
+- **`synthesize`'s third argument is a parameter bag, not a bare `Float`.** §5.1's
+  `synthesize(text, voiceId, speed: Float)` became `synthesize(text, voiceId, params:
+  SynthesisParams)` (`com.phonetts.core.engine.SynthesisParams`, a `Map<String, Float>`-backed bag
+  keyed by `ModelParameter.id`), with a `speed: Float` overload kept for the common case so most call
+  sites are unchanged. This exists because §5.7's descriptor also grew: `speedRange`/`defaultSpeed`
+  became a discovered `parameters: List<ModelParameter>` (`com.phonetts.core.model.ModelParameter`),
+  so a model can declare a knob other than speed (a future emotion selector, say) with **zero**
+  `VoiceEngine`/`SynthesisParams`/UI changes - the same "discovered, not assumed" principle §5.7
+  already states, just generalized past the one knob (speed) the original design anticipated.
+- **The runtime roster grew past "ONNX, and maybe one more for CosyVoice2."** §5.3 speculated
+  CosyVoice2 would need "probably a separate LLM-style runtime." It did: `NativeTtsRuntime`, a
+  non-ONNX ggml family (`com.phonetts.core.runtime`) whose `NativeTtsSession.synthesize()` runs an
+  entire text→audio pipeline in one native call - CrispASR's `cosyvoice3_tts` for the deployed
+  CosyVoice3-0.5B model (see `docs/COSYVOICE2.md`; the spec's Tier-C build slot shipped as
+  "CosyVoice3," the GGUF-native sibling of the CosyVoice2 model proven separately in PyTorch). Two
+  more runtimes exist alongside it - ExecuTorch and LiteRT backends - each behind the same `Runtime`
+  seam, exactly as §5.3 intended ("adding one later touches nothing else").
+- **Generation and playback are now a formal, separate primitive - `core/speech`.** §6.1 states the
+  rule ("one generation path... two consumers") but doesn't name any implementation of it. That rule
+  is now embodied by `com.phonetts.core.speech`: `SentenceProducer` drains the ONE
+  `VoiceEngine.synthesize()` flow into a retained buffer and knows nothing about playback (no pause,
+  no listener awareness, no position); `SpeechSession` owns a document's producer plus whichever
+  `BufferedPlayback` consumer run is current, and exposes one derived `SpeechSessionState` snapshot
+  that is never written to directly. This formalizes §6.1's two-consumers rule as its own tested
+  seam (`core/src/test/kotlin/com/phonetts/core/speech/`) rather than leaving each call site to
+  reimplement the split - it exists because an earlier ad hoc version of this split let a stale run's
+  completion callback and a fresh run's start independently write into one shared mutable flag, so
+  the UI could show "not playing" while audio kept going after a skip. `SpeechSession` fixes that by
+  construction: only the current run is ever observed, so a superseded run's writes land on nothing.
+- **CosyVoice2's sample rate is no longer "verify."** It's 24 kHz, confirmed against the deployed
+  CosyVoice3-0.5B GGUF stack - see §5.7's table and `docs/COSYVOICE2.md`.

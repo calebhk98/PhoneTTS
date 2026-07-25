@@ -5,10 +5,14 @@
 - **The pure-JVM modules build and test with no Android SDK** - this is where all the
   correctness lives:
   ```bash
-  ./gradlew ktlintCheck detekt :core:test :integration:test \
-            :engines:common:test :engines:cosyvoice2:test :engines:melotts:test \
-            :engines:piper:test :engines:kittentts:test :engines:kokoro:test
+  ./gradlew ktlintCheck detekt :core:test :integration:test
   ```
+  `:core` and `:integration` are the important ones (spec §9's seam tests + the cross-engine
+  discovery test). Each `:engines:<name>` module has its own tests too; run one directly
+  (`./gradlew :engines:kokoro:test`) when you're changing that engine, or `./gradlew test` to run
+  every JVM module's tests at once (`:core`, `:integration`, and every `:engines:*` module - there's
+  no list to hand-maintain here, since `settings.gradle.kts` auto-discovers the engine modules from
+  disk; see "Adding an engine" in [`CLAUDE.md`](../CLAUDE.md)).
 - **The `:app` (Android) module needs the Android SDK.** It is included in the build
   automatically **only when an SDK is detected** (see below), so an SDK-less machine or a
   core-only CI job just skips it. With an SDK present:
@@ -73,7 +77,10 @@ even with an SDK present (e.g. a core-only CI job on an Android machine), pass `
 
 (Use `gradle` in place of `./gradlew` if the wrapper doesn't work in your environment - see
 above.) The debug APK is ~90 MB (it bundles ONNX Runtime's native libraries for all ABIs and
-PDFBox). Release builds are not signing-configured yet - see the "release readiness" notes below.
+PDFBox). Both the `debug` and `release` build types sign with the same **stable, committed** debug
+keystore (`keystore/phonetts-debug.keystore`, well-known "android" password - a debug cert, so
+committing it is safe) - see "Current state of `:app`" below for why that matters and what's still
+open about a real release signing key.
 
 ## Getting the app onto a phone, step by step
 
@@ -91,8 +98,9 @@ PDFBox). Release builds are not signing-configured yet - see the "release readin
    models, preferences). Without `adb`, copy the `.apk` to the phone by any means (cloud drive,
    email, USB file transfer) and open it in a file manager - Android will prompt to allow
    installs from that source (Settings → Apps → Special access → Install unknown apps).
-3. **Open PhoneTTS.** It launches straight into the main screen (`TtsScreen`) - model/voice
-   pickers, a text box, and Play/Export.
+3. **Open PhoneTTS.** First launch shows a short onboarding screen; after that it opens straight
+   into Home (`TtsScreen` - model/voice pickers, a text box, and Play/Export), one of four bottom
+   navigation tabs (Home / Library / Voices / Settings).
 4. **Get a model onto the device** - see the next section. Nothing synthesizes until at least
    one model is downloaded or sideloaded.
 
@@ -119,22 +127,24 @@ sound right until it's built with espeak-ng in.
 Model weights are **never bundled in the APK** (see `CLAUDE.md` rule 7) - the app is a shell
 until you add at least one model, in-app:
 
-- **One-tap recommended models** - the "Browse models" screen opens with a **Recommended
+All of the below live under the **Voices** bottom-nav tab (`VoicesHubScreen`), not the Home screen:
+
+- **One-tap recommended models** - the Browse tab opens with a **Recommended
   (one-tap)** section listing curated, known-good models (Piper Lessac, KittenTTS Nano - the ones
   proven to produce valid audio in `docs/MODEL-VERIFICATION.md`). Tapping one downloads its exact
   file set straight into the auto-load pipeline - no searching, no webpage - so a first-run user
   gets a working model immediately (`BuiltInCatalog` → `HfBrowseViewModel.downloadBuiltIn`).
-- **Browse Hugging Face** - tap "Browse models" on the main screen, search, and tap Download on
+- **Browse Hugging Face** - from Voices, open the Browse tab, search, and tap Download on
   a result (`HfBrowseScreen`/`HfBrowseViewModel`, wired through `AppGraph.hfCatalog` /
   `AppGraph.hfDownloader`). If a repo ships more than one weight precision, a dialog lets you
   pick one. The download is verified and imported automatically; unrecognized repos still land
   in the catalog via the user-pick fallback (spec §6.2) instead of being rejected.
-- **Sideload a folder** - tap "Sideload folder" to pick an already-downloaded model directory
-  (e.g. one you fetched on a computer and copied over) via the system folder picker
-  (`SideloadCoordinator`). The resolver identifies it the same way an HF download is identified.
-- **Manage what's installed** - tap "Manage models" to see each downloaded model's on-disk size
-  and delete it (`ModelManagementScreen`/`ModelManager`); deleting the currently-loaded model
-  unloads it first.
+- **Sideload a folder** - from Voices, pick an already-downloaded model directory (e.g. one you
+  fetched on a computer and copied over) via the system folder picker (`SideloadCoordinator`). The
+  resolver identifies it the same way an HF download is identified.
+- **Manage what's installed** - the Voices tab's Downloaded-models view shows each downloaded
+  model's on-disk size and lets you delete it (`ModelManagementScreen`/`ModelManager`); deleting the
+  currently-loaded model unloads it first.
 
 All three flows funnel through the same `inspect() → resolve → register` pipeline (spec §6.2),
 so a model doesn't need special-case UI to show up in the model dropdown.
@@ -153,8 +163,11 @@ From `app/src/main/AndroidManifest.xml`:
 
 ## Current state of `:app`
 
-`:app` compiles, assembles, and installs. `MainActivity` boots straight into the real UI
-(`TtsScreen`, plus "Browse models" / "Manage models" sub-screens) - `AppGraph` wires
+`:app` compiles, assembles, and installs. `MainActivity` boots into onboarding on first launch,
+then a Material 3 **bottom navigation bar** (Home / Library / Voices / Settings -
+`app/src/main/kotlin/com/phonetts/app/ui/nav/BottomDestination.kt`) reaches every screen, including
+"Browse models" / "Manage models" (under Voices) and a read-only **Stats** screen (under Settings,
+listening time / model & storage usage / benchmarks / downloads) - `AppGraph` wires
 `EngineLoader.seed()`, the `RuntimeRegistry` + `EngineManager`, the resolver/catalog/importer,
 the Hugging Face downloader, and `SideloadCoordinator` at startup, and `PhoneTtsApplication`
 calls `AppGraph.hydrate()` to re-import previously downloaded models on every launch. `Runtime`
@@ -169,14 +182,29 @@ What's still unverified because no device/NDK has been available while authoring
 - **Per-engine ONNX tensor names/vocab.** Some engines still carry `// ASSUMPTION` comments
   (e.g. `engines/piper/.../PiperEngine.kt`) for input/output tensor names inferred from public
   model docs rather than confirmed against the real exported graphs on-device.
-- Release builds are not signing-configured, and R8/minification is off
-  (`isMinifyEnabled = false` in `app/build.gradle.kts`) pending on-device validation that the
-  `proguard-rules.pro` keeps (ServiceLoader providers, kotlinx.serialization models) are
-  sufficient.
+- Both the `debug` and `release` build types sign with the same stable, committed debug keystore
+  (`keystore/phonetts-debug.keystore`, well-known "android" password) - that's what keeps consecutive
+  CI-published APKs installable *over* each other rather than demanding an uninstall on every
+  update; the published APK is, and stays, the debug build. A real Play release signing key is a
+  separate, still-open question (issue #51). R8/minification is off (`isMinifyEnabled = false` in
+  `app/build.gradle.kts`) pending on-device validation that the `proguard-rules.pro` keeps
+  (ServiceLoader providers, kotlinx.serialization models) are sufficient.
 
 ## Continuous integration
 
-There is no CI config yet. A minimal split:
-- **Core job (no SDK):** the TL;DR JVM command above, on any Ubuntu + JDK 21 runner.
-- **App job (SDK):** `android-actions/setup-android`, then `./gradlew :app:assembleDebug` -
-  allowed to be non-blocking until the app wiring above lands.
+`.github/workflows/android.yml` ("Android CI + APK release") runs two jobs:
+- **`test`** (every push and PR, no SDK): `./gradlew -PskipApp=true :core:test :integration:test
+  ktlintCheck detekt` - the pure-JVM seam tests plus style/never-nesting checks. This is core-only:
+  `:app` Kotlin is **not** ktlint/detekt-checked here, and its Robolectric suite isn't run by this
+  job (see the next bullet for where it does run).
+- **`apk`** (every push except pull requests, plus tags and manual runs; needs the SDK): installs
+  the NDK, fetches espeak-ng and builds its phoneme/dict data with a host-native CMake pass, runs
+  `./gradlew :app:testDebugUnitTest` (the Robolectric screen-smoke and navigation-reachability
+  tests) so a broken screen fails the build before it ships, then
+  `./gradlew :app:assembleDebug -PwithEspeak=true` - every CI-built APK, including every published
+  release, therefore bundles the espeak-ng phonemizer. It publishes the APK to a **GitHub Release**
+  on every push to `main` (each merge bumps the patch - see `CLAUDE.md`'s "Auto-versioning") and on
+  any `v*` tag; a manual `workflow_dispatch` run on another branch publishes a **prerelease**.
+  Feature-branch pushes only upload the APK as an Actions artifact - they don't cut a release. The
+  CosyVoice native bridge (`-PwithCosyVoice`) is a separate opt-in build this job does **not** pass,
+  so it is not in any CI-published APK yet (see `docs/COSYVOICE2.md`).

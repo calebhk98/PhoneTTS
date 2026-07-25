@@ -11,10 +11,11 @@ but designed to run unmodified on better and worse phones.
 > **Status: in development.** The deterministic "seams" (`:core`) and a growing set of engine
 > modules under `:engines:*` are implemented and unit-tested on the JVM, and the `:app` module
 > compiles into an installable APK. The ONNX engines are verified to produce real audio off-device
-> (see [`docs/MODEL-VERIFICATION.md`](docs/MODEL-VERIFICATION.md)); the espeak-ng phonemizer and the
-> native ggml runtimes are opt-in native builds (`-PwithEspeak` / `-PwithCosyVoice`), whose
-> on-device verification is the remaining work. New engines are added as self-contained modules -
-> see the full [engineering spec](docs/SPEC.md).
+> (see [`docs/MODEL-VERIFICATION.md`](docs/MODEL-VERIFICATION.md)); the espeak-ng phonemizer now
+> ships in every CI-published release APK (built with `-PwithEspeak=true` automatically), while the
+> native ggml CosyVoice runtime stays an opt-in build (`-PwithCosyVoice`) not included by default.
+> On-device verification of both native bridges is the remaining work. New engines are added as
+> self-contained modules - see the full [engineering spec](docs/SPEC.md).
 
 ## Download
 
@@ -25,13 +26,16 @@ Grab the latest APK from the [**Releases page**](https://github.com/calebhk98/Ph
 2. On your phone, allow "install unknown apps" for your browser or files app.
 3. Open the APK to install.
 
-It's a **debug-signed** build (installs without a Play account, ideal for personal/sideload use).
-Most on-device engines are included by default (Piper, Kokoro, KittenTTS, MeloTTS, MMS, F5-TTS, plus
-the ExecuTorch/LiteRT backends). espeak-ng phonemization and the CosyVoice **native** runtime are
-**opt-in native builds** not bundled in this baseline APK (the CosyVoice engine class ships, but its
-native backend does not) - build from source with `-PwithEspeak=true` / `-PwithCosyVoice=true` to
-include them (see [`docs/COSYVOICE2.md`](docs/COSYVOICE2.md) and
-[`docs/espeak-ng-integration.md`](docs/espeak-ng-integration.md)).
+It's a **debug-signed** build (a stable, committed debug key, so updates install over older
+versions without an uninstall - ideal for personal/sideload use). Most on-device engines are
+included by default (Piper, Kokoro, KittenTTS, MeloTTS, MMS, F5-TTS, plus the ExecuTorch/LiteRT
+backends), **and so is the espeak-ng phonemizer** those first three need for real phonemes - CI
+builds every published release with `-PwithEspeak=true`, so you don't need to build from source for
+that. The CosyVoice **native** runtime is the one piece that stays an **opt-in native build**, not
+bundled in this baseline APK (the CosyVoice engine class ships, but its native backend does not) -
+build from source with `-PwithCosyVoice=true` to include it (see
+[`docs/COSYVOICE2.md`](docs/COSYVOICE2.md); `-PwithEspeak=true` is also available for anyone
+building from source, see [`docs/espeak-ng-integration.md`](docs/espeak-ng-integration.md)).
 
 No release yet? Push a `v*` tag (or run the **Android CI + APK release** workflow manually) and CI
 publishes the APK; every push also attaches the APK to its Actions run as a build artifact.
@@ -54,6 +58,13 @@ publishes the APK; every push also attaches the APK to its Actions run as a buil
   and remembers.
 - **Single source of truth:** to add a model, a voice, or a parameter you edit *one* place;
   dropdowns, labels, sliders and playback config update themselves.
+- **Bottom navigation:** four reachable places - Home, Library, Voices, Settings - in a Material 3
+  navigation bar; a Stats screen (under Settings) shows listening time, model/storage usage,
+  benchmarks, and download history, all read from what the app already tracks.
+- **Self-updating, safely:** the app checks GitHub Releases for a newer build and, if one exists,
+  offers it via a dismissible banner - it never force-updates. Tapping Download fetches and
+  SHA-256-verifies the APK itself (not the browser), then hands it to the system installer;
+  nothing installs until you tap Install.
 
 ## Architecture in one paragraph
 
@@ -73,7 +84,7 @@ seen from different entry points. Full detail in [`docs/SPEC.md`](docs/SPEC.md).
 | `:core` | Pure Kotlin/JVM. Contracts, registry, resolver, descriptors, WAV encoder, streaming driver, manifest + SHA-256. All the testable "seam" logic. | **Yes** - its unit tests run on any JVM. |
 | `:engines:*` | One module per model engine (kokoro, kittentts, cosyvoice2, melotts, …) + `:engines:common` shared plumbing; discovered at runtime via `ServiceLoader`. | **Yes** - pure Kotlin/JVM. |
 | `:integration` | Cross-module JVM integration tests - the one place all engines share a classpath. | **Yes**. |
-| `:app`  | Android app: Compose UI, `AudioTrack` playback, ONNX/native/ExecuTorch/LiteRT runtime implementations, downloader. | No (needs the SDK). `settings.gradle.kts` includes it automatically when an SDK is present. |
+| `:app`  | Android app: Compose UI (bottom navigation, Stats screen), `AudioTrack` playback, ONNX/native/ExecuTorch/LiteRT runtime implementations, downloader. Has its own Robolectric test source set (`app/src/test`). | No (needs the SDK). `settings.gradle.kts` includes it automatically when an SDK is present. |
 
 ## Building
 
@@ -138,11 +149,13 @@ and verified by SHA-256 before use.
 
 Models aren't a hardcoded list - each is a self-contained module under `engines/` that advertises
 itself through a descriptor and is discovered at runtime via `ServiceLoader`. Adding one means
-creating `engines/<name>/` (mirroring an existing engine of the same runtime family) and adding a
-single `include` line to `settings.gradle.kts`; the registry, dropdowns, sliders, and playback
-config all recompute themselves. Removing one is deleting that module. No shared list, no
-`when(model)` switch. Auto-loading a sideloaded model is the same `inspect() → resolve → register`
-pipeline seen from a different entry point.
+creating `engines/<name>/` (mirroring an existing engine of the same runtime family) - **there is no
+`include` line to add**: `settings.gradle.kts` auto-discovers every directory under `engines/` that
+has its own `build.gradle.kts`, and `app/build.gradle.kts`/`integration/build.gradle.kts` derive
+their engine dependency lists from `rootProject.subprojects` the same way. The registry, dropdowns,
+sliders, and playback config all recompute themselves. Removing one is deleting that module,
+full stop. No shared list, no `when(model)` switch. Auto-loading a sideloaded model is the same
+`inspect() → resolve → register` pipeline seen from a different entry point.
 
 ## Development
 
