@@ -65,8 +65,6 @@ object ImportQualityAnalyzer {
     private const val REPEATED_LINE_MIN_OCCURRENCES = 3
     private const val REPEATED_LINE_RATIO_THRESHOLD = 0.1
 
-    private val pageNumberLine = Regex("""^\d{1,4}$|^(?i:page)\s+\d+(\s+of\s+\d+)?$|^\d+\s+of\s+\d+$""")
-
     /**
      * Classifies [text] (the raw output of a [com.phonetts.core.text.extract.TextExtractor]) given
      * the source's [sourceByteSize] and, when known, its [pageCount] (e.g. a PDF's page count - see
@@ -125,7 +123,7 @@ object ImportQualityAnalyzer {
     }
 
     private fun digitOnlyRatio(lines: List<String>): Double =
-        lines.count { pageNumberLine.matches(it) }.toDouble() / lines.size
+        lines.count { pageNumberLinePattern.matches(it) }.toDouble() / lines.size
 
     private fun shortLineRatio(lines: List<String>): Double =
         lines.count { it.split(Regex("\\s+")).size <= SHORT_LINE_MAX_WORDS }.toDouble() / lines.size

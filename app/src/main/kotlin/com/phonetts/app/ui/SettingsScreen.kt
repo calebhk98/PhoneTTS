@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
@@ -35,6 +36,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.phonetts.app.ui.nav.SettingsRow
 import com.phonetts.core.audio.transform.BassCut
@@ -186,7 +190,14 @@ private fun SettingsSection(
     }
 }
 
-/** A labeled toggle with a one-line description underneath, so each knob explains itself (issue #123). */
+/** A labeled toggle with a one-line description underneath, so each knob explains itself (issue #123).
+ * The whole row - not just the [Switch] - is the tap target and the one accessibility node (issue
+ * #141): [Modifier.toggleable] moves the click/[Role.Switch] semantics to the row itself (so its
+ * touch target is the full row height, well past the 48dp minimum, not just the Switch's own bounds),
+ * and [Modifier.semantics] with `mergeDescendants = true` merges the title + subtitle Text into that
+ * one node so TalkBack announces "title, subtitle, switch, on/off" once instead of three separate
+ * stops. The [Switch] itself gets `onCheckedChange = null` so it stops being its own second,
+ * redundant click target. */
 @Composable
 private fun SettingToggle(
     title: String,
@@ -195,7 +206,11 @@ private fun SettingToggle(
     onChecked: (Boolean) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .toggleable(value = checked, onValueChange = onChecked, role = Role.Switch)
+                .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -205,7 +220,7 @@ private fun SettingToggle(
             Text(title)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Switch(checked = checked, onCheckedChange = onChecked)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -224,13 +239,18 @@ private fun FontSizeSetting(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // The visible "A-"/"A+" glyphs read literally to TalkBack ("A dash", "A plus") with no other
+        // clue what they do - an explicit contentDescription overrides that with the actual action
+        // (issue #141) while leaving the compact glyph for sighted users.
         OutlinedButton(
             onClick = viewModel::decreaseTextScale,
             enabled = state.readingScale > ReadingTextPreferences.MIN_SCALE,
+            modifier = Modifier.semantics { contentDescription = "Decrease text size" },
         ) { Text("A-") }
         OutlinedButton(
             onClick = viewModel::increaseTextScale,
             enabled = state.readingScale < ReadingTextPreferences.MAX_SCALE,
+            modifier = Modifier.semantics { contentDescription = "Increase text size" },
         ) { Text("A+") }
         Text("${"%.0f".format(state.readingScale * PERCENT)}%", style = MaterialTheme.typography.bodyMedium)
     }
@@ -300,14 +320,22 @@ private fun UpdatesSection(
 }
 
 /** One clickable row that navigates to a whole other screen (Stats/Benchmarks/Help) - a chevron
- * marks it as "goes somewhere" rather than a toggle, matching Android's own Settings app. */
+ * marks it as "goes somewhere" rather than a toggle, matching Android's own Settings app.
+ * `mergeDescendants = true` (issue #141) announces the label + subtitle as one TalkBack stop
+ * ("Stats, Usage totals, storage, and download diagnostics, button") instead of two separate ones;
+ * the chevron stays a `null` contentDescription since it is purely decorative next to already-labeled
+ * text. */
 @Composable
 private fun NavigationRow(
     row: SettingsRow,
     onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
