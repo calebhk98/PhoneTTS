@@ -142,7 +142,15 @@ android {
             // it stable; CI now runs this suite, so a flaky-by-exhaustion runner would block releases.
             all {
                 it.maxHeapSize = "2g"
-                it.forkEvery = 8
+                // One JVM per test class. Two reasons, both observed here rather than theoretical:
+                // Robolectric holds a full Android SDK image per class (batching them killed the
+                // executor outright with "non-zero exit value 10"), and several classes call the
+                // GLOBAL Dispatchers.setMain - when two of those share a JVM, one class's still-live
+                // coroutine collides with the next class's setMain and throws "Dispatchers.Main is
+                // used concurrently with setting it". That failure is order-dependent, so it shows up
+                // as a flake that passes when the class is run alone - the worst kind to debug, and
+                // exactly what CI must not start doing now that it runs this suite.
+                it.forkEvery = 1
             }
         }
     }

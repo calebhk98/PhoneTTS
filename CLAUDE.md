@@ -326,6 +326,40 @@ agents, and every one of them cost real work before it was written down.
    Do not remove them; a runner that dies by exhaustion now blocks releases, because CI runs this
    suite.
 
+## Verifying your work - the exact commands, and the traps
+
+Run these before you claim anything. `ANDROID_HOME=/opt/android-sdk` (install it per *Build & test*
+if absent), and **system `gradle`, never `./gradlew`** - the wrapper 403s behind this environment's
+proxy.
+
+```bash
+# The seam suite + lint. Fast; run it constantly.
+gradle -PskipApp=true :core:test :integration:test ktlintCheck detekt
+
+# The Android side. :app has NO ktlint/detekt task wired - only these two apply.
+ANDROID_HOME=/opt/android-sdk gradle :app:testDebugUnitTest :app:assembleDebug
+```
+
+Traps, all hit repeatedly:
+
+- **A red test you have not reproduced on a clean run is not yet a failure.** Gradle's incremental
+  state is unreliable here - `ClassNotFoundException` on classes that exist, `Unresolved reference`
+  to symbols that are right there, tests "failing" with no name printed. Re-run with
+  `--rerun-tasks` before you debug. Several rounds of fixes have been spent on nothing.
+- **`ktlintFormat` fixes most style failures for you.** `gradle -PskipApp=true ktlintFormat`. detekt
+  violations (nesting depth, complex conditions, magic numbers, multi-jump loops) must be fixed by
+  hand - and they are not waivable for new code, since each rule traces to a real defect.
+- **`:app` tests fork one JVM per class** (`forkEvery = 1`, `maxHeapSize = 2g`). Necessary, not
+  cosmetic: Robolectric holds a full Android SDK image per class, and several classes call the
+  global `Dispatchers.setMain`, which collides across classes sharing a JVM and produces an
+  order-dependent flake that passes when run alone. Do not "optimise" these away.
+- **The whole `:app` suite is one command away from being wrong about itself.** Confirm the counts,
+  not just the exit code:
+  `for f in app/build/test-results/testDebugUnitTest/*.xml; do grep -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*"' "$f"; done`
+- **Other agents may be mid-write.** Compile errors in files you do not own are usually somebody
+  else's in-flight edit, not your bug - re-run after a pause before chasing them. Say so explicitly
+  in your report rather than silently ignoring a red build.
+
 ## Device-only defect classes to check before claiming something works
 
 Everything in this repo that reached the owner as a real-world bug had passed a green build first.

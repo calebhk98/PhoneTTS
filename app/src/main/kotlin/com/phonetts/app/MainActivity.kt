@@ -57,6 +57,8 @@ import com.phonetts.app.ui.nav.VoicesHubScreen
 import com.phonetts.app.ui.nav.VoicesTab
 import com.phonetts.app.ui.nav.voicesTabFor
 import com.phonetts.app.ui.theme.PhoneTtsTheme
+import com.phonetts.core.model.ModelParameter
+import com.phonetts.core.text.DocumentId
 import com.phonetts.core.prefs.AppTheme
 
 /**
@@ -378,11 +380,38 @@ private fun LibraryDestination(
                 // content-derived id, so "resume" just reuses resumeFromSaved() - no second resume
                 // mechanism.
                 ttsViewModel.setText(document.text)
+                restorePerDocumentVoice(graph, ttsViewModel, document.text)
                 if (resume) ttsViewModel.resumeFromSaved()
+                onNavigateHome()
+            },
+            onJumpToBookmark = { document, bookmark ->
+                ttsViewModel.setText(document.text)
+                restorePerDocumentVoice(graph, ttsViewModel, document.text)
+                ttsViewModel.seekToSentence(bookmark.sentenceIndex)
                 onNavigateHome()
             },
         )
     }
+}
+
+/**
+ * Issue #147: restore the voice/model/speed this particular document was last read with, rather
+ * than whatever was used globally last. Someone reading a novel in one voice and technical docs in
+ * another should not have to re-pick on every switch.
+ *
+ * [DocumentMemory.preferredSelection] fails closed for us: a document with no recorded model, or
+ * one whose model has since been deleted, returns null and we simply leave the global last-used
+ * selection alone - never stranding the user on a model that is no longer installed.
+ */
+private fun restorePerDocumentVoice(
+    graph: AppGraph,
+    ttsViewModel: TtsViewModel,
+    text: String,
+) {
+    val preferred =
+        graph.documentMemory.preferredSelection(DocumentId.of(text), ttsViewModel.state.value.models) ?: return
+    ttsViewModel.selectFavoriteVoice(preferred.descriptor.modelId, preferred.voiceId)
+    ttsViewModel.setParam(ModelParameter.SPEED_ID, preferred.speed)
 }
 
 @Composable

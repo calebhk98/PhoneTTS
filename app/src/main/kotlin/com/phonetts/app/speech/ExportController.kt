@@ -73,7 +73,7 @@ class ExportController(
                 onResult(ExportResult.Success)
             }.onFailure { e ->
                 graph.documentMemory.record(
-                    DocumentPosition(documentId, descriptor.engineId, voiceId, params.speed, chunksDone),
+                    DocumentPosition(documentId, descriptor.engineId, voiceId, params.speed, chunksDone, descriptor.modelId),
                 )
                 onResult(ExportResult.Failure(FailureExplainer.explain(e, FailureContext.EXPORTING), chunksDone))
             }

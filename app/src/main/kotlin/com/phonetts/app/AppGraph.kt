@@ -23,6 +23,7 @@ import com.phonetts.core.metrics.UsageStatsStore
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentLibrary
+import com.phonetts.core.prefs.DocumentBookmarksStore
 import com.phonetts.core.prefs.DocumentLibraryMigration
 import com.phonetts.core.prefs.DefaultVoicePreference
 import com.phonetts.core.prefs.DocumentMemory
@@ -329,6 +330,11 @@ class AppGraph(context: Context) {
      * now holds only the per-language default voice, not favorites.
      */
     val favoritesStore = FavoritesStore(durableStore)
+
+    // Named per-document bookmarks (#150), over the same durable store the favorites/session state
+    // use. Wired here rather than left as a note - the reading library defaults to a store at this
+    // exact path either way, so an unwired copy would silently be a second, divergent instance.
+    val documentBookmarks = DocumentBookmarksStore(durableStore)
 
     // Cumulative listening/generation counters behind the Stats screen. Everything else Stats shows
     // (storage, benchmark history, download health) is read from stores that already existed; these

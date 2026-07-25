@@ -370,7 +370,7 @@ class ReaderPlaybackController(
         val heard = minOf(s.sentencesReady, s.currentSentence)
         val resumeIndex = startSentenceIndex + heard
         val speed = SynthesisParams(paramValues).speed
-        graph.documentMemory.record(DocumentPosition(documentId, descriptor.engineId, voiceId, speed, resumeIndex))
+        graph.documentMemory.record(DocumentPosition(documentId, descriptor.engineId, voiceId, speed, resumeIndex, descriptor.modelId))
         mutableState.update {
             it.copy(
                 status = FailureExplainer.explain(error, FailureContext.GENERATING),
@@ -389,7 +389,7 @@ class ReaderPlaybackController(
         if (descriptor == null || voiceId == null || documentId == null) return
         val heard = a.fromSentence + a.session.state.value.currentSentence
         if (heard <= 0) return
-        graph.documentMemory.record(DocumentPosition(documentId, descriptor.engineId, voiceId, speed, heard))
+        graph.documentMemory.record(DocumentPosition(documentId, descriptor.engineId, voiceId, speed, heard, descriptor.modelId))
         mutableState.update { it.copy(resumeSentenceIndex = heard) }
     }
 
