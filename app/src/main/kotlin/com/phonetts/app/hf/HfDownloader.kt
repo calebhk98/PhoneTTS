@@ -5,14 +5,18 @@ import com.phonetts.app.ModelStorage
 import com.phonetts.core.download.DownloadStorageCap
 import com.phonetts.core.download.SafePath
 import com.phonetts.core.download.Sha256Verifier
+import com.phonetts.core.download.hf.DiagnosticsEntry
+import com.phonetts.core.download.hf.DiagnosticsKind
 import com.phonetts.core.download.hf.DownloadDiagnosticsLog
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.download.hf.HfDownloadItem
+import com.phonetts.core.download.hf.HfDownloadPlan
 import com.phonetts.core.download.hf.HfResume
 import com.phonetts.core.download.hf.OfflineErrorHint
 import com.phonetts.core.download.hf.ResumeAction
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.sideload.ModelImporter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -72,12 +76,25 @@ class HfDownloader(
      * that already construct an [HfDownloader] with just a base dir + importer (the common case)
      * get it for free; the Browse screen reads/records through this same instance. */
     val diagnosticsLog: DownloadDiagnosticsLog = DownloadDiagnosticsLog(File(filesDir, DIAGNOSTICS_LOG_FILENAME)),
+    // Injectable so a skipped-file diagnostics entry's timestamp is deterministic in tests, same
+    // reasoning as [freeBytes] above.
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     /**
      * @param onBytesProgress cumulative bytes written across ALL of [items] so far, plus the
      * plan's total size in bytes - or `null` for the total when any item's size wasn't advertised
      * by the repo tree (spec: never present a fabricated total). Reported at most every
      * [BYTES_PROGRESS_STEP] bytes so a large weight file doesn't flood the caller's state updates.
+     *
+     * Issue #102: one bad file no longer kills the whole model. A per-item failure (retries
+     * exhausted, see [fetch]) is caught here rather than left to propagate - what happens next
+     * depends on [HfDownloadPlan.isEssentialPayload] for that item's path:
+     * - a companion file (config/tokenizer/voice sample/...) is skipped: recorded to
+     *   [diagnosticsLog] (so it's visible, never silently dropped) and the rest of the model keeps
+     *   downloading;
+     * - an actual weight file is NOT skippable - its failure is collected and, once every item has
+     *   been attempted, fails the whole import with a message naming every missing weight file
+     *   (never a guess, never a partially-working model imported as if it were whole).
      */
     suspend fun downloadAndImport(
         modelId: String,
@@ -90,17 +107,74 @@ class HfDownloader(
             destination.mkdirs()
             val bytesTotal = totalBytesOrNull(items)
             var priorBytes = 0L
+            val missingEssentialFiles = mutableListOf<String>()
             items.forEachIndexed { index, item ->
                 // Defense-in-depth against path traversal (HfDownloadPlan already validates).
                 SafePath.require(item.relativePath)
                 val target = File(destination, item.relativePath)
                 val base = priorBytes
-                fetch(item, target) { withinFile -> onBytesProgress(base + withinFile, bytesTotal) }
-                priorBytes += finalSizeOf(item, target)
+                val failure = fetchOrCaptureFailure(item, target) { withinFile -> onBytesProgress(base + withinFile, bytesTotal) }
+                priorBytes += if (failure == null) finalSizeOf(item, target) else actualSizeOnDisk(target)
+                if (failure != null) handleItemFailure(modelId, item, failure, missingEssentialFiles)
                 onProgress(index + 1, items.size)
             }
+            if (missingEssentialFiles.isNotEmpty()) throw missingRequiredFilesException(missingEssentialFiles)
             importer.import(destination.absolutePath)
         }
+
+    // Runs [fetch] for one item and turns a final (all-retries-exhausted) failure into a return
+    // value instead of letting it propagate, so the loop above can decide essential-vs-not for
+    // EVERY item rather than aborting on the first one. Cancellation is not a download failure -
+    // it must keep propagating so the coroutine actually stops.
+    private suspend fun fetchOrCaptureFailure(
+        item: HfDownloadItem,
+        target: File,
+        reportWithinFile: (Long) -> Unit,
+    ): IOException? =
+        try {
+            fetch(item, target, reportWithinFile)
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            e
+        }
+
+    // A companion file's failure is recorded (never silent - rule: no silent no-ops) and the
+    // download keeps going; a weight file's failure is collected so [downloadAndImport] can refuse
+    // the whole import once every item has been attempted, naming exactly which weight(s) are missing.
+    private fun handleItemFailure(
+        modelId: String,
+        item: HfDownloadItem,
+        failure: IOException,
+        missingEssentialFiles: MutableList<String>,
+    ) {
+        if (HfDownloadPlan.isEssentialPayload(item.relativePath)) {
+            missingEssentialFiles += item.relativePath
+            return
+        }
+        diagnosticsLog.record(
+            DiagnosticsEntry(
+                atMs = clock(),
+                modelId = modelId,
+                kind = DiagnosticsKind.FAILURE,
+                detail = "Skipped ${item.relativePath} (not required to run the model): " +
+                    (failure.message?.takeIf { it.isNotBlank() } ?: failure::class.simpleName ?: "unknown error"),
+            ),
+        )
+    }
+
+    private fun missingRequiredFilesException(missing: List<String>): IOException {
+        val plural = if (missing.size > 1) "files" else "file"
+        return RequiredFileMissingException(
+            "Can't install this model: required $plural failed to download: ${missing.joinToString(", ")}",
+        )
+    }
+
+    // On failure the target may hold a partial (resumable) download or nothing at all - either way
+    // its contribution to the running byte total is whatever genuinely landed, never the item's
+    // advertised full size (that would over-report progress for a file that didn't actually finish).
+    private fun actualSizeOnDisk(target: File): Long = if (target.isFile) target.length() else 0L
 
     // Null (rather than a partial sum) the moment any item's size is unknown - a partial total
     // would silently under-report how much there is left to fetch.
@@ -332,3 +406,9 @@ private class DownloadCapExceededException(message: String) : IOException(messag
 /** A completed file's SHA-256 didn't match its pinned expectation (rule 4: fail closed). The file
  * is already deleted by the time this is thrown - see [HfDownloader.verifyOrReject]. */
 private class Sha256MismatchException(message: String) : IOException(message)
+
+/** One or more actual model-weight files ([HfDownloadPlan.isEssentialPayload]) could not be
+ * downloaded (issue #102) - the model would be unusable, so the whole import is refused rather
+ * than silently proceeding without them. Never thrown for a companion file's failure - see
+ * [HfDownloader.handleItemFailure]. */
+private class RequiredFileMissingException(message: String) : IOException(message)

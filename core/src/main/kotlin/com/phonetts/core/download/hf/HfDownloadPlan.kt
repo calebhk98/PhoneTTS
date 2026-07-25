@@ -65,6 +65,33 @@ object HfDownloadPlan {
     private const val TFEVENTS_PREFIX = "events.out.tfevents." // TensorBoard event logs
     private const val GITHUB_DIR_PREFIX = ".github/" // CI workflow YAML
 
+    // Issue #102 (second half): among the files that DO survive the denylist above (i.e. everything
+    // [forFiles] actually queues for download), these extensions are the ones a model literally
+    // cannot run without - the tensor weights themselves. Everything else that's still real payload
+    // by the denylist's standard (config.json, tokenizer/vocab files, voice-clone reference .wav,
+    // phoneme maps, ...) is a companion file: useful, sometimes required by a *particular* model, but
+    // not provably essential to every model the way a weight file is. [HfDownloader] uses this split
+    // to decide whether one file's download failure should abort the whole model (a missing weight
+    // file makes it unusable) or just be skipped and reported (a missing companion might still leave
+    // a usable, if degraded, model) - see its per-file failure handling. Deliberately format-agnostic,
+    // matching the denylist's own "don't assume a specific model family" stance.
+    private val ESSENTIAL_WEIGHT_EXTENSIONS =
+        setOf(
+            "onnx", "bin", "safetensors", "pt", "pth", "gguf", "pte", "mlx", "tflite", "nemo", "npz", "ckpt", "ort",
+        )
+
+    /**
+     * True when [path]'s extension marks it as an actual model-weight file - the file(s) a download
+     * cannot skip without producing a model that can't load at all. Matched on the file's own
+     * extension (not the full path) so it applies at any depth in the tree, same convention as
+     * [isNonPayload].
+     */
+    fun isEssentialPayload(path: String): Boolean {
+        val name = path.substringAfterLast('/')
+        val extension = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+        return extension in ESSENTIAL_WEIGHT_EXTENSIONS
+    }
+
     fun forFiles(
         modelId: String,
         files: List<HfTreeEntry>,

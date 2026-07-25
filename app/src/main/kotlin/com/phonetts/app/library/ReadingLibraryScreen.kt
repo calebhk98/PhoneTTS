@@ -1,6 +1,7 @@
 package com.phonetts.app.library
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,6 +11,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -26,7 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.phonetts.core.prefs.DocumentMeta
 import com.phonetts.core.prefs.LibraryDocument
+import com.phonetts.core.prefs.LibrarySort
 import java.text.DateFormat
 import java.util.Date
 
@@ -37,6 +42,14 @@ import java.util.Date
  * - [onOpen]'s second parameter carries the answer, and the caller (AppNav) turns it into the SAME
  * [com.phonetts.app.ui.TtsViewModel.resumeFromSaved] the main screen's own resume button uses; no
  * second resume mechanism is introduced here.
+ *
+ * Issue #139: a search field and sort control (mirroring the pattern
+ * [com.phonetts.app.manage.ModelManagementScreen] already uses for its own name filter/sort dropdown)
+ * wire the existing [ReadingLibraryViewModel.setQuery]/[ReadingLibraryViewModel.setSort] - previously
+ * built in the ViewModel with nothing in this screen to trigger them. Rows render from
+ * [DocumentMeta] alone (title/saved-at/length - no text read); only tapping Open loads one document's
+ * full text via [ReadingLibraryViewModel.open], so listing/searching/sorting never pays to read
+ * every saved book.
  */
 @Composable
 fun ReadingLibraryScreen(
@@ -44,7 +57,7 @@ fun ReadingLibraryScreen(
     onOpen: (LibraryDocument, resume: Boolean) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
-    var pendingResume by remember { mutableStateOf<LibraryDocument?>(null) }
+    var pendingResumeId by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(
@@ -54,17 +67,36 @@ fun ReadingLibraryScreen(
         ) { Text("Save current document") }
         state.status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 
+        LibrarySearchControls(
+            query = state.query,
+            onQuery = viewModel::setQuery,
+            sort = state.sort,
+            onSort = viewModel::setSort,
+        )
+
         if (state.rows.isEmpty()) {
-            Text("No saved documents yet. Write or import some text, then \"Save current document\".")
+            Text(
+                if (state.query.isBlank()) {
+                    "No saved documents yet. Write or import some text, then \"Save current document\"."
+                } else {
+                    "No saved documents match \"${state.query}\"."
+                },
+            )
         }
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(state.rows, key = { it.document.id }) { row ->
+            items(state.rows, key = { it.meta.id }) { row ->
                 DocumentRow(
                     row = row,
-                    onOpen = { if (row.hasResumePoint) pendingResume = row.document else onOpen(row.document, false) },
-                    onRename = { viewModel.startRename(row.document.id) },
-                    onDelete = { viewModel.delete(row.document.id) },
+                    onOpen = {
+                        if (row.hasResumePoint) {
+                            pendingResumeId = row.meta.id
+                        } else {
+                            viewModel.open(row.meta.id)?.let { onOpen(it, false) }
+                        }
+                    },
+                    onRename = { viewModel.startRename(row.meta.id) },
+                    onDelete = { viewModel.delete(row.meta.id) },
                 )
                 HorizontalDivider()
             }
@@ -72,21 +104,74 @@ fun ReadingLibraryScreen(
     }
 
     state.renamingId?.let { id ->
-        val current = state.rows.firstOrNull { it.document.id == id }?.document
+        val current = state.rows.firstOrNull { it.meta.id == id }?.meta
         if (current != null) {
             RenameDialog(current, onRename = { viewModel.rename(id, it) }, onDismiss = viewModel::cancelRename)
         }
     }
 
-    pendingResume?.let { document ->
+    val pendingResumeMeta = state.rows.firstOrNull { it.meta.id == pendingResumeId }?.meta
+    pendingResumeMeta?.let { meta ->
         ResumeChoiceDialog(
-            documentTitle = document.title,
-            onResume = { onOpen(document, true); pendingResume = null },
-            onStartOver = { onOpen(document, false); pendingResume = null },
-            onDismiss = { pendingResume = null },
+            documentTitle = meta.title,
+            onResume = { viewModel.open(meta.id)?.let { onOpen(it, true) }; pendingResumeId = null },
+            onStartOver = { viewModel.open(meta.id)?.let { onOpen(it, false) }; pendingResumeId = null },
+            onDismiss = { pendingResumeId = null },
         )
     }
 }
+
+/** Search field + sort dropdown (issue #139) - same shape as [com.phonetts.app.manage.ModelManagementScreen]'s
+ * `ManageControls`: a full-width [OutlinedTextField] for the query, an [OutlinedButton]-backed
+ * [DropdownMenu] for the sort choice, so the two library-ish screens in this app feel the same. */
+@Composable
+private fun LibrarySearchControls(
+    query: String,
+    onQuery: (String) -> Unit,
+    sort: LibrarySort,
+    onSort: (LibrarySort) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQuery,
+            label = { Text("Search title or text") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        LibrarySortMenu(sort, onSort)
+    }
+}
+
+@Composable
+private fun LibrarySortMenu(
+    selected: LibrarySort,
+    onSelect: (LibrarySort) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) { Text("Sort: ${sortLabel(selected)}") }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            LibrarySort.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(sortLabel(option)) },
+                    onClick = {
+                        expanded = false
+                        onSelect(option)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun sortLabel(sort: LibrarySort): String =
+    when (sort) {
+        LibrarySort.RECENT -> "Most recent"
+        LibrarySort.OLDEST -> "Oldest first"
+        LibrarySort.TITLE -> "Title (A-Z)"
+        LibrarySort.LONGEST -> "Longest first"
+    }
 
 @Composable
 private fun DocumentRow(
@@ -95,7 +180,7 @@ private fun DocumentRow(
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val document = row.document
+    val meta = row.meta
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -103,10 +188,12 @@ private fun DocumentRow(
     ) {
         // mergeDescendants = true (issue #141 rule 3): the title/preview/saved-at/resume-point lines
         // announce as one TalkBack stop; Open/Rename/Delete stay separate, individually reachable nodes.
+        // Issue #139: rendered from DocumentMeta alone (title/saved-at/length) - no document's text
+        // is read just to show this row, so a snippet-of-content preview is a length count instead.
         Column(modifier = Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
-            Text(document.title, fontWeight = FontWeight.Bold)
-            Text(preview(document.text), style = MaterialTheme.typography.bodySmall, maxLines = 2)
-            Text(formatSavedAt(document.savedAtMillis), style = MaterialTheme.typography.bodySmall)
+            Text(meta.title, fontWeight = FontWeight.Bold)
+            Text(lengthLabel(meta.length), style = MaterialTheme.typography.bodySmall)
+            Text(formatSavedAt(meta.savedAtMillis), style = MaterialTheme.typography.bodySmall)
             if (row.hasResumePoint) {
                 Text("Has a saved resume position", style = MaterialTheme.typography.bodySmall)
             }
@@ -123,11 +210,11 @@ private fun DocumentRow(
 
 @Composable
 private fun RenameDialog(
-    document: LibraryDocument,
+    meta: DocumentMeta,
     onRename: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var title by remember(document.id) { mutableStateOf(document.title) }
+    var title by remember(meta.id) { mutableStateOf(meta.title) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rename document") },
@@ -156,12 +243,8 @@ private fun ResumeChoiceDialog(
     )
 }
 
-private fun preview(text: String): String {
-    val singleLine = text.replace('\n', ' ').trim()
-    if (singleLine.length <= PREVIEW_MAX_CHARS) return singleLine
-    return singleLine.take(PREVIEW_MAX_CHARS).trimEnd() + "…"
-}
+/** issue #139: metadata-only rows have no text to snippet-preview, so [DocumentMeta.length] (already
+ * computed and stored when the document was saved) stands in for it. */
+private fun lengthLabel(characters: Int): String = "$characters characters"
 
 private fun formatSavedAt(savedAtMillis: Long): String = DateFormat.getDateTimeInstance().format(Date(savedAtMillis))
-
-private const val PREVIEW_MAX_CHARS = 120

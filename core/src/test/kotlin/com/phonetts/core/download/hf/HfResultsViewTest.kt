@@ -361,4 +361,141 @@ class HfResultsViewTest {
             assertTrue(filtered.size <= big.size)
         }
     }
+
+    // --- Second pass at the same investigation, at the task's mandated scale (200, not 150) and
+    // with the two extra ingredients the first pass didn't isolate: an explicit "null key" (a
+    // benchmarked-nowhere id simply absent from the map - the real shape a caller passes, since
+    // Map<String, Double> can't hold a null Double value) alongside NaN/+Inf/-Inf, AND a literal
+    // "the backing map's answer changes while the sort is running" reproduction - not merely mixed
+    // sentinel VALUES, but the map's answer for the SAME KEY differing between two reads of it.
+    //
+    // VERDICT, with evidence:
+    //
+    // 1) NaN/Infinity/absent Double sort keys (the "RTF/size estimate can be NaN" hypothesis):
+    //    ELIMINATED. Kotlin's sortedBy/compareBy never use the raw `<`/`>` operators that make a
+    //    hand-rolled NaN comparator inconsistent - they dispatch through compareValues(), which
+    //    calls the boxed Comparable<Double>.compareTo(), i.e. java.lang.Double.compare(), the JDK's
+    //    well-defined TOTAL order over Double that places NaN as (consistently) greater than every
+    //    other value including +Infinity, and treats -0.0 < 0.0. That is a real, well-documented JDK
+    //    guarantee, not a Kotlin-specific accident - see sortsByNaNInfinityAndAbsentKeysAt200 below,
+    //    which proves it holds at 200 elements (comfortably past TimSort's 32-element insertion-sort
+    //    cutoff) for every sort option HfResultsView exposes.
+    // 2) "A map mutated by another coroutine during the sort" (the concurrency hypothesis): the
+    //    MECHANISM is real and reproducible - see backingMapAnswerChangingBetweenReadsViolatesTimSortsContract
+    //    below, which deterministically (no thread race needed) makes Kotlin's sortedBy throw
+    //    "Comparison method violates its general contract!" by having the SAME key answer a
+    //    different Double on successive reads (sortedBy re-invokes its selector on every single
+    //    pairwise comparison TimSort makes - it is not a decorate-sort-undecorate/Schwartzian
+    //    transform that caches each element's key once up front, so a live, changing selector is
+    //    absolutely capable of this crash). BUT this cannot reach HfBrowseViewModel's real call
+    //    path: HfBrowseUiState.sizeEstimates/rtfEstimates/compatibility/fileFormats are plain Kotlin
+    //    Maps rebuilt via `+` on every `mutableState.update{}` (a new map object each time, never
+    //    mutated in place), and every sort/filter call (displayedResults(state), applyFilters(state,
+    //    ...)) takes `state` as an explicit parameter rather than re-reading the live StateFlow
+    //    mid-computation - so the Map instance a live sortedBy call has closed over can never change
+    //    under it. Verdict: PLAUSIBLE AS A GENERAL JVM FOOTGUN, ELIMINATED AS THE CAUSE HERE, because
+    //    nothing on this call path ever hands a live/mutable Map into HfResultsView.sort.
+    // 3) compareBy/thenBy over nullable keys: audited every compareBy/sortedBy/sortedWith call in
+    //    `:core`'s download/hf package (HfResultsView.kt lines 138/156/166/179/222,
+    //    HfLanguages.kt:56, HfFileFormat.kt:46) - none sorts a nullable key; the one thenBy chain
+    //    (frequentTags' compareByDescending<Entry>{it.value}.thenBy{it.key}) sorts a groupingBy
+    //    result's non-null Int count and non-null String tag. ELIMINATED for this owned code.
+    private fun manyResultsWithIndexIds(count: Int): List<HfModelSummary> =
+        (0 until count).map { i -> HfModelSummary(id = "id-$i", likes = i, downloads = count - i) }
+
+    @Test
+    fun sortsByNaNInfinityAndAbsentKeysAt200() {
+        val big = manyResultsWithIndexIds(200)
+        // Every fifth id has no entry at all (the real "null key" shape - never benchmarked/sized),
+        // NaN/+Inf/-Inf are mixed into the rest alongside ordinary finite values.
+        val rtf =
+            big.indices.mapNotNull { i ->
+                val value =
+                    when {
+                        i % 5 == 0 -> null
+                        i % 41 == 0 -> Double.NaN
+                        i % 13 == 0 -> Double.POSITIVE_INFINITY
+                        i % 17 == 0 -> Double.NEGATIVE_INFINITY
+                        else -> i.toDouble() * 0.007
+                    }
+                value?.let { big[i].id to it }
+            }.toMap()
+        val sizes =
+            big.indices.mapNotNull { i ->
+                if (i % 5 == 0) return@mapNotNull null
+                big[i].id to HfSizeEstimate(knownBytes = (i.toLong() + 1) * 111L, unknownFileCount = 0)
+            }.toMap()
+        HfSortOption.entries.forEach { option ->
+            val sorted = HfResultsView.sort(big, option, sizeEstimates = sizes, rtfEstimates = rtf)
+            assertEquals(200, sorted.size)
+            assertEquals(big.map { it.id }.toSet(), sorted.map { it.id }.toSet())
+        }
+    }
+
+    @Test
+    fun backingMapAnswerChangingBetweenReadsCanViolateTimSortsContract() {
+        // NOT a reproduction of any real HfBrowseViewModel call (see the kdoc above) - this proves
+        // the mutation hypothesis' MECHANISM is real in the general case, using a deterministic
+        // "flapping" map instead of a real thread race so the test is reliable rather than flaky.
+        // Calibrated externally (a standalone Arrays.sort(Integer[], (a,b) -> random.nextInt(3)-1)
+        // repro): a purely-random comparator at 200 elements throws TimSort's contract error on
+        // roughly a third of individual attempts, never on 100% of them (the check is a best-effort
+        // internal invariant, not guaranteed for every inconsistent comparator/merge shape) - so
+        // this retries across many independent seeds rather than asserting on a single attempt,
+        // which is what a single-shot version of this test got wrong the first time it was run.
+        val big = manyResultsWithIndexIds(200)
+        val threw =
+            (1..MUTATION_REPRO_ATTEMPTS).any { seed ->
+                val flapping = FlappingRtfMap(big.map { it.id }, seed = seed.toLong())
+                runCatching {
+                    HfResultsView.sort(big, HfSortOption.FASTEST_RTF, rtfEstimates = flapping)
+                }.exceptionOrNull() is IllegalArgumentException
+            }
+        assertTrue(
+            threw,
+            "a map whose answer for the SAME key differs between reads is expected to eventually " +
+                "violate TimSort's comparator contract across $MUTATION_REPRO_ATTEMPTS independent " +
+                "attempts - if this stops reproducing, the JVM/Kotlin stdlib's sort changed in a way " +
+                "worth re-checking this investigation against",
+        )
+    }
+
+    /** A [Map] that answers a genuinely FRESH, unrelated [Double] on every single read of the same
+     * key - the standard, maximal-inconsistency technique for reliably tripping
+     * `java.util.TimSort`'s "Comparison method violates its general contract!" check (the same
+     * technique as the well-known `Arrays.sort(array, (a, b) -> random.nextInt(3) - 1)`
+     * reproduction) - modeling "the backing value changes mid-sort" without depending on a real
+     * thread race (which would make the test flaky/order-dependent). Only [get] matters here:
+     * [HfResultsView]'s sort helpers read exclusively via `map[id]`/`map.getValue(id)` (the latter
+     * a stdlib extension over [get]), never via [entries]/[values], so those are left trivially
+     * empty. */
+    private class FlappingRtfMap(ids: List<String>, seed: Long) : Map<String, Double> {
+        private val idSet = ids.toSet()
+        private val random = java.util.Random(seed)
+
+        override val size: Int get() = idSet.size
+        override val entries: Set<Map.Entry<String, Double>> get() = emptySet()
+        override val keys: Set<String> get() = idSet
+        override val values: Collection<Double> get() = emptyList()
+
+        override fun isEmpty(): Boolean = idSet.isEmpty()
+
+        override fun containsKey(key: String): Boolean = key in idSet
+
+        override fun containsValue(value: Double): Boolean = false
+
+        override fun get(key: String): Double? {
+            if (key !in idSet) return null
+            // A fresh, independent value every single call - the SAME pair of keys can therefore
+            // compare as "a < b" on one read and "a > b" on the next, which is precisely what
+            // "violates its general contract" means. No real value in this codebase can behave this
+            // way (see the kdoc above) - this is the theoretical ceiling of "a value that changes
+            // mid-sort", to prove the mechanism rather than approximate it.
+            return random.nextDouble()
+        }
+    }
+
+    private companion object {
+        private const val MUTATION_REPRO_ATTEMPTS = 50
+    }
 }

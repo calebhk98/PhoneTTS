@@ -3,6 +3,7 @@ package com.phonetts.app.library
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
+import com.phonetts.core.prefs.DocumentMeta
 import com.phonetts.core.prefs.LibraryDocument
 import com.phonetts.core.prefs.LibrarySort
 import com.phonetts.core.text.DocumentId
@@ -26,21 +27,20 @@ import kotlinx.coroutines.launch
  * so [Row.hasResumePoint] simply reports whether that existing lookup would find something, letting
  * the screen ask "resume, or start over?" before opening.
  *
- * [AppGraph.documentLibrary] (issue #139) now lists/searches over small METADATA only, so this class
- * hydrates each visible row's full text with a follow-up [com.phonetts.core.prefs.DocumentLibrary.get]
- * - opening a document still needs its full text (see [com.phonetts.app.library.ReadingLibraryScreen],
- * which passes the whole [LibraryDocument] straight through to the reader), so visiting this screen
- * still reads every currently-listed book once, same as before the storage change. What #139 actually
- * fixes is everything ELSE: renaming/deleting/adding no longer rewrites every other saved book's text,
- * and the metadata index alone (not the whole library) is what's touched at each of those points.
+ * [AppGraph.documentLibrary] (issue #139) lists/searches over small METADATA only - and this class
+ * now takes advantage of that: [refresh] renders every row straight from [DocumentMeta] (id, title,
+ * saved-at, length), never reading a single document's full text just to list it. Only [open] pays
+ * to load text, and only for the ONE document the user actually taps - opening a book-length saved
+ * document no longer means every OTHER saved document's text was read first.
  */
 class ReadingLibraryViewModel(
     private val graph: AppGraph,
     private val initialText: String,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
-    /** One row in the list: the saved document plus whether a resume position exists for it. */
-    data class Row(val document: LibraryDocument, val hasResumePoint: Boolean)
+    /** One row in the list: a saved document's metadata (no text - see class kdoc) plus whether a
+     * resume position exists for it. */
+    data class Row(val meta: DocumentMeta, val hasResumePoint: Boolean)
 
     data class UiState(
         val rows: List<Row> = emptyList(),
@@ -63,18 +63,30 @@ class ReadingLibraryViewModel(
         refresh()
     }
 
-    /** Re-read the saved documents (honoring the current [UiState.query]/[UiState.sort]) - call after any mutation. */
+    /** Re-read the saved documents (honoring the current [UiState.query]/[UiState.sort]) - call after any mutation.
+     * Metadata-only (see class kdoc): no document's text is read just to list it. */
     fun refresh() {
         val query = mutableState.value.query
         val sort = mutableState.value.sort
         val metas =
             if (query.isBlank()) graph.documentLibrary.list(sort) else graph.documentLibrary.search(query, sort)
-        val rows =
-            metas.mapNotNull { meta ->
-                val document = graph.documentLibrary.get(meta.id) ?: return@mapNotNull null
-                Row(document, graph.documentMemory.resume(meta.id) != null)
-            }
+        val rows = metas.map { meta -> Row(meta, graph.documentMemory.resume(meta.id) != null) }
         mutableState.update { it.copy(rows = rows) }
+    }
+
+    /**
+     * Loads one document's full text by id, for actually opening it (the one place this screen
+     * still needs more than metadata). A `null` result (id vanished, or its text document is
+     * missing) is surfaced via [UiState.status] rather than a silent no-op on the Open action (rule:
+     * no silent no-ops on a control path) - the caller (the screen) simply doesn't navigate when
+     * this returns null.
+     */
+    fun open(id: String): LibraryDocument? {
+        val document = graph.documentLibrary.get(id)
+        if (document == null) {
+            mutableState.update { it.copy(status = "Couldn't open that document - it may have been removed.") }
+        }
+        return document
     }
 
     /** Updates the title/content search filter and re-runs [refresh] against it. */

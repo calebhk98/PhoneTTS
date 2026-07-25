@@ -41,6 +41,7 @@ import com.phonetts.core.download.hf.QuantizationVariant
 import com.phonetts.core.download.hf.needsEagerSizeFetch
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.registry.ModelCatalog
+import com.phonetts.core.store.DurableErrorLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,9 +58,10 @@ import kotlinx.coroutines.withContext
 /**
  * Drives the HF browse screen: live search of text-to-speech models, sort/filter over the results
  * (issue #6), download → import of a chosen repo with **multiple downloads running at once**
- * (issue #2), on-demand size lookups (issue #7), and a retained/copyable error log (issue #3). All
- * model detection is delegated to the core resolver via [HfDownloader]; this class holds UI state
- * only and names no model family.
+ * (issue #2), on-demand size lookups (issue #7), and a retained/copyable error log (issue #3) that
+ * also mirrors into a durable, cross-restart store (issue #88, see [durableErrorLog]). All model
+ * detection is delegated to the core resolver via [HfDownloader]; this class holds UI state only and
+ * names no model family.
  */
 class HfBrowseViewModel(
     private val catalog: HfCatalog,
@@ -78,6 +80,19 @@ class HfBrowseViewModel(
     // this file's ownership) passes a real DownloadNotifier(context) to turn it on. See
     // DownloadNotifier's kdoc.
     private val notifier: DownloadNotifier? = null,
+    // Issue #88: the session error log below (`HfBrowseUiState.errorLog`) is in-memory only and dies
+    // with the process - a user who hits a search/size/download error, backgrounds the app, and comes
+    // back has nothing left to copy. [logError] mirrors every entry into this durable, bounded sink
+    // too (see [DurableErrorLog], already the shared home [MainActivity]'s Help screen reads for
+    // crash rows) so the same error survives a restart. Null by default, exactly like [notifier]
+    // above - this class (and any test constructing it directly) needs no real Android storage; the
+    // caller wiring up the real dependency (AppGraph/MainActivity, outside this file's ownership)
+    // passes `graph.durableErrorLog` to turn it on.
+    // EXTERNAL WIRING REQUIRED: the real call site (VoicesHubScreen's BrowseTabContent) is outside
+    // this file's ownership for this change and still needs `durableErrorLog = graph.durableErrorLog`
+    // added to its HfBrowseViewModel(...) construction - see this file's onConnectivityAvailable kdoc
+    // for the same kind of "built here, wired elsewhere" note.
+    private val durableErrorLog: DurableErrorLog? = null,
     // The transport used ONLY to fetch upstream rhasspy/piper-voices' `voices.json` (issue: don't
     // check in a static Piper voice snapshot - see PiperVoicesIndex). Defaults to the same real
     // HTTP client [catalog] itself is built on elsewhere in the graph, so the caller wiring this up
@@ -1052,7 +1067,9 @@ class HfBrowseViewModel(
     fun onConnectivityAvailable() = resumeFailedDownloads()
 
     /** Appends [e] to the retained error log (issue #3), bounded to [MAX_HF_ERROR_LOG] entries, and
-     * returns a display message for the caller's own inline banner. */
+     * returns a display message for the caller's own inline banner. Every search/size/download
+     * failure funnels through here (see the call sites above), so mirroring into [durableErrorLog]
+     * here (issue #88) covers all three without a second logging path. */
     private fun logError(
         modelId: String?,
         e: Throwable,
@@ -1064,8 +1081,20 @@ class HfBrowseViewModel(
         mutableState.update { current ->
             current.copy(errorLog = appendError(current.errorLog, HfBrowseError(clock(), modelId, message)))
         }
+        // Durable mirror (issue #88): a null durableErrorLog (no real store wired - see the
+        // constructor param's kdoc) makes this a no-op, same fail-closed shape as [notifier] elsewhere
+        // in this class. DurableErrorLog bounds/persists itself; nothing extra to do here.
+        durableErrorLog?.record(atMs = clock(), source = DURABLE_ERROR_SOURCE, message = durableMessage(modelId, message))
         return message
     }
+
+    // DurableErrorLog's entries carry a plain message string, no separate model-id field (unlike this
+    // screen's own HfBrowseError) - fold the model id in as a prefix so the Help screen's log (which
+    // renders "[source] message") still tells the two apart.
+    private fun durableMessage(
+        modelId: String?,
+        message: String,
+    ): String = if (modelId != null) "$modelId: $message" else message
 
     // Collapses a repeat-identical newest entry into a single "(xN)" row rather than prepending a
     // duplicate (issue #103) - a transient loop (or a 429 that slipped past the cooldown) can't flood
@@ -1138,6 +1167,11 @@ class HfBrowseViewModel(
         // can be a little more generous than [MAX_CONCURRENT_DOWNLOADS] while still keeping a fast
         // scroll from firing dozens of requests at the HF file-tree endpoint simultaneously.
         private const val MAX_CONCURRENT_SIZE_LOOKUPS = 3
+
+        // Issue #88: the [DurableErrorLog.record] "source" tag for every error this screen mirrors
+        // into the durable log, so the Help screen's shared log (which shows "[source] message") can
+        // tell a Browse-originated row apart from a crash row or any other subsystem's.
+        private const val DURABLE_ERROR_SOURCE = "browse"
     }
 }
 

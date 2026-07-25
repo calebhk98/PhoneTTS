@@ -1,7 +1,9 @@
 package com.phonetts.app.hf
 
 import com.phonetts.app.testing.FakeHttpClient
+import com.phonetts.core.download.builtin.BuiltInModel
 import com.phonetts.core.download.hf.HfCatalog
+import com.phonetts.core.download.hf.HfModelSummary
 import com.phonetts.core.registry.ModelCatalog
 import com.phonetts.core.resolver.InMemoryOverrideStore
 import com.phonetts.core.resolver.Resolver
@@ -125,5 +127,56 @@ class HfBrowseDuplicateKeyRegressionTest {
         val renderedKeys = displayed.map { "hf:${it.id}" }
         assertEquals(1, displayed.size)
         assertEquals(renderedKeys.size, renderedKeys.toSet().size)
+    }
+
+    /**
+     * Regression test for the OTHER way a Browse LazyColumn key can collide: the same raw HF repo
+     * id appearing in more than one SECTION at once. The owner's lead ("might be filters/sort")
+     * plus the fact rhasspy/piper-voices ships `en_US-lessac-medium` - the exact same voice
+     * [com.phonetts.core.download.builtin.BuiltInCatalog.PIPER_LESSAC] curates as a "Recommended"
+     * one-tap model, and which can ALSO show up as a raw Hugging Face search result for "piper" -
+     * makes this a real, not merely theoretical, id collision across "rec:"/"piper:"/"hf:".
+     *
+     * [HfBrowseScreen]'s three `items(...)` calls key each section with a distinct string prefix
+     * ("rec:${it.id}", "piper:${it.id}", "hf:${it.id}") specifically so a raw id repeated across
+     * Recommended, Piper voices, and live search results can never produce a duplicate LazyColumn
+     * key - this test locks that invariant in directly (rather than relying on it only being
+     * documented in this class's kdoc) so a future edit that drops one of those prefixes fails a
+     * test instead of shipping a crash.
+     */
+    @Test
+    fun `the same raw id in recommended, piper voices, and search results never collides as a LazyColumn key`() {
+        val sharedId = "rhasspy/piper-voices/en_US-lessac-medium"
+
+        val recommendedRow =
+            BuiltInModel(
+                id = sharedId,
+                displayName = "Piper - Lessac (English, US, medium)",
+                repoId = "rhasspy/piper-voices",
+                approxSizeMb = 20,
+                files = emptyList(),
+            )
+        val piperRow =
+            BuiltInModel(
+                id = sharedId,
+                displayName = "Piper - Lessac (English, US, medium)",
+                repoId = "rhasspy/piper-voices",
+                approxSizeMb = 20,
+                files = emptyList(),
+            )
+        val searchRow = HfModelSummary(id = sharedId, likes = 1, downloads = 1)
+
+        // Exactly what HfBrowseScreen.kt's three `items(..., key = { ... })` calls compute.
+        val recommendedKeys = listOf(recommendedRow).map { "rec:${it.id}" }
+        val piperKeys = listOf(piperRow).map { "piper:${it.id}" }
+        val searchKeys = listOf(searchRow).map { "hf:${it.id}" }
+
+        val allKeys = recommendedKeys + piperKeys + searchKeys
+        assertEquals(
+            "the SAME raw id in all three sections must still produce three DISTINCT rendered " +
+                "keys, or Compose throws a duplicate-key IllegalArgumentException across sections",
+            allKeys.size,
+            allKeys.toSet().size,
+        )
     }
 }
