@@ -6,6 +6,14 @@ plugins {
     alias(libs.plugins.ktlint)
 }
 
+// The engine modules settings.gradle.kts discovered on disk (:engines:common is shared plumbing,
+// not an engine). One derivation, no hand-maintained list - see settings.gradle.kts.
+val engineProjectPaths =
+    rootProject.subprojects
+        .map { it.path }
+        .filter { it.startsWith(":engines:") && it != ":engines:common" }
+        .sorted()
+
 dependencies {
     testImplementation(project(":core"))
     testImplementation(testFixtures(project(":core")))
@@ -18,15 +26,19 @@ dependencies {
     testImplementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
 
     // Every engine module on the test classpath - discovered by ServiceLoader, never named here.
-    testImplementation(project(":engines:cosyvoice2"))
-    testImplementation(project(":engines:melotts"))
-    testImplementation(project(":engines:piper"))
-    testImplementation(project(":engines:kittentts"))
-    testImplementation(project(":engines:kokoro"))
+    // This comment used to sit directly above five hand-written module names, and the other ten
+    // engines therefore got no cross-module coverage at all. Derived from the same on-disk
+    // authority settings.gradle.kts uses, so it can no longer go stale.
+    engineProjectPaths.forEach { path -> testImplementation(project(path)) }
 }
 
 tasks.test {
     useJUnitPlatform()
+    // Let AllEnginesDiscoveryTest assert against however many engine modules actually exist rather
+    // than a hand-edited constant. The constant it replaced said 5 while 15 modules were on disk,
+    // so the one test meant to prove "every engine drops in via ServiceLoader" was passing while
+    // ignoring two thirds of them.
+    systemProperty("phonetts.expectedEngineCount", engineProjectPaths.size)
     // Forward the opt-in flags for the network+native RealModel*AutoLoadTests into the test JVM
     // (gradle does not propagate -D system properties to forked test workers by default).
     System.getProperty("runRealModel")?.let { systemProperty("runRealModel", it) }

@@ -181,6 +181,7 @@ class StreamingEncoderTest {
             override fun openWriter(
                 sampleRate: Int,
                 out: OutputStream,
+                isCancelled: () -> Boolean,
             ): SegmentWriter =
                 object : SegmentWriter {
                     override fun write(segment: FloatArray) {

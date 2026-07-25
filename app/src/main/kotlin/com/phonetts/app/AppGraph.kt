@@ -14,13 +14,17 @@ import com.phonetts.app.sideload.SideloadCoordinator
 import com.phonetts.app.store.FilesDurableStore
 import com.phonetts.app.text.EspeakPhonemizer
 import com.phonetts.app.textimport.FileTextImporter
+import com.phonetts.app.update.ApkUpdateDownloader
 import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.PlatformServices
 import com.phonetts.core.metrics.BenchmarkHistory
+import com.phonetts.core.metrics.UsageStatsStore
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentLibrary
+import com.phonetts.core.prefs.DocumentBookmarksStore
+import com.phonetts.core.prefs.DocumentLibraryMigration
 import com.phonetts.core.prefs.DefaultVoicePreference
 import com.phonetts.core.prefs.DocumentMemory
 import com.phonetts.core.prefs.LastUsedSelectionStore
@@ -30,6 +34,7 @@ import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.DetectionFailureExplainer
+import com.phonetts.core.session.SessionStateStore
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
 import com.phonetts.core.registry.EngineRegistry
@@ -173,6 +178,12 @@ class AppGraph(context: Context) {
     // only ever OFFERS it - never force-updates (the UI shows a dismissible banner). Fail-closed.
     val updateChecker = UpdateChecker(HttpUrlConnectionClient())
 
+    // Fetches that APK ourselves, with progress + SHA-256 verification, rather than handing the URL
+    // to the browser - GitHub's asset URL redirects to a short-lived signed link that a queued or
+    // retried browser download outlives, which is why those downloads "never finished". See
+    // ApkUpdateDownloader's kdoc.
+    val apkUpdateDownloader = ApkUpdateDownloader(appContext.cacheDir)
+
     // Manage (list sizes / delete) downloaded models. File I/O is injected so :core stays pure;
     // deleting the loaded model unloads it first and forgets its saved override (PrefsOverrideStore
     // is clearable), keeping the catalog, memory, and override store consistent. Also owns the
@@ -260,11 +271,6 @@ class AppGraph(context: Context) {
     val readingTextPreferences = ReadingTextPreferences(preferenceStore)
     val lastUsedSelection = LastUsedSelectionStore(preferenceStore)
 
-    // Saved multi-document library (issue #19-5): titles/text only, keyed by the same content-derived
-    // id DocumentMemory uses for resume positions (see TtsViewModel.documentIdFor), so opening a saved
-    // document lines up with its resume point automatically.
-    val documentLibrary = DocumentLibrary(preferenceStore)
-
     // Saved voice mixes (issue #42): only the recipe (two source voice ids + weight) is stored;
     // the blended embedding is recomputed by the engine on load, so no audio/embedding is persisted.
     val blendedVoices = BlendedVoiceStore(preferenceStore)
@@ -289,7 +295,32 @@ class AppGraph(context: Context) {
     // every "must survive a restart" store below, mirroring how DownloadDiagnosticsLog persists but
     // generalised behind the :core DurableStore seam. Lives under filesDir/durable (app-private
     // internal storage), so it is untouched by a model-storage relocation (only weights move).
-    private val durableStore = FilesDurableStore(java.io.File(appContext.filesDir, FilesDurableStore.DIRECTORY_NAME))
+    private val durableStore = FilesDurableStore(durableDir(appContext))
+
+    // Saved multi-document library (issue #19-5): titles/text only, keyed by the same content-derived
+    // id DocumentMemory uses for resume positions (see TtsViewModel.documentIdFor), so opening a saved
+    // document lines up with its resume point automatically. Backed by [durableStore] (issue #140 -
+    // SHA-256 document identity replaced the old collidable 32-bit hash), so it must be declared AFTER
+    // durableStore above, not the plain [preferenceStore] this used to read.
+    val documentLibrary = DocumentLibrary(durableStore)
+
+    // Re-key an existing user's saved library and resume positions onto the new SHA-256 document ids
+    // (issue #140). Without this call the migration is dead code and every previously-saved document
+    // becomes permanently invisible - still on disk, never read again - which is a worse bug than the
+    // hash collision it fixes. Idempotent and fail-closed: it clears the legacy key only after a
+    // complete pass, so an interrupted run simply retries next launch.
+    //
+    // Runs OFF the main thread. AppGraph is constructed in Application.onCreate(), so doing this
+    // inline blocked app startup on rewriting every saved document's full text to disk - and
+    // FilesDurableStore's own kdoc says plainly that callers must not do that on the main thread.
+    // It would have stalled the very first launch after upgrading, for exactly the users who have a
+    // library worth migrating. The migration is idempotent and fail-closed, so running it
+    // concurrently with startup is safe: an interrupted pass simply retries next launch.
+    init {
+        appScope.launch(Dispatchers.IO) {
+            DocumentLibraryMigration.migrate(preferenceStore, documentLibrary, documentMemory)
+        }
+    }
 
     /**
      * The shared Favorites store the tournament (#113), home-favorites (#119), and persistence (#114)
@@ -299,6 +330,24 @@ class AppGraph(context: Context) {
      * now holds only the per-language default voice, not favorites.
      */
     val favoritesStore = FavoritesStore(durableStore)
+
+    // Named per-document bookmarks (#150), over the same durable store the favorites/session state
+    // use. Wired here rather than left as a note - the reading library defaults to a store at this
+    // exact path either way, so an unwired copy would silently be a second, divergent instance.
+    val documentBookmarks = DocumentBookmarksStore(durableStore)
+
+    // Cumulative listening/generation counters behind the Stats screen. Everything else Stats shows
+    // (storage, benchmark history, download health) is read from stores that already existed; these
+    // totals are the one genuinely new measurement, because GenerationStats and ListeningTimeEstimator
+    // both compute per-run figures and then throw them away.
+    val usageStatsStore = UsageStatsStore(durableStore)
+
+    // What the user was doing last time: reader text, the audio toggles, each list's sort/filter.
+    // None of it survived a restart before - no view model used SavedStateHandle, so anything not
+    // written to a store died with the process (routine on a 4 GB phone whenever the app is
+    // backgrounded). One document over the same durable store the favorites/error log already use,
+    // rather than another dozen loose SharedPreferences keys.
+    val sessionState = SessionStateStore(durableStore)
 
     /**
      * The durable app-wide error/diagnostics log (issue #88 + #114): survives process death, unlike
@@ -327,6 +376,17 @@ class AppGraph(context: Context) {
     // display names/extensions/MIME from here - no format string is hardcoded in the UI (SSOT).
     val exportFormats = ExportFormats.available(appContext)
 
+    // Drives the actual folder rescan behind [hydrate] (issue: overlapping catalog hydration races).
+    // Retains the launched Job (cancelling any prior one before starting a new one) and serializes
+    // the scan body behind a Mutex, so a stale scan of an OLD models folder can never write catalog
+    // entries after a newer [relocateStorage]'s `catalog.clear()` - see [CatalogHydrator]'s own kdoc.
+    private val catalogHydrator =
+        CatalogHydrator(
+            scope = appScope,
+            folders = { modelsBaseDir().resolve(ModelStorage.MODELS_DIR).listFiles()?.filter { it.isDirectory } ?: emptyList() },
+            importFolder = { path -> importer.import(path) },
+        )
+
     /**
      * Re-import previously downloaded/sideloaded model folders so the catalog is repopulated on
      * every launch (a saved override makes each re-resolve fast). Best-effort per folder - a
@@ -342,12 +402,10 @@ class AppGraph(context: Context) {
         // large library can't stall the first frame for many seconds at launch: the catalog bumps its
         // revision as each model lands, and the home screen (TtsViewModel) re-reads the list on that
         // signal, so models appear as they resolve instead of the UI blocking on the whole scan. The
-        // catalog is @Synchronized, so background mutation is safe.
-        appScope.launch(Dispatchers.IO) {
-            val modelsDir = modelsBaseDir().resolve(ModelStorage.MODELS_DIR)
-            val folders = modelsDir.listFiles()?.filter { it.isDirectory } ?: emptyList()
-            folders.forEach { folder -> runCatching { importer.import(folder.absolutePath) } }
-        }
+        // catalog is @Synchronized, so background mutation is safe. [catalogHydrator] retains the Job
+        // and cancels any prior scan first, so calling this again (e.g. from [relocateStorage]) can't
+        // race a still-running earlier scan.
+        catalogHydrator.rescan()
         registerBuiltInDescriptors()
     }
 
@@ -373,5 +431,21 @@ class AppGraph(context: Context) {
         // Where the in-app update check looks for newer APKs (the GitHub Releases of this repo).
         const val REPO_OWNER = "calebhk98"
         const val REPO_NAME = "PhoneTTS"
+
+        // The one place the durable-store directory path is built, so [durableStore] above and
+        // [durableErrorLogFor] below can never drift apart (SSOT).
+        private fun durableDir(context: Context): java.io.File =
+            java.io.File(context.applicationContext.filesDir, FilesDurableStore.DIRECTORY_NAME)
+
+        /**
+         * Builds the durable error log straight from a bare [Context], without needing a full
+         * [AppGraph]. [com.phonetts.app.diagnostics.CrashReporter] uses this to install the crash
+         * handler as the very first thing [com.phonetts.app.PhoneTtsApplication.onCreate] does - before
+         * [AppGraph] itself is built - so a crash during graph construction is also captured, not just
+         * crashes after startup finishes. Points at the exact same on-disk document [durableErrorLog]
+         * reads/writes, so anything recorded here shows up once the graph exists and MainActivity reads
+         * it for the Help screen (issue: crash log).
+         */
+        fun durableErrorLogFor(context: Context): DurableErrorLog = DurableErrorLog(FilesDurableStore(durableDir(context)))
     }
 }

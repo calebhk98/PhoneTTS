@@ -106,4 +106,30 @@ class HfDownloadPlanTest {
             "model.onnx",
         ).forEach { assertTrue(it in paths, "$it is a required payload/companion file and must be kept") }
     }
+
+    @Test
+    fun classifiesWeightFilesAsEssentialAndEverythingElseAsNot() {
+        // Issue #102: a per-item download failure is only fatal for an actual weight file - a
+        // config/tokenizer/voice-sample failure must be recoverable (see HfDownloader).
+        listOf(
+            "model.onnx", "pytorch_model.bin", "model.safetensors", "weights.pt", "weights.pth",
+            "model.gguf", "model.pte", "model.mlx", "model.tflite", "model.nemo", "voices.npz",
+            "model.ckpt", "model.ort", "nested/dir/model.onnx",
+        ).forEach { assertTrue(HfDownloadPlan.isEssentialPayload(it), "$it is a model-weight file, must be essential") }
+
+        listOf(
+            "config.json",
+            "tokenizer.json",
+            "vocab.txt",
+            "hparams.yaml",
+            "alice.reference.wav",
+            "alice.reference.txt",
+            "kitten_config.json",
+        ).forEach { name ->
+            assertTrue(
+                !HfDownloadPlan.isEssentialPayload(name),
+                "$name is a companion file, must not be essential",
+            )
+        }
+    }
 }

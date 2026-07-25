@@ -3,9 +3,9 @@ package com.phonetts.app.compare
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
-import com.phonetts.app.audio.AudioTrackSink
 import com.phonetts.app.benchmark.BenchmarkViewModel
-import com.phonetts.core.audio.buffer.BufferedPlayback
+import com.phonetts.app.speech.ReportingSink
+import com.phonetts.app.speech.SpeechPlayer
 import com.phonetts.core.audio.buffer.GeneratedAudio
 import com.phonetts.core.audio.export.WavEncoder
 import com.phonetts.core.compare.Contender
@@ -14,9 +14,12 @@ import com.phonetts.core.compare.Tournament
 import com.phonetts.core.compare.bracketRoundSizes
 import com.phonetts.core.compare.mergeUnique
 import com.phonetts.core.compare.prefetchAhead
+import com.phonetts.core.diagnostics.FailureContext
+import com.phonetts.core.diagnostics.FailureExplainer
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.speech.SpeechSession
 import com.phonetts.core.store.FavoritesStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,6 +78,7 @@ private const val GEN_LOG_WINDOW = 8
 class CompareViewModel(
     private val graph: AppGraph,
     initialText: String,
+    private val player: SpeechPlayer = SpeechPlayer.shared,
 ) : ViewModel() {
     /** One side's (A or B) model+voice choice. Voices always come from [ModelDescriptor.voices]. */
     data class Selection(
@@ -197,8 +201,6 @@ class CompareViewModel(
     private val mutableState = MutableStateFlow(initialState(initialText))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
-    private val sink = AudioTrackSink()
-    private var playback = BufferedPlayback()
     private var runJob: Job? = null
     private var playJob: Job? = null
 
@@ -238,7 +240,10 @@ class CompareViewModel(
     private suspend fun deleteModelFromDisk(modelId: String): Boolean {
         val removal =
             runCatching { withContext(Dispatchers.IO) { graph.modelManager.remove(modelId) } }
-                .onFailure { e -> mutableState.update { it.copy(status = "Delete failed: ${e.message}") } }
+                .onFailure { e ->
+                    val status = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
+                    mutableState.update { it.copy(status = status) }
+                }
                 .getOrNull() ?: return false
         refreshModels()
         return removal.removedFromCatalog || removal.filesDeleted
@@ -335,7 +340,9 @@ class CompareViewModel(
                 val audioA = GeneratedAudio()
                 if (!generateInto(descriptorA, voiceA, s.text, audioA)) {
                     audioA.close()
-                    mutableState.update { it.copy(busy = false, status = "A failed: see status") }
+                    // generateInto's own onFailure already set a friendly, explained status (issue
+                    // #136) - don't clobber it with a placeholder that points right back at itself.
+                    mutableState.update { it.copy(busy = false) }
                     return@launch
                 }
                 bufferA = audioA
@@ -347,7 +354,8 @@ class CompareViewModel(
                 val audioB = GeneratedAudio()
                 if (!generateInto(descriptorB, voiceB, s.text, audioB)) {
                     audioB.close()
-                    mutableState.update { it.copy(busy = false, status = "B failed: see status") }
+                    // Same as the A branch above: keep generateInto's own explained status.
+                    mutableState.update { it.copy(busy = false) }
                     return@launch
                 }
                 bufferB = audioB
@@ -377,7 +385,10 @@ class CompareViewModel(
                 // The engine's synthesize() flow already runs inference off the collecting thread
                 // (AbstractVoiceEngine.flowOn) - no extra withContext needed around collect itself.
                 engine.synthesize(text, voiceId, params).collect(into::append)
-            }.onFailure { e -> mutableState.update { it.copy(status = "Generation failed: ${e.message}") } }
+            }.onFailure { e ->
+                val status = FailureExplainer.explain(e, FailureContext.GENERATING)
+                mutableState.update { it.copy(status = status) }
+            }
         into.markComplete()
         return result.isSuccess
     }
@@ -385,23 +396,32 @@ class CompareViewModel(
     private suspend fun playBuffer(slot: Slot) {
         val audio = bufferFor(slot) ?: return
         val rate = if (slot == Slot.A) sampleRateA else sampleRateB
+        // No token guard needed anymore (mission: adopt SpeechSession/SpeechPlayer). playAudio never
+        // swallows CancellationException, so a superseded coroutine (stopPlayback()/replay() calling
+        // playJob?.cancel()) is genuinely abandoned by the runtime - it never reaches the line below
+        // to clobber a newer run's `playing` state. See ReportingSink's kdoc for why playAudio itself
+        // still needs to explicitly rethrow cancellation rather than just "not catch" it.
         mutableState.update { it.copy(playing = slot) }
         playAudio(audio, rate)
         mutableState.update { it.copy(playing = null) }
     }
 
-    // Low-level playback shared by A/B replay AND tournament-slot playback (below): swaps in a
-    // fresh BufferedPlayback and drives it off Main (issue #18-4b) through the same AudioTrackSink
-    // either mode uses. Callers own updating their own "who's playing" state around this call.
+    // Low-level playback shared by A/B replay AND tournament-slot playback (below): a fresh
+    // SpeechSession per call through the shared [player] (mission: one physical AudioSink across
+    // Home/Compare/Mix, so this screen barges in on / is barged in on by the others). Callers own
+    // updating their own "who's playing" state around this call. Suspends until the buffer is fully
+    // played (or barged-in-on/cancelled) - see [SpeechPlayer.playToCompletion]'s kdoc for why that is
+    // race-free here specifically (this is always called on an ALREADY fully-generated buffer).
     private suspend fun playAudio(
         audio: GeneratedAudio,
         rate: Int,
     ) {
-        playback = BufferedPlayback()
-        // BufferedPlayback.play drives a blocking AudioTrack.write via the sink (issue #18-4b) -
-        // offload it off Main, same as TtsViewModel/MixVoicesViewModel's playback calls.
-        runCatching { withContext(Dispatchers.IO) { playback.play(audio, rate, sink) } }
-            .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+        val session = SpeechSession(viewModelScope, Dispatchers.IO, rate, audio)
+        val reportingSink =
+            ReportingSink(player.sink) { e ->
+                mutableState.update { it.copy(status = FailureExplainer.explain(e, FailureContext.PLAYING)) }
+            }
+        player.playToCompletion(session, reportingSink)
     }
 
     /** Replay A's already-generated buffer, without regenerating. No-op before a comparison has run. */
@@ -455,7 +475,10 @@ class CompareViewModel(
             withContext(Dispatchers.IO) {
                 output.use { wavEncoder().encode(audio.snapshot().asFlow(), rate, it) }
             }
-        }.onFailure { e -> mutableState.update { it.copy(status = "Save failed: ${e.message}") } }
+        }.onFailure { e ->
+            val status = FailureExplainer.explain(e, FailureContext.EXPORTING)
+            mutableState.update { it.copy(status = status) }
+        }
             .isSuccess
 
     // The app's already-configured WAV encoder (app-writable scratch dir - see ExportFormats kdoc
@@ -470,10 +493,9 @@ class CompareViewModel(
     }
 
     private fun stopPlayback() {
-        playback.stop()
         playJob?.cancel()
         playJob = null
-        sink.stop()
+        player.stop()
         mutableState.update { it.copy(playing = null, tournament = it.tournament.copy(playingSlot = null)) }
     }
 
@@ -675,6 +697,15 @@ class TournamentController(
         if (!currentState().canPick) return
         bracket.recordWinner(winner.id)
         currentPairing = null
+        // canPick requires both slots merely READY (generated), not finished playing - so the user
+        // can legitimately pick while the other slot is still audibly playing. Cancel that in-flight
+        // presentation before starting the next one: without this, the old job's playSlot could still
+        // be suspended in playAudio when the new job's advance()/playSlot started, two genuinely
+        // concurrent (not superseded-but-still-running) coroutines racing the same `playingSlot` flag -
+        // which is what the removed token guard was really protecting against here (a plain
+        // cancel-before-replace makes that guard unnecessary rather than papering over it).
+        job?.cancel()
+        update { it.copy(playingSlot = null) }
         job = scope.launch { advance() }
     }
 
@@ -876,6 +907,10 @@ class TournamentController(
         slot: Int,
         entryId: String,
     ) {
+        // No token needed (mission: adopt SpeechSession/SpeechPlayer) - [pickWinner] cancels any
+        // in-flight `job` (which is what runs this) before starting the next pairing, and [play]
+        // (CompareViewModel.playAudio) never swallows cancellation, so a superseded call here is
+        // genuinely abandoned rather than running on to clobber the new pairing's `playingSlot`.
         update { it.copy(playingSlot = slot) }
         play(entryAudio.getValue(entryId), entrySampleRate.getValue(entryId))
         update { it.copy(playingSlot = null) }

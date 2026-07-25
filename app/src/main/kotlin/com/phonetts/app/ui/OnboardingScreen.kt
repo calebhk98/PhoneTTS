@@ -23,6 +23,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -128,19 +131,26 @@ private fun PageBody(page: OnboardingPage) {
     }
 }
 
+// The progress dots are purely decorative (color only, no text) - `clearAndSetSemantics {}` on each
+// one keeps TalkBack from trying to describe them individually, while the row itself carries the one
+// announcement that actually matters: which page this is (issue #141 rule 4, "progress must be
+// announced").
 @Composable
 private fun PageDots(
     count: Int,
     active: Int,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Page ${active + 1} of $count" },
         horizontalArrangement = Arrangement.Center,
     ) {
         repeat(count) { i ->
             val color =
                 if (i == active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-            Box(modifier = Modifier.padding(4.dp)) {
+            Box(modifier = Modifier.padding(4.dp).clearAndSetSemantics {}) {
                 Surface(modifier = Modifier.size(10.dp), shape = CircleShape, color = color) {}
             }
         }

@@ -9,6 +9,19 @@ import com.phonetts.core.engine.Voice
 enum class Origin {
     BUILT_IN,
     SIDELOADED,
+    ;
+
+    /**
+     * THE single display label for this origin (CLAUDE.md rule 1) - was hardcoded separately in
+     * [com.phonetts.core.model.ModelListExport] and the Manage-models screen's own `when`, and the
+     * two had already drifted in wording. Any screen showing an [Origin] reads it from here.
+     */
+    val label: String
+        get() =
+            when (this) {
+                BUILT_IN -> "Built-in"
+                SIDELOADED -> "Sideloaded"
+            }
 }
 
 /**

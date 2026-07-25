@@ -9,6 +9,7 @@ import com.phonetts.core.audio.export.ExportFormat
 import com.phonetts.core.audio.export.SegmentWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.BufferedOutputStream
 import java.io.File
@@ -38,8 +39,9 @@ class AacAudioEncoder(private val tempDir: File) : AudioEncoder() {
     override fun openWriter(
         sampleRate: Int,
         out: OutputStream,
+        isCancelled: () -> Boolean,
     ): SegmentWriter =
-        MediaCodecSegmentWriter(sampleRate, out, tempDir, ENCODER, format.fileExtension, CHANNEL_COUNT) { }
+        MediaCodecSegmentWriter(sampleRate, out, tempDir, ENCODER, format.fileExtension, CHANNEL_COUNT, { }, isCancelled)
 
     /** Encode [flow] straight to [target], spilling PCM to a scratch file first (bounded memory). */
     suspend fun encodeToFile(
@@ -52,7 +54,7 @@ class AacAudioEncoder(private val tempDir: File) : AudioEncoder() {
             BufferedOutputStream(FileOutputStream(pcm)).use { sink ->
                 flow.collect { segment -> sink.write(Pcm16.encode(segment)) }
             }
-            ENCODER.encode(pcm, sampleRate, CHANNEL_COUNT, target)
+            ENCODER.encode(pcm, sampleRate, CHANNEL_COUNT, target) { !isActive }
         } finally {
             pcm.delete()
         }

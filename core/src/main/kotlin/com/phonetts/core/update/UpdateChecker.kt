@@ -46,7 +46,7 @@ class UpdateChecker(
                     val apk =
                         release.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
                             ?: return@mapNotNull null
-                    Candidate(version, apk.downloadUrl, release.htmlUrl)
+                    Candidate(version, apk, release.htmlUrl)
                 }
                 .maxByOrNull { it.version }
                 ?: return UpdateStatus.upToDate(currentVersion)
@@ -56,9 +56,21 @@ class UpdateChecker(
             updateAvailable = true,
             currentVersion = current.toString(),
             latestVersion = newest.version.toString(),
-            apkDownloadUrl = newest.apkUrl,
+            apkDownloadUrl = newest.apk.downloadUrl,
             releasePageUrl = newest.releaseUrl,
+            apkFileName = newest.apk.name,
+            apkSizeBytes = newest.apk.size.takeIf { it > 0 },
+            apkSha256 = parseSha256Digest(newest.apk.digest),
         )
+    }
+
+    // GitHub advertises an asset's content hash as `"digest": "sha256:<hex>"`. Anything else (absent,
+    // a different algorithm, a malformed hex string) yields null - meaning "no hash to check against",
+    // NOT "any hash will do". The download path treats null as unverifiable and says so.
+    private fun parseSha256Digest(raw: String?): String? {
+        val hex = raw?.removePrefix(SHA256_PREFIX)?.takeIf { it != raw }?.trim() ?: return null
+        if (hex.length != SHA256_HEX_LENGTH) return null
+        return hex.takeIf { it.all { char -> char.isDigit() || char.lowercaseChar() in 'a'..'f' } }
     }
 
     private fun releasesUrl(
@@ -66,22 +78,35 @@ class UpdateChecker(
         repo: String,
     ): String = "https://api.github.com/repos/$owner/$repo/releases?per_page=$PAGE_SIZE"
 
-    private data class Candidate(val version: SemVer, val apkUrl: String, val releaseUrl: String)
+    private data class Candidate(val version: SemVer, val apk: GithubAssetDto, val releaseUrl: String)
 
     companion object {
         private const val PAGE_SIZE = 20
+        private const val SHA256_PREFIX = "sha256:"
+        private const val SHA256_HEX_LENGTH = 64
         val USER_AGENT = mapOf("User-Agent" to "PhoneTTS (offline-tts-android; update-check)")
         val DEFAULT_JSON = Json { ignoreUnknownKeys = true }
     }
 }
 
-/** The result of an [UpdateChecker.check]. [updateAvailable] false means "you're current" (or a hiccup). */
+/**
+ * The result of an [UpdateChecker.check]. [updateAvailable] false means "you're current" (or a hiccup).
+ *
+ * [apkFileName], [apkSizeBytes] and [apkSha256] come straight from the release asset GitHub
+ * advertises - the SSOT for what the app is about to fetch. They let the in-app downloader show a
+ * real total (not a fabricated one), name the file the release named it, and verify the bytes
+ * before offering to install. Any of them may be null when the API didn't advertise it; null means
+ * "unknown", never a guess.
+ */
 data class UpdateStatus(
     val updateAvailable: Boolean,
     val currentVersion: String,
     val latestVersion: String,
     val apkDownloadUrl: String? = null,
     val releasePageUrl: String? = null,
+    val apkFileName: String? = null,
+    val apkSizeBytes: Long? = null,
+    val apkSha256: String? = null,
 ) {
     companion object {
         fun upToDate(currentVersion: String): UpdateStatus =
@@ -103,4 +128,7 @@ internal data class GithubReleaseDto(
 internal data class GithubAssetDto(
     @SerialName("name") val name: String = "",
     @SerialName("browser_download_url") val downloadUrl: String = "",
+    @SerialName("size") val size: Long = 0L,
+    // `sha256:<hex>` when GitHub has computed it; absent on older releases.
+    @SerialName("digest") val digest: String? = null,
 )

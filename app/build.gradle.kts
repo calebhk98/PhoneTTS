@@ -128,6 +128,33 @@ android {
         buildConfig = true // exposes BuildConfig.VERSION_NAME to the in-app update check
     }
 
+    // Robolectric needs the merged app resources/manifest on the unit-test classpath (issue: :app
+    // had zero tests - see app/src/test). Without isIncludeAndroidResources, Robolectric can't
+    // resolve resource ids and every test touching a Composable that reads a resource fails.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+            // Robolectric loads a full Android SDK image per test class and holds a lot of it live.
+            // With the whole :app suite in one forked JVM the executor was dying outright ("finished
+            // with non-zero exit value 10") rather than reporting a test failure - individual classes
+            // passed, the batch did not. A bigger heap plus recycling the worker every N classes keeps
+            // it stable; CI now runs this suite, so a flaky-by-exhaustion runner would block releases.
+            all {
+                it.maxHeapSize = "2g"
+                // One JVM per test class. Two reasons, both observed here rather than theoretical:
+                // Robolectric holds a full Android SDK image per class (batching them killed the
+                // executor outright with "non-zero exit value 10"), and several classes call the
+                // GLOBAL Dispatchers.setMain - when two of those share a JVM, one class's still-live
+                // coroutine collides with the next class's setMain and throws "Dispatchers.Main is
+                // used concurrently with setting it". That failure is order-dependent, so it shows up
+                // as a flake that passes when the class is run alone - the worst kind to debug, and
+                // exactly what CI must not start doing now that it runs this suite.
+                it.forkEvery = 1
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -192,18 +219,18 @@ dependencies {
     implementation(project(":core"))
 
     // The built-in engines. Present on the classpath = discovered by ServiceLoader at startup.
-    // This is the aggregation point; no code here names or branches on any specific model.
-    runtimeOnly(project(":engines:cosyvoice2"))
-    runtimeOnly(project(":engines:melotts"))
-    runtimeOnly(project(":engines:piper"))
-    runtimeOnly(project(":engines:kittentts"))
-    runtimeOnly(project(":engines:kokoro"))
-    runtimeOnly(project(":engines:mms"))
-    runtimeOnly(project(":engines:f5tts"))
-    runtimeOnly(project(":engines:ggmltts"))
-    runtimeOnly(project(":engines:executorch"))
-    runtimeOnly(project(":engines:pytorch"))
-    runtimeOnly(project(":engines:litert"))
+    // This block names NO engine: it wires up every :engines:* module settings.gradle.kts found on
+    // disk, so a new engines/<name>/ directory ships in the APK with zero edits here.
+    //
+    // It used to be a hand-written list, and the list was already wrong - neutts, outetts,
+    // pockettts and supertonic existed as modules but were missing from it, so ServiceLoader never
+    // saw them and four engines silently were not in the app at all. Deriving the list is what
+    // makes rule 5 ("adding a model = registering it") actually true instead of aspirational.
+    rootProject.subprojects
+        .map { it.path }
+        .filter { it.startsWith(":engines:") && it != ":engines:common" } // common is plumbing, not an engine
+        .sorted()
+        .forEach { path -> runtimeOnly(project(path)) }
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json) // HfCatalog exposes a kotlinx.serialization Json default
@@ -235,4 +262,16 @@ dependencies {
     // Interpreter API artifact: the newer com.google.ai.edge.litert Kotlin API is compiled with Kotlin
     // metadata newer than this project's compiler (2.0.21) can read. Not in the version catalog yet.
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
+
+    // --- :app unit tests (app/src/test) - Robolectric + Compose UI testing on plain JVM, no ---
+    // --- emulator. This module previously had NO test source set at all (the highest-priority ---
+    // --- gap: see app/src/test/kotlin/com/phonetts/app for what's now covered). ---
+    testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }

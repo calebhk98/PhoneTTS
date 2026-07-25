@@ -19,26 +19,24 @@ dependencyResolutionManagement {
 // and its tests run on any JVM with no Android SDK required.
 include(":core")
 
-// One module per model engine. Each depends only on :core's generic seams and is discovered
-// at runtime via ServiceLoader - so this list is the ONLY place the set of built-in engines is
-// enumerated, and it is build config, not logic (no shared code branches on which model it is).
-// Adding a model = a new module + a line here; removing one = deleting both. Nothing else changes.
-include(":engines:common") // shared, model-agnostic engine plumbing the engine modules link against
-include(":engines:cosyvoice2")
-include(":engines:melotts")
-include(":engines:piper")
-include(":engines:kittentts")
-include(":engines:kokoro")
-include(":engines:mms")
-include(":engines:f5tts")
-include(":engines:ggmltts")
-include(":engines:executorch")
-include(":engines:pytorch")
-include(":engines:litert")
-include(":engines:neutts")
-include(":engines:outetts")
-include(":engines:pockettts")
-include(":engines:supertonic")
+// One module per model engine, DISCOVERED FROM DISK - never hand-listed. Every directory under
+// engines/ that carries a build.gradle.kts is included automatically, so adding a model is
+// literally "drop in engines/<name>/" and removing one is "delete the directory". No line here to
+// forget, and (with the matching blocks in app/build.gradle.kts and integration/build.gradle.kts)
+// no other file to edit either - which is the point of rule 5.
+//
+// This replaced a hand-maintained include() list. That list had already drifted: four engine
+// modules (neutts, outetts, pockettts, supertonic) were included here but never added to the app's
+// runtime classpath, so ServiceLoader never saw them and they silently did not exist in the
+// shipped APK. Auto-discovery makes that class of mistake impossible rather than merely unlikely.
+//
+// :engines:common (shared, model-agnostic plumbing the engine modules link against) is picked up
+// by the same rule; it is not itself an engine, and the consumers below exclude it by name.
+file("engines")
+    .listFiles { candidate -> candidate.isDirectory && File(candidate, "build.gradle.kts").isFile }
+    ?.map { it.name }
+    ?.sorted()
+    ?.forEach { name -> include(":engines:$name") }
 
 // Cross-module integration tests (pure JVM) - the one place all engines share a classpath.
 include(":integration")

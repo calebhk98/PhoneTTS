@@ -1,5 +1,6 @@
 package com.phonetts.app.playback
 
+import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -46,6 +47,18 @@ private val PLAYBACK_ACTIONS =
  * ([PlaybackChime]) when a run finishes *naturally* rather than on a user Stop (issue #32).
  */
 class PlaybackService : Service() {
+    companion object {
+        // In-memory (never persisted - a fresh process starts with no playback anyway) signal read
+        // by GenerationNotifier so it can tell whether this service already has the ONE media
+        // notification up and, if so, step aside instead of posting a second, competing row (see
+        // GenerationNotifier's kdoc). Written only by this class as it enters/leaves the foreground;
+        // @Volatile since GenerationNotifier reads it from whatever thread the generation flow's
+        // collector runs on.
+        @Volatile
+        var isForegroundActive: Boolean = false
+            private set
+    }
+
     private val binder = LocalBinder()
     private var controller: PlaybackController? = null
     private var mediaSession: MediaSessionCompat? = null
@@ -61,7 +74,19 @@ class PlaybackService : Service() {
     // one of those is treated as the flow completing on its own. [wasPlaying] gates the cue to a
     // real playing→stopped edge, so a spurious "not playing" (e.g. the initial bound state) is silent.
     private var wasPlaying = false
+
+    // True once startForeground has been called for this service instance, so ensureForeground is
+    // idempotent and a repeat start command doesn't rebuild the notification needlessly.
+    private var isForeground = false
     private var userStopRequested = false
+
+    // The last state/title actually pushed onto the media session. Read back by LocalBinder so tests
+    // can assert the lock screen was given a usable state and action mask - Robolectric does not
+    // reflect setPlaybackState/setMetadata back through either a framework or a compat controller,
+    // so the only honest thing to assert is what this service published. Whether Android then renders
+    // it is Android's half of the contract, and only a device can confirm that.
+    private var lastPlaybackState: PlaybackStateCompat? = null
+    private var lastSessionTitle: String? = null
 
     // Pause when the audio output route goes "noisy" - headphones unplugged or Bluetooth audio
     // disconnected - so speech doesn't suddenly blast from the phone speaker. This is the standard
@@ -105,6 +130,22 @@ class PlaybackService : Service() {
         fun sleepTimerRemainingMillis(): Long = sleepTimer.remainingMillis()
 
         val isSleepTimerRunning: Boolean get() = sleepTimer.isRunning
+
+        /** Whether the lock-screen media session is active - exposed for tests to verify the
+         * `MediaSessionCompat.isActive` flag the lock screen depends on (rule 3, background
+         * playback spec); nothing in production reads this today. */
+        val isMediaSessionActive: Boolean get() = this@PlaybackService.mediaSession?.isActive == true
+
+        /** The session's current playback state - what the lock screen builds its transport buttons
+         * from. Test-visible for the same reason as [isMediaSessionActive]: asserting it through a
+         * framework MediaController does not work under Robolectric, which cannot observe a
+         * MediaSessionCompat's state, so the guarantee has to be checked at the source. */
+        val sessionPlaybackState: PlaybackStateCompat?
+            get() = this@PlaybackService.lastPlaybackState
+
+        /** The session's current title metadata - what the lock screen shows as the track name. */
+        val sessionTitle: String?
+            get() = this@PlaybackService.lastSessionTitle
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -120,11 +161,46 @@ class PlaybackService : Service() {
         startId: Int,
     ): Int {
         mediaSession?.let { MediaButtonReceiver.handleIntent(it, intent) }
+        // The service is now genuinely STARTED (MainActivity calls startForegroundService when
+        // playback begins) rather than bind-only, which is what stopped it from being destroyed the
+        // moment the app backgrounded and the lock-screen controls went dead. That contract is
+        // strict: once startForegroundService has been called we MUST post a foreground
+        // notification promptly or the system kills the process with
+        // ForegroundServiceDidNotStartInTimeException. Do it here rather than relying on a
+        // subsequent state callback arriving in time.
+        ensureForeground()
         handleAction(intent?.action)
         return START_NOT_STICKY
     }
 
+    // Post the ongoing notification if it isn't already up. Idempotent: startForeground with the
+    // same id just updates the existing row.
+    private fun ensureForeground() {
+        if (isForeground) return
+        isForeground = true
+        isForegroundActive = true
+        // Activate and seed the session BEFORE posting the notification.
+        //
+        // A media notification whose MediaSession carries no PlaybackState and is not active gives
+        // the lock screen nothing to render controls from: no state, no action mask, so no buttons.
+        // That is precisely the reported "lock screen only shows generation, does not show media
+        // controls" - the row appears, the controls do not. Posting first and relying on a later
+        // onStateChanged to fill the session in leaves that window open for as long as it takes the
+        // Activity to forward state, which is forever if the app is backgrounded.
+        mediaSession?.isActive = true
+        updateSession(paused = false, title = null)
+        val notification =
+            notifications.build(
+                paused = false,
+                title = null,
+                sessionToken = mediaSession?.sessionToken,
+            )
+        startForeground(PLAYBACK_NOTIFICATION_ID, notification)
+    }
+
     override fun onDestroy() {
+        isForeground = false
+        isForegroundActive = false
         sleepTimer.cancel()
         audioFocus.abandon()
         unregisterBecomingNoisy()
@@ -167,6 +243,7 @@ class PlaybackService : Service() {
             finishPlayback()
             return
         }
+        isForegroundActive = true
         wasPlaying = true
         // A fresh (or resumed) play clears any stale user-stop flag left by a barge-in restart
         // (select model / skip paragraph both stop() then immediately start again), so a later
@@ -232,6 +309,7 @@ class PlaybackService : Service() {
     }
 
     private fun stopPlaybackForeground() {
+        isForegroundActive = false
         sleepTimer.cancel()
         audioFocus.abandon()
         unregisterBecomingNoisy()
@@ -255,8 +333,22 @@ class PlaybackService : Service() {
     private fun buildMediaSession(): MediaSessionCompat =
         MediaSessionCompat(this, MEDIA_SESSION_TAG).apply {
             setCallback(sessionCallback)
+            // Ties this session to the manifest-registered MediaButtonReceiver (see
+            // AndroidManifest.xml) so a hardware/Bluetooth media-button broadcast - which can arrive
+            // even when this service isn't currently running - gets routed back into
+            // onStartCommand's MediaButtonReceiver.handleIntent call above, rather than having
+            // nowhere to land.
+            setMediaButtonReceiver(mediaButtonPendingIntent())
             isActive = true
         }
+
+    private fun mediaButtonPendingIntent(): PendingIntent {
+        val intent =
+            Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                setClass(this@PlaybackService, MediaButtonReceiver::class.java)
+            }
+        return PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+    }
 
     private val sessionCallback =
         object : MediaSessionCompat.Callback() {
@@ -286,6 +378,7 @@ class PlaybackService : Service() {
         title?.let { builder.putString(MediaMetadataCompat.METADATA_KEY_TITLE, it) }
         val total = controller?.progress?.totalMillis ?: 0L
         if (total > 0L) builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, total)
+        lastSessionTitle = title
         mediaSession?.setMetadata(builder.build())
     }
 
@@ -293,11 +386,12 @@ class PlaybackService : Service() {
         val state = if (paused) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_PLAYING
         val position = controller?.progress?.elapsedMillis ?: PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN
         val speed = if (paused) PLAYBACK_SPEED_PAUSED else PLAYBACK_SPEED_NORMAL
-        mediaSession?.setPlaybackState(
+        val published =
             PlaybackStateCompat.Builder()
                 .setActions(PLAYBACK_ACTIONS)
                 .setState(state, position, speed)
-                .build(),
-        )
+                .build()
+        lastPlaybackState = published
+        mediaSession?.setPlaybackState(published)
     }
 }

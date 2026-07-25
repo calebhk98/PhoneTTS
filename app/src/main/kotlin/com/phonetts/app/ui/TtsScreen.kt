@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -19,29 +20,28 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -53,15 +53,19 @@ import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,18 +79,19 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.phonetts.app.Screen
+import com.phonetts.app.ui.pickers.UnifiedVoicePicker
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
-import com.phonetts.core.engine.Voice
 import com.phonetts.core.text.TextChunker
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlin.math.ceil
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The main screen. Model list, voice list and speed bounds are read entirely from the
@@ -101,14 +106,9 @@ import kotlin.math.roundToInt
 @Composable
 fun TtsScreen(
     viewModel: TtsViewModel,
-    onBrowseModels: () -> Unit,
-    onManageModels: () -> Unit,
-    onBenchmarks: () -> Unit,
-    onHelp: () -> Unit,
-    onMixVoices: () -> Unit = {},
-    onLibrary: () -> Unit = {},
-    onCompare: () -> Unit = {},
-    onSettings: () -> Unit = {},
+    // One navigation callback, not one per destination. The drawer renders NAV_ITEMS and hands back
+    // whichever Screen was tapped, so adding a destination needs no new parameter here.
+    onNavigate: (Screen) -> Unit,
     appVersion: String? = null,
     sleepTimer: SleepTimerHandle = SleepTimerHandle.None,
 ) {
@@ -150,18 +150,23 @@ fun TtsScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            AppDrawer(
+            // The SAME drawer every other screen renders (NAV_ITEMS) - Home no longer keeps its own
+            // copy, so the menu is identical wherever you open it from.
+            NavDrawerContent(
+                current = Screen.MAIN,
                 appVersion = appVersion,
-                onBrowseModels = { navigate(onBrowseModels) },
-                onManageModels = { navigate(onManageModels) },
-                onSideload = { navigate { sideloadLauncher.launch(null) } },
-                onBenchmarks = { navigate(onBenchmarks) },
-                onHelp = { navigate(onHelp) },
-                onHome = { navigate {} },
-                onMixVoices = { navigate(onMixVoices) },
-                onLibrary = { navigate(onLibrary) },
-                onCompare = { navigate(onCompare) },
-                onSettings = { navigate(onSettings) },
+                // MAIN is where we already are, so it just closes the drawer (matching how every
+                // other screen's drawer marks its own entry).
+                onNavigate = { destination ->
+                    navigate { if (destination != Screen.MAIN) onNavigate(destination) }
+                },
+                onAction = { action ->
+                    navigate {
+                        when (action) {
+                            NavAction.IMPORT_MODEL_FOLDER -> sideloadLauncher.launch(null)
+                        }
+                    }
+                },
             )
         },
     ) {
@@ -176,12 +181,14 @@ fun TtsScreen(
                     },
                 )
             },
+            bottomBar = { BottomTransportBar(state, viewModel) },
         ) { innerPadding ->
             TtsBody(
                 state = state,
                 viewModel = viewModel,
                 sleepTimer = sleepTimer,
                 contentPadding = innerPadding,
+                onNavigate = onNavigate,
                 onImport = { importLauncher.launch(IMPORT_MIME_TYPES) },
                 onExport = { exportLauncher.launch("speech.${state.exportFormat.format.fileExtension}") },
                 onSampleAll = { sampleAllLauncher.launch(null) },
@@ -197,6 +204,7 @@ private fun TtsBody(
     viewModel: TtsViewModel,
     sleepTimer: SleepTimerHandle,
     contentPadding: PaddingValues,
+    onNavigate: (Screen) -> Unit,
     onImport: () -> Unit,
     onExport: () -> Unit,
     onSampleAll: () -> Unit,
@@ -211,7 +219,13 @@ private fun TtsBody(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         state.update?.let { update ->
-            UpdateBanner(update, onDismiss = viewModel::dismissUpdate)
+            UpdateBanner(
+                update = update,
+                download = state.updateDownload,
+                onDownload = viewModel::downloadUpdate,
+                onCancelDownload = viewModel::cancelUpdateDownload,
+                onDismiss = viewModel::dismissUpdate,
+            )
         }
         state.sideloadFailureExplanation?.let { explanation ->
             SideloadFailureBanner(
@@ -220,7 +234,7 @@ private fun TtsBody(
             )
         }
 
-        VoiceCard(state, viewModel)
+        VoiceCard(state, viewModel, onNavigate)
         TextCard(state, viewModel, onImport)
         PlaybackCard(state, viewModel, sleepTimer)
         OutputCard(state, viewModel, onExport, onSampleAll)
@@ -246,99 +260,40 @@ private fun SectionCard(
     }
 }
 
-/** Navigation destinations, tucked behind the hamburger so the main screen isn't a button wall. */
-@Composable
-private fun AppDrawer(
-    appVersion: String?,
-    onBrowseModels: () -> Unit,
-    onManageModels: () -> Unit,
-    onSideload: () -> Unit,
-    onBenchmarks: () -> Unit,
-    onHelp: () -> Unit,
-    onHome: () -> Unit = {},
-    onMixVoices: () -> Unit = {},
-    onLibrary: () -> Unit = {},
-    onCompare: () -> Unit = {},
-    onSettings: () -> Unit = {},
-) {
-    ModalDrawerSheet {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("PhoneTTS", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                appVersion?.let { "Offline text-to-speech · v$it" } ?: "Offline text-to-speech",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        HorizontalDivider()
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // This IS the Home screen, so Home stays listed and highlighted as the current page,
-            // matching how every other page's drawer marks its own entry (issue #118). Tapping it
-            // just closes the drawer.
-            DrawerLink("Home", onHome, selected = true)
-            DrawerLink("Browse models", onBrowseModels)
-            DrawerLink("Manage models", onManageModels)
-            DrawerLink("Sideload folder", onSideload)
-            DrawerLink("Mix voices", onMixVoices)
-            DrawerLink("Reading library", onLibrary)
-            DrawerLink("Compare voices (A/B)", onCompare)
-            DrawerLink("Benchmarks", onBenchmarks)
-            DrawerLink("Settings", onSettings)
-            DrawerLink("Help", onHelp)
-        }
-    }
-}
-
-@Composable
-private fun DrawerLink(
-    label: String,
-    onClick: () -> Unit,
-    selected: Boolean = false,
-) {
-    NavigationDrawerItem(
-        label = { Text(label) },
-        selected = selected,
-        onClick = onClick,
-        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-    )
-}
-
-/** Model + voice + tunable parameters - everything about *what* voice speaks. */
+/**
+ * Model + voice + tunable parameters - everything about *what* voice speaks. What used to be three
+ * stacked widgets (a model dropdown, a voice dropdown, and a separate favorites chip row - issue: "the
+ * favorites/voice selector seems weird") is now the single [UnifiedVoicePicker] summary row + sheet;
+ * picking any voice in it switches model too when needed, so there is exactly one voice decision here,
+ * not three.
+ */
 @Composable
 private fun VoiceCard(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
+    onNavigate: (Screen) -> Unit,
 ) {
     SectionCard("Voice") {
         if (state.models.isEmpty()) {
-            EmptyModelsHint()
+            EmptyModelsHint(onBrowse = { onNavigate(Screen.BROWSE) })
             return@SectionCard
         }
-        FieldLabel("Model")
-        ModelPicker(state.models, state.selected) { viewModel.selectModel(it) }
+        UnifiedVoicePicker(
+            models = state.models,
+            selectedModelId = state.selected?.modelId,
+            selectedVoiceId = state.voiceId,
+            // Cross-model favorites (issue #119), reduced to the (modelId, voiceId) pairs the picker
+            // needs - the single FavoritesStore source of truth still lives in the ViewModel.
+            favoritePairs = state.favoriteVoiceOptions.map { it.modelId to it.voiceId }.toSet(),
+            // A tap on any row - favorite or not - both picks the voice and switches the active model
+            // when it differs; selectFavoriteVoice already does exactly that (issue #119 plumbing),
+            // so this reuses it as the general "jump to this model+voice" action, not just favorites.
+            onPick = viewModel::selectFavoriteVoice,
+            // Starring is a bookmark, not a selection: it must never switch the active voice or
+            // barge in on playback just because the sheet lists every model's voices at once.
+            onToggleFavorite = { modelId, voice -> viewModel.toggleFavoriteVoice(modelId, voice.id) },
+        )
         val descriptor = state.selected ?: return@SectionCard
-
-        HorizontalDivider()
-        FieldLabel("Voice")
-        VoicePicker(
-            // Descriptor voices (SSOT) plus any saved mixes re-applied to the loaded engine (#42).
-            voices = state.voices,
-            selectedVoiceId = state.voiceId,
-            // Favorites are the single FavoritesStore source of truth now (was split across two
-            // stores); the picker's per-voice star is the one way to favorite a voice.
-            favoriteVoiceIds = state.favoriteVoiceIds,
-            onSelect = viewModel::setVoice,
-            onToggleFavorite = viewModel::toggleFavoriteVoice,
-        )
-        // Quick-pick of every starred voice across ALL models (issue #119): tap one to switch straight
-        // to it. Absent when there are no resolvable favorites.
-        FavoriteVoicesQuickPick(
-            options = state.favoriteVoiceOptions,
-            selectedModelId = descriptor.modelId,
-            selectedVoiceId = state.voiceId,
-            onSelect = viewModel::selectFavoriteVoice,
-        )
-
         if (descriptor.parameters.isNotEmpty()) {
             HorizontalDivider()
             FieldLabel("Adjustments")
@@ -347,16 +302,38 @@ private fun VoiceCard(
     }
 }
 
-/** First-run hint when nothing is downloaded yet, phrased as a next step rather than a dead end. */
+/**
+ * First-run hint when nothing is downloaded yet, phrased as a next step rather than a dead end -
+ * an icon, a message, and one primary action (open the Browse screen) instead of two bare lines of
+ * text with no way forward from this screen itself.
+ */
 @Composable
-private fun EmptyModelsHint() {
-    Text("No voices installed yet", style = MaterialTheme.typography.bodyLarge)
-    Text(
-        "Open the menu (top left) to browse Hugging Face models or sideload a folder, then pick one here.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+private fun EmptyModelsHint(onBrowse: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        Icon(
+            Icons.Filled.Download,
+            contentDescription = null,
+            modifier = Modifier.size(EMPTY_STATE_ICON_SIZE),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "No voices installed yet",
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Text(
+            "Browse Hugging Face models or sideload a folder, then pick one here.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+        )
+        Button(onClick = onBrowse) { Text("Browse voices") }
+    }
 }
+
+private val EMPTY_STATE_ICON_SIZE = 48.dp
 
 /** A small caps-style sub-label that breaks a dense card into scannable groups. */
 @Composable
@@ -490,11 +467,14 @@ private val TEXT_FIELD_MIN_HEIGHT = 96.dp
 private val TEXT_FIELD_MAX_HEIGHT = 280.dp
 
 /**
- * Playback controls. Play is the single primary action (it generates on first tap, then replays
- * instantly); everything else - load-ahead, preview-only generate, sample, transport - is a
- * secondary button so the common path reads at a glance. Live progress/stats/status sit right here.
+ * Status and secondary playback extras. The transport itself (play/pause, prev/next/stop, the
+ * sentence seek bar, and the live status line) now lives in the persistent [BottomTransportBar] docked
+ * to the Scaffold, like a real media app's mini-player - it no longer scrolls away with the rest of
+ * the page. Rarely-used actions (Load model, Generate, Sample voice) are folded into that bar's
+ * overflow menu ([PlaybackOverflowMenu]) instead of sitting here as a wall of equal-weight buttons.
+ * What's left here is the stuff that's genuinely secondary: resuming a prior stop, the "model loaded"
+ * indicator, generation progress/stats, and the sleep timer.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PlaybackCard(
     state: TtsViewModel.UiState,
@@ -504,37 +484,6 @@ private fun PlaybackCard(
     SectionCard("Playback") {
         val selected = state.selected
         val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
-
-        // Standard audio-player transport, always visible: previous, a large central play/pause, next,
-        // stop (issue #123 / follow-up). The central button plays when idle and toggles Pause/Resume
-        // while active (halting immediately at the hardware level, BufferedPlayback -> AudioTrackSink);
-        // prev/next/stop act only during playback (a per-sentence restart-from-index for skip).
-        TransportBar(state, viewModel)
-
-        // Playback position as a sentence-level seek bar (issue #123). Only while playing.
-        if (state.playing) SentenceSeekBar(state, viewModel)
-
-        // Live playback state, and the synthesis-free listening estimate ("~6 min at 1.25x", issue
-        // #23) when idle. The estimate is suppressed once real generation stats exist, so the rough
-        // "~4 sec" estimate and the measured "Generated 2.6s" never sit on screen contradicting each
-        // other (issue #123). Centered under the transport, secondary to it.
-        val statusLine =
-            when {
-                state.playing && state.paused -> "Paused"
-                state.playing -> "Playing…"
-                state.estimatedListeningSeconds > 0 && state.stats == null ->
-                    formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed)
-                else -> null
-            }
-        statusLine?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
 
         // "Resume from where it stopped" (issue #28): shown only when a prior run left a resume point,
         // replacing the old dead-end error with a one-tap continuation from that sentence.
@@ -546,24 +495,6 @@ private fun PlaybackCard(
             ) { Text("Resume from where it stopped") }
         }
 
-        // Secondary/manual actions. "Model loaded" is a status line (below), not a greyed-out pill
-        // that reads as broken (issue #123).
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!isModelLoaded) {
-                OutlinedButton(
-                    onClick = viewModel::loadModel,
-                    enabled = selected != null && !state.busy && !state.playing,
-                ) { Text("Load model") }
-            }
-            OutlinedButton(
-                onClick = viewModel::generateAudio,
-                enabled = selected != null && !state.busy && !state.playing,
-            ) { Text("Generate") }
-            OutlinedButton(
-                onClick = viewModel::sampleVoice,
-                enabled = selected != null && !state.busy,
-            ) { Text("Sample voice") }
-        }
         if (isModelLoaded) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Icon(
@@ -572,14 +503,22 @@ private fun PlaybackCard(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(16.dp),
                 )
-                Text("Model loaded", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Model loaded",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
         // Generation progress, labeled and SEPARATE from the playback position above (issue #123):
         // shown whenever a synthesis is running, including generating ahead during playback.
         if (state.busy) {
-            Text("Generating…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Generating…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
         // Measured generation stats behind a Details toggle - useful, but diagnostic, not for every glance.
@@ -594,6 +533,107 @@ private fun PlaybackCard(
 }
 
 /**
+ * The persistent bottom transport - docked to the Scaffold instead of scrolling with the rest of the
+ * page, like a real media app's mini-player (issue: "designed to look like a desktop website"). Holds
+ * the sentence seek bar (while playing), the live status line, and the transport row itself (prev,
+ * play/pause, next, stop) with the [PlaybackOverflowMenu] anchored at its end for the rarely-used
+ * Load model / Generate / Sample voice actions - so Play stays the one obvious primary action.
+ * Absent entirely until at least one model is installed (nothing to transport yet).
+ */
+@Composable
+private fun BottomTransportBar(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    if (state.models.isEmpty()) return
+    Surface(tonalElevation = 3.dp, shadowElevation = 3.dp) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (state.playing) {
+                SentenceSeekBar(state, viewModel, modifier = Modifier.padding(horizontal = 16.dp))
+            }
+            // Live playback state, and the synthesis-free listening estimate ("~6 min at 1.25x", issue
+            // #23) when idle. The estimate is suppressed once real generation stats exist, so the rough
+            // "~4 sec" estimate and the measured "Generated 2.6s" never sit on screen contradicting each
+            // other (issue #123).
+            val statusLine =
+                when {
+                    state.playing && state.paused -> "Paused"
+                    state.playing -> "Playing…"
+                    state.estimatedListeningSeconds > 0 && state.stats == null ->
+                        formatListeningEstimate(state.estimatedListeningSeconds, state.params.speed)
+                    else -> null
+                }
+            statusLine?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                TransportBar(state, viewModel)
+                PlaybackOverflowMenu(state, viewModel, modifier = Modifier.align(Alignment.CenterEnd))
+            }
+        }
+    }
+}
+
+/**
+ * The "..." menu for Load model / Generate / Sample voice (issue: button-wall) - the actions almost
+ * nobody needs to reach directly, since Play already loads-and-generates-and-plays in one tap. Each
+ * item keeps the exact enabled/disabled rule the old inline buttons had, so nothing reachable before
+ * became unreachable - it just isn't sitting on screen at the same visual weight as Play anymore.
+ */
+@Composable
+private fun PlaybackOverflowMenu(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = state.selected
+    val isModelLoaded = selected != null && state.loadedModelId == selected.modelId
+    Box(modifier = modifier) {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "More playback actions")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (!isModelLoaded) {
+                DropdownMenuItem(
+                    text = { Text("Load model") },
+                    enabled = selected != null && !state.busy && !state.playing,
+                    onClick = {
+                        expanded = false
+                        viewModel.loadModel()
+                    },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("Generate") },
+                enabled = selected != null && !state.busy && !state.playing,
+                onClick = {
+                    expanded = false
+                    viewModel.generateAudio()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Sample voice") },
+                enabled = selected != null && !state.busy,
+                onClick = {
+                    expanded = false
+                    viewModel.sampleVoice()
+                },
+            )
+        }
+    }
+}
+
+/**
  * Playback position as a sentence-level seek bar. Time/duration isn't plumbed through, but this
  * reader navigates by sentence anyway (that's what skip does), so the slider seeks to a sentence and
  * reads "Sentence X of N". Absent when there's nothing to move between (one sentence or blank). Seeks
@@ -604,6 +644,7 @@ private fun PlaybackCard(
 private fun SentenceSeekBar(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
+    modifier: Modifier = Modifier,
 ) {
     val sentenceCount = remember(state.text) { TextChunker.intoSentences(state.text).size }
     if (sentenceCount <= 1) return
@@ -611,23 +652,25 @@ private fun SentenceSeekBar(
     val current = (state.currentSentenceIndex ?: 0).coerceIn(0, lastIndex)
     var dragValue by remember { mutableStateOf<Float?>(null) }
     val value = (dragValue ?: current.toFloat()).coerceIn(0f, lastIndex.toFloat())
-    Slider(
-        value = value,
-        onValueChange = { dragValue = it },
-        onValueChangeFinished = {
-            dragValue?.let { viewModel.seekToSentence(it.roundToInt()) }
-            dragValue = null
-        },
-        valueRange = 0f..lastIndex.toFloat(),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Text(
-        "Sentence ${value.roundToInt() + 1} of $sentenceCount",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth(),
-    )
+    Column(modifier = modifier.fillMaxWidth()) {
+        Slider(
+            value = value,
+            onValueChange = { dragValue = it },
+            onValueChangeFinished = {
+                dragValue?.let { viewModel.seekToSentence(it.roundToInt()) }
+                dragValue = null
+            },
+            valueRange = 0f..lastIndex.toFloat(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "Sentence ${value.roundToInt() + 1} of $sentenceCount",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 // The central button's (icon, label, action) for the current state: Play when idle, Pause while
@@ -685,8 +728,42 @@ private fun TransportBar(
             enabled = state.playing,
             modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
         ) {
-            Icon(Icons.Filled.Stop, "Stop", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+            Icon(
+                Icons.Filled.Stop,
+                contentDescription = "Stop audio (keeps generating ahead)",
+                modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+            )
         }
+    }
+    GenerationAheadRow(state, viewModel)
+}
+
+/**
+ * Shown only while generation is still running with nothing playing - i.e. after Stop, or after the
+ * audio caught up and drained while the model keeps working ahead.
+ *
+ * Stop halts audio ONLY, on purpose: the point of separating the producer from the consumer is that
+ * you can stop listening, come back later, and find the document already synthesized rather than
+ * waiting on the model again. That is invisible unless the UI says so, and a user who does want the
+ * battery back needs an explicit way to ask - hence this row rather than overloading Stop.
+ */
+@Composable
+private fun GenerationAheadRow(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    if (!state.generating || state.playing) return
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Still generating ahead - ${state.sentencesReady} sentences ready",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = viewModel::stopGeneration) { Text("Stop generating") }
     }
 }
 
@@ -809,197 +886,24 @@ private fun GenerationStatsView(stats: com.phonetts.core.metrics.GenerationStats
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ModelPicker(
-    models: List<ModelDescriptor>,
-    selected: ModelDescriptor?,
-    onSelect: (ModelDescriptor) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = selected?.displayName ?: "Select a model",
-            onValueChange = {},
-            readOnly = true,
-            singleLine = true,
-            supportingText = selected?.let { { Text(modelSummary(it)) } },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            models.forEach { model ->
-                val isSelected = model.modelId == selected?.modelId
-                DropdownMenuItem(
-                    text = { TwoLineItem(model.displayName, modelSummary(model), isSelected) },
-                    trailingIcon = { SelectedCheck(isSelected) },
-                    onClick = {
-                        onSelect(model)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
-}
-
-// A one-line "what is this model" summary from facts the descriptor already carries (SSOT - nothing
-// invented): the engine it runs on and how many voices it offers. Gives the picker the at-a-glance
-// context it was missing (the whole screen's most important choice was the most information-starved).
-private fun modelSummary(model: ModelDescriptor): String {
-    val voiceCount = model.voices.size
-    val voices = if (voiceCount == 1) "1 voice" else "$voiceCount voices"
-    return "${model.engineId} · $voices"
-}
-
-/** A dropdown row rendered as a bold primary line over a muted supporting line. */
-@Composable
-private fun TwoLineItem(
-    primary: String,
-    secondary: String,
-    selected: Boolean,
-) {
-    Column {
-        Text(
-            primary,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-        )
-        Text(
-            secondary,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/** A check icon shown only on the currently-selected dropdown row, so the pick is obvious in a long list. */
-@Composable
-private fun SelectedCheck(selected: Boolean) {
-    if (!selected) return
-    Icon(Icons.Filled.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
-}
-
-/**
- * Voice picker; voices always come from [voices] (a descriptor's own list - SSOT). Favorited
- * voices ([favoriteVoiceIds], derived from the single FavoritesStore source of truth) sort first
- * and show a filled star; the star toggle never changes the voice list itself, only its order.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun VoicePicker(
-    voices: List<Voice>,
-    selectedVoiceId: String?,
-    favoriteVoiceIds: Set<String>,
-    onSelect: (String) -> Unit,
-    onToggleFavorite: (Voice) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val selected = voices.firstOrNull { it.id == selectedVoiceId }
-    val selectedName = selected?.name ?: "Select a voice"
-    val ordered = voices.sortedByDescending { it.id in favoriteVoiceIds }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = selectedName,
-            onValueChange = {},
-            readOnly = true,
-            singleLine = true,
-            supportingText = selected?.let { { Text(it.language) } },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            ordered.forEach { voice ->
-                val isSelected = voice.id == selectedVoiceId
-                DropdownMenuItem(
-                    text = { TwoLineItem(voice.name, voice.language, isSelected) },
-                    // Star (favorite) and check (selected) both live here; the star is tappable on its
-                    // own without dismissing, so a voice can be favorited straight from the list.
-                    trailingIcon = {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            FavoriteStar(voice.id in favoriteVoiceIds) { onToggleFavorite(voice) }
-                            SelectedCheck(isSelected)
-                        }
-                    },
-                    onClick = {
-                        onSelect(voice.id)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FavoriteStar(
-    isFavorite: Boolean,
-    onToggle: () -> Unit,
-) {
-    IconButton(onClick = onToggle, modifier = Modifier.size(32.dp)) {
-        Icon(
-            imageVector = if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
-            contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites",
-            tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-/**
- * Cross-model favorite voices (issue #119): a quick-pick of every voice the user starred, in ANY
- * model, so switching to a favorite never means hunting through each model's list. The options are
- * resolved against the catalog (SSOT) in the ViewModel - a ref whose model/voice no longer exists is
- * already dropped there (fail closed), so this is simply absent when there is nothing to offer.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun FavoriteVoicesQuickPick(
-    options: List<TtsViewModel.FavoriteVoiceOption>,
-    selectedModelId: String?,
-    selectedVoiceId: String?,
-    onSelect: (String, String) -> Unit,
-) {
-    if (options.isEmpty()) return
-    Text("Favorites", style = MaterialTheme.typography.bodyMedium)
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        options.forEach { option ->
-            val isCurrent = option.modelId == selectedModelId && option.voiceId == selectedVoiceId
-            if (isCurrent) {
-                Button(onClick = { onSelect(option.modelId, option.voiceId) }) { Text(option.label) }
-            } else {
-                OutlinedButton(onClick = { onSelect(option.modelId, option.voiceId) }) { Text(option.label) }
-            }
-        }
-    }
-}
-
-// Offer (never force) an update: a dismissible banner that opens the new APK's download URL in the
-// browser, where the user chooses to download and install it. Shown only when the update check found
-// a strictly-newer release with an installable APK.
+// Offer (never force) an update: a dismissible banner that downloads the new APK IN THE APP - with
+// progress and SHA-256 verification - and then offers to install it. It used to just fire the asset
+// URL at the browser, whose download of GitHub's short-lived signed link would stall and never
+// finish; "Open in browser" is still there as a fallback (see UpdateActions). Shown only when the
+// update check found a strictly-newer release with an installable APK.
 @Composable
 private fun UpdateBanner(
     update: com.phonetts.core.update.UpdateStatus,
+    download: com.phonetts.core.update.ApkDownloadState,
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val uriHandler = LocalUriHandler.current
-    val target = update.apkDownloadUrl ?: update.releasePageUrl
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Update available: ${update.latestVersion} (you have ${update.currentVersion})")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { target?.let(uriHandler::openUri) }, enabled = target != null) { Text("Download") }
-                OutlinedButton(onClick = onDismiss) { Text("Not now") }
-            }
+            UpdateActions(update, download, onDownload, onCancelDownload)
+            OutlinedButton(onClick = onDismiss) { Text("Not now") }
         }
     }
 }
@@ -1045,7 +949,7 @@ private fun ParameterControls(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ContinuousControl(
     param: ModelParameter,
@@ -1058,19 +962,33 @@ private fun ContinuousControl(
         Text("%.2f".format(value), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
     }
     Slider(value = value, onValueChange = onValue, valueRange = range)
-    // Speed keeps its familiar preset shortcuts; other continuous knobs just get the slider.
+    // Speed keeps its familiar preset shortcuts; other continuous knobs just get the slider. A
+    // SingleChoiceSegmentedButtonRow (M3 guidance: segmented buttons for 2-5 choices) COMPRESSES to
+    // fit one line instead of wrapping to two like the FilterChip row it replaces (issue: "speed
+    // adjustments... on 2 lines, looking unprofessional") - still generated from the model's own
+    // declared range (SSOT), never a hardcoded control or bound.
     if (param.id != ModelParameter.SPEED_ID) return
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Only presets the model's own range actually supports - clamping out-of-range presets to
-        // the boundary instead would show the same value twice (e.g. two "1.50x" chips).
-        SPEED_PRESETS.filter { it in range }.forEach { preset ->
-            FilterChip(
+    // Only presets the model's own range actually supports - clamping out-of-range presets to
+    // the boundary instead would show the same value twice (e.g. two "1.50x" segments).
+    val presets = SPEED_PRESETS.filter { it in range }
+    if (presets.isEmpty()) return
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        presets.forEachIndexed { index, preset ->
+            SegmentedButton(
                 selected = kotlin.math.abs(value - preset) < PRESET_MATCH_EPSILON,
                 onClick = { onValue(preset) },
-                label = { Text("%.2fx".format(preset)) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = presets.size),
+                label = { Text(formatSpeedPreset(preset)) },
             )
         }
     }
+}
+
+// "0.75x", "1x", "1.25x", "1.5x", "2x" - trailing zeros/dot trimmed so a whole-number preset reads
+// as "1x", not "1.00x", matching the short segmented-button labels this control asks for.
+private fun formatSpeedPreset(preset: Float): String {
+    val trimmed = "%.2f".format(preset).trimEnd('0').trimEnd('.')
+    return "${trimmed}x"
 }
 
 @OptIn(ExperimentalLayoutApi::class)

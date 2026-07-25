@@ -41,6 +41,7 @@ import com.phonetts.core.download.hf.QuantizationVariant
 import com.phonetts.core.download.hf.needsEagerSizeFetch
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.registry.ModelCatalog
+import com.phonetts.core.store.DurableErrorLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,9 +58,10 @@ import kotlinx.coroutines.withContext
 /**
  * Drives the HF browse screen: live search of text-to-speech models, sort/filter over the results
  * (issue #6), download → import of a chosen repo with **multiple downloads running at once**
- * (issue #2), on-demand size lookups (issue #7), and a retained/copyable error log (issue #3). All
- * model detection is delegated to the core resolver via [HfDownloader]; this class holds UI state
- * only and names no model family.
+ * (issue #2), on-demand size lookups (issue #7), and a retained/copyable error log (issue #3) that
+ * also mirrors into a durable, cross-restart store (issue #88, see [durableErrorLog]). All model
+ * detection is delegated to the core resolver via [HfDownloader]; this class holds UI state only and
+ * names no model family.
  */
 class HfBrowseViewModel(
     private val catalog: HfCatalog,
@@ -78,6 +80,19 @@ class HfBrowseViewModel(
     // this file's ownership) passes a real DownloadNotifier(context) to turn it on. See
     // DownloadNotifier's kdoc.
     private val notifier: DownloadNotifier? = null,
+    // Issue #88: the session error log below (`HfBrowseUiState.errorLog`) is in-memory only and dies
+    // with the process - a user who hits a search/size/download error, backgrounds the app, and comes
+    // back has nothing left to copy. [logError] mirrors every entry into this durable, bounded sink
+    // too (see [DurableErrorLog], already the shared home [MainActivity]'s Help screen reads for
+    // crash rows) so the same error survives a restart. Null by default, exactly like [notifier]
+    // above - this class (and any test constructing it directly) needs no real Android storage; the
+    // caller wiring up the real dependency (AppGraph/MainActivity, outside this file's ownership)
+    // passes `graph.durableErrorLog` to turn it on.
+    // WIRED: VoicesHubScreen's BrowseTabContent passes `durableErrorLog = graph.durableErrorLog`.
+    // Stated as a fact rather than a to-do on purpose - a comment saying "still needs wiring" that
+    // outlives the wiring is how this repo ended up with several features that were built, tested,
+    // and never actually connected.
+    private val durableErrorLog: DurableErrorLog? = null,
     // The transport used ONLY to fetch upstream rhasspy/piper-voices' `voices.json` (issue: don't
     // check in a static Piper voice snapshot - see PiperVoicesIndex). Defaults to the same real
     // HTTP client [catalog] itself is built on elsewhere in the graph, so the caller wiring this up
@@ -98,9 +113,36 @@ class HfBrowseViewModel(
     // engine choices), so a test constructing this class directly needs nothing. AppGraph passes
     // engineRegistry.list().map { it.id } - the one small external wire-up this filter needs.
     private val knownEngineIds: List<String> = emptyList(),
+    // This device's TOTAL RAM (issue #137: the "may not fit this device" warning existed only on
+    // the Manage screen, AFTER download - too late to help the decision this screen is actually
+    // for). Same figure/provider shape as ModelManagementViewModel's totalRamBytes: a 0-arg
+    // provider (not a raw Long) so it's read once lazily rather than forcing every call site,
+    // including tests that construct this class directly, to know a real device's RAM up front.
+    // Defaults to "unknown" (0L), which DeviceRamFit.modelExceedsDeviceRam treats as "can't say" -
+    // fail-closed, never a false warning from an absent reading.
+    private val totalRamBytes: () -> Long = { 0L },
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(HfBrowseUiState())
     val state: StateFlow<HfBrowseUiState> = mutableState.asStateFlow()
+
+    /** This device's TOTAL RAM in bytes, read once (it never changes for the life of the process) -
+     * the one figure [com.phonetts.core.model.DeviceRamFit] checks to decide whether a browsed
+     * model's estimated size can't possibly fit. Exposed as a plain property (not app state) since
+     * it never changes and the UI needs no recomposition trigger for it.
+     *
+     * Bug fix (Browse crash on open): like [recommended]/[isRecommendedAvailable] just above, this
+     * runs as part of CONSTRUCTING this class - before the screen has anything to show - by calling
+     * an injected probe ([totalRamBytes], wired to `DeviceInfo.totalRamBytes(context)` in production:
+     * `ActivityManager.getMemoryInfo()` under the hood, a real Binder call that can throw on a
+     * misbehaving OEM framework or a dead system-server binder). [totalRamBytes]'s own kdoc already
+     * promises "0L, fail-closed" for an ordinary failed reading; that guarantee did not extend to an
+     * exception, so a throwing probe here used to take the whole Browse screen down before it could
+     * render anything - the exact bug class [isRecommendedAvailable] exists to prevent, just left
+     * unguarded on this one property. runCatching extends the same fail-closed contract: a
+     * misbehaving RAM probe now yields "unknown" (0L, DeviceRamFit's own "can't say" value) instead
+     * of crashing construction.
+     */
+    val deviceTotalRamBytes: Long = runCatching { totalRamBytes() }.getOrDefault(0L)
 
     // One coroutine per repo id currently in flight (listing files, or fetching them) - a map, not
     // a single slot, so the user can start a second download while the first is still running and
@@ -115,6 +157,15 @@ class HfBrowseViewModel(
     // listing or a user variant choice, so a permit is never held during user think-time.
     private val downloadSemaphore = Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
+    // Caps how many per-row size/file-tree lookups (loadSize) run at once (issue: unbounded
+    // per-row size fetches on Browse). Unlike downloads, these fire from a LaunchedEffect on EVERY
+    // visible row with no user action gating them - fast-scrolling a long result list used to fire
+    // one file-tree request per row with no limit at all, which can flood the HF file-tree endpoint
+    // and get the whole session rate-limited (degrading the Format/Supported/RTF filters that also
+    // depend on this same fetch). Mirrors [downloadSemaphore]'s pattern at a smaller size, since a
+    // size lookup is far cheaper than a download transfer but still a real network round trip.
+    private val sizeLookupSemaphore = Semaphore(MAX_CONCURRENT_SIZE_LOOKUPS)
+
     // How to re-run each download that has failed, keyed by repo id (issue: a network drop failed a
     // whole batch with no way to retry them). Held here rather than in UI state because it's a
     // callback, not display data - the UI only needs the failed *ids* (state.failedDownloadIds) to
@@ -126,16 +177,31 @@ class HfBrowseViewModel(
      * Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md), minus any whose
      * required runtime isn't available on this build - so a standard APK shows the four ONNX models
      * and a native (-PwithCosyVoice) build also shows CosyVoice3.
+     *
+     * Bug fix (Browse crash on open): this runs synchronously as part of constructing this class -
+     * BEFORE the screen has anything to show - so a runtime-availability probe that throws (rather
+     * than returning false) used to take the whole Browse screen down before it could even open,
+     * with no way to search/scroll/retry around it. [isRuntimeAvailable] already documents itself as
+     * "fail-closed: defaults to not available" for a normal false answer; [isRecommendedAvailable]
+     * extends that same fail-closed guarantee to an exception, so a misbehaving probe just hides the
+     * one model it's asked about instead of crashing construction.
      */
-    val recommended: List<BuiltInModel> =
-        BuiltInCatalog.ALL.filter { model -> model.requiresRuntimeId?.let(isRuntimeAvailable) ?: true }
+    val recommended: List<BuiltInModel> = BuiltInCatalog.ALL.filter(::isRecommendedAvailable)
+
+    private fun isRecommendedAvailable(model: BuiltInModel): Boolean {
+        val runtimeId = model.requiresRuntimeId ?: return true
+        return runCatching { isRuntimeAvailable(runtimeId) }.getOrDefault(false)
+    }
 
     // Populate the list immediately so the screen isn't just the handful of recommended models until
     // the user types - a blank query lists the top TTS models (HfEndpoints.searchModelsUrl). Fail-
     // closed: no network just leaves results empty with an error line, the recommended list still shows.
+    // Both calls are themselves internally fail-closed for their async work; wrapped here too (bug fix:
+    // Browse crash on open) so nothing added to either in the future can throw OUT of init{} and take
+    // the whole screen down before it has rendered anything at all.
     init {
-        search()
-        loadDiagnostics()
+        runCatching { search() }
+        runCatching { loadDiagnostics() }
     }
 
     /** True if [rawId] (an [HfModelSummary.id] or [BuiltInModel.id]) is already on disk - resolved
@@ -151,8 +217,18 @@ class HfBrowseViewModel(
      * can `remember` this keyed on exactly the fields it depends on - see [HfBrowseScreen] (issue
      * #3): recomputing this on every unrelated state change, e.g. a download-progress tick, is
      * what made the sort/filter dropdown janky.
+     *
+     * Bug fix (Browse crash on open): called directly from a Compose `remember` block with no
+     * surrounding try/catch of its own, and it runs the instant real Hugging Face results first land
+     * - exactly the moment "opening Browse" turns from the empty/loading state into real data. It
+     * also touches on-device state this class doesn't otherwise validate (e.g. [rtfEstimates] reads
+     * the real, SharedPreferences-backed [benchmarkHistory] for every installed+benchmarked result).
+     * A Browse screen must never crash outright (spec rule 4's fail-closed spirit, applied to
+     * rendering, not just model detection): on any unexpected exception, fall back to the raw
+     * fetched results - unsorted/unfiltered is still a working screen, a crash is not.
      */
-    fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> = applyFilters(state, state.results)
+    fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> =
+        runCatching { applyFilters(state, state.results) }.getOrDefault(state.results)
 
     // Shared by displayedResults (the full current result set) and loadMore's "how many pages do I
     // still need?" check (a growing prefix of it) - one filter pipeline, so the count loadMore reads
@@ -187,14 +263,19 @@ class HfBrowseViewModel(
 
     /** The Format filter menu's choices - every [HfFileFormat] present across the file trees fetched
      * so far (issue #107), derived from data via [HfFileFormats.availableFormats], never a hardcoded
-     * list. Same [state]-parameter rationale as [displayedResults]. */
-    fun availableFormats(state: HfBrowseUiState): List<HfFileFormat> = HfFileFormats.availableFormats(state.fileFormats)
+     * list. Same [state]-parameter rationale as [displayedResults]; same fail-closed-to-empty
+     * rationale too (Browse crash on open) - an empty menu is a minor UX loss, a crash is not. */
+    fun availableFormats(state: HfBrowseUiState): List<HfFileFormat> =
+        runCatching { HfFileFormats.availableFormats(state.fileFormats) }.getOrDefault(emptyList())
 
     /** The Engine-type filter menu's choices - each registered engine a current result maps to, plus
      * [HfEngineClassifier.UNKNOWN] when any result matches none (issue #107). Derived from the live
-     * registry ids + the current results, never a hardcoded model list. */
+     * registry ids + the current results, never a hardcoded model list. Fail-closed to empty, same
+     * rationale as [availableFormats]. */
     fun availableEngines(state: HfBrowseUiState): List<String> =
-        HfEngineClassifier.availableEngines(HfEngineClassifier.engineLabels(state.results, knownEngineIds))
+        runCatching {
+            HfEngineClassifier.availableEngines(HfEngineClassifier.engineLabels(state.results, knownEngineIds))
+        }.getOrDefault(emptyList())
 
     /** [results]' ids that already have a downloaded/resolved bundle on this device - the input
      * [HfResultsView.filterByInstalled] needs (issue: installed filter). Read live off
@@ -226,13 +307,17 @@ class HfBrowseViewModel(
     /** The tag filter menu's choices - the most common, *useful* tags across the current results
      * (issue: the tag filter is slow with hundreds of raw tags). Boilerplate and language codes are
      * stripped and the list is capped - see [HfResultsView.frequentTags]. Derived from data, never a
-     * hardcoded list (issue #6 SSOT rule); same [state]-parameter rationale as [displayedResults]. */
-    fun availableTags(state: HfBrowseUiState): List<String> = HfResultsView.frequentTags(state.results)
+     * hardcoded list (issue #6 SSOT rule); same [state]-parameter and fail-closed-to-empty rationale
+     * as [displayedResults]/[availableFormats] (Browse crash on open). */
+    fun availableTags(state: HfBrowseUiState): List<String> =
+        runCatching { HfResultsView.frequentTags(state.results) }.getOrDefault(emptyList())
 
     /** The language filter menu's choices - every language present in the current results (issue:
      * add a language filter). Derived from the Hub's own language tags, never a hardcoded list - see
-     * [HfLanguages.availableLanguages]. Same [state]-parameter rationale as [displayedResults]. */
-    fun availableLanguages(state: HfBrowseUiState): List<String> = HfLanguages.availableLanguages(state.results)
+     * [HfLanguages.availableLanguages]. Same [state]-parameter and fail-closed rationale as
+     * [displayedResults]. */
+    fun availableLanguages(state: HfBrowseUiState): List<String> =
+        runCatching { HfLanguages.availableLanguages(state.results) }.getOrDefault(emptyList())
 
     fun onLanguageFilterChange(code: String?) = mutableState.update { it.copy(languageFilter = code) }
 
@@ -341,8 +426,15 @@ class HfBrowseViewModel(
         beginTracking(model.id)
         downloadJobs[model.id] =
             viewModelScope.launch {
-                runCatching { withContext(Dispatchers.IO) { catalog.listFiles(model.repoId, model.revision) } }
-                    .onSuccess { files -> runDownload(model.id, sizedBuiltInItems(model, files), model.displayName) }
+                // [sizedBuiltInItems] moved inside this runCatching (not just the network call) so
+                // ANY failure merging real tree sizes onto the curated file list - not only a network
+                // one - takes the same best-effort fallback below, consistent with this function's
+                // own "a failed size lookup must not block a known-good curated download" contract.
+                runCatching {
+                    val files = withContext(Dispatchers.IO) { catalog.listFiles(model.repoId, model.revision) }
+                    sizedBuiltInItems(model, files)
+                }
+                    .onSuccess { items -> runDownload(model.id, items, model.displayName) }
                     .onFailure { e ->
                         if (e is CancellationException) throw e
                         // A failed size lookup is best-effort, not fatal - a known-good curated
@@ -394,14 +486,18 @@ class HfBrowseViewModel(
         if (current.piperVoices.isNotEmpty() || current.piperVoicesLoading) return
         mutableState.update { it.copy(piperVoicesLoading = true, piperVoicesError = null) }
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { fetchPiperVoices() } }
-                .onSuccess { voices ->
-                    // Same duplicate-key guard as the search results: the Piper list is rendered with
-                    // key = "piper:${it.id}", so two upstream voices that derive to the same id would
-                    // crash the LazyColumn on expand. Dedupe by id before it reaches state.
-                    val unique = voices.distinctBy { it.id }
-                    mutableState.update { it.copy(piperVoicesLoading = false, piperVoices = unique) }
-                }.onFailure { e ->
+            // Same "protect the whole success path, not just the network call" fix as
+            // search()/loadSize()/download() above, applied here for consistency even though the
+            // dedup below is already provably safe.
+            runCatching {
+                val voices = withContext(Dispatchers.IO) { fetchPiperVoices() }
+                // Same duplicate-key guard as the search results: the Piper list is rendered with
+                // key = "piper:${it.id}", so two upstream voices that derive to the same id would
+                // crash the LazyColumn on expand. Dedupe by id before it reaches state.
+                voices.distinctBy { it.id }
+            }
+                .onSuccess { unique -> mutableState.update { it.copy(piperVoicesLoading = false, piperVoices = unique) } }
+                .onFailure { e ->
                     if (e is CancellationException) throw e
                     mutableState.update {
                         it.copy(
@@ -449,28 +545,36 @@ class HfBrowseViewModel(
         val query = mutableState.value.query
         mutableState.update { it.copy(loading = true, error = null, loadingMore = false) }
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { catalog.search(query, limit = PAGE_SIZE) } }
-                .onSuccess { results ->
-                    // Dedupe by id BEFORE these become LazyColumn items: the list is rendered with
-                    // key = "hf:${it.id}", and the Hub can return the same repo id twice in one page
-                    // (its own ranking), which makes Compose throw a duplicate-key IllegalStateException
-                    // and crash the whole Browse screen. loadMore() already dedupes across page
-                    // boundaries for the same reason; the initial page needs the same guard. canLoadMore
-                    // still keys off the RAW page size so paging isn't cut short by within-page dupes.
-                    val unique = results.distinctBy { it.id }
-                    // A success clears any prior cooldown counter so the next 429 starts its backoff
-                    // from scratch rather than from an inflated consecutive count.
-                    mutableState.update {
-                        it.copy(
-                            loading = false,
-                            results = unique,
-                            canLoadMore = results.size >= PAGE_SIZE,
-                            rateLimitConsecutive = 0,
-                            rateLimitedUntilMs = 0,
-                        )
-                    }
-                    ensureSizesLoadedIfNeeded(unique)
-                }.onFailure { e -> onSearchFailure(e) }
+            // Bug fix (Browse crash on open): the success-path processing below used to run in a
+            // separate `.onSuccess { }` NOT covered by this `runCatching` - only the network call
+            // itself was protected. That meant any exception while turning a real HF response into
+            // state (dedup, `ensureSizesLoadedIfNeeded` kicking off further fetches, ...) would
+            // propagate uncaught out of this coroutine and crash the whole app, right at the exact
+            // moment real results first replace the empty initial list. Moving it inside the
+            // protected block routes ANY such failure through the same existing, well-tested
+            // [onSearchFailure] error path instead (spec rule 4's fail-closed spirit, applied here).
+            runCatching {
+                val results = withContext(Dispatchers.IO) { catalog.search(query, limit = PAGE_SIZE) }
+                // Dedupe by id BEFORE these become LazyColumn items: the list is rendered with
+                // key = "hf:${it.id}", and the Hub can return the same repo id twice in one page
+                // (its own ranking), which makes Compose throw a duplicate-key IllegalStateException
+                // and crash the whole Browse screen. loadMore() already dedupes across page
+                // boundaries for the same reason; the initial page needs the same guard. canLoadMore
+                // still keys off the RAW page size so paging isn't cut short by within-page dupes.
+                val unique = results.distinctBy { it.id }
+                // A success clears any prior cooldown counter so the next 429 starts its backoff
+                // from scratch rather than from an inflated consecutive count.
+                mutableState.update {
+                    it.copy(
+                        loading = false,
+                        results = unique,
+                        canLoadMore = results.size >= PAGE_SIZE,
+                        rateLimitConsecutive = 0,
+                        rateLimitedUntilMs = 0,
+                    )
+                }
+                ensureSizesLoadedIfNeeded(unique)
+            }.onFailure { e -> onSearchFailure(e) }
         }
     }
 
@@ -542,8 +646,20 @@ class HfBrowseViewModel(
         if (current.isRateLimited(clock())) return
         mutableState.update { it.copy(loadingMore = true) }
         viewModelScope.launch {
-            val outcome = withContext(Dispatchers.IO) { fetchUntilEnoughVisible(current) }
-            applyLoadMoreOutcome(outcome)
+            // Bug fix (Browse crash on open/scroll): unlike every sibling network-triggering method
+            // in this class (search/download/downloadBuiltIn/loadSize all wrap their work in
+            // runCatching), this body had NO error handling at all - any exception here, including
+            // one from [fetchUntilEnoughVisible]'s calls into the SAME sort/filter pipeline
+            // [displayedResults] uses for rendering (via `applyFilters`), propagated uncaught and
+            // crashed the app. Routes any such failure into the existing copyable error log instead,
+            // exactly like [onSearchFailure] does for [search].
+            runCatching { withContext(Dispatchers.IO) { fetchUntilEnoughVisible(current) } }
+                .onSuccess { outcome -> applyLoadMoreOutcome(outcome) }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    val message = logError(null, e)
+                    mutableState.update { it.copy(loadingMore = false, error = message) }
+                }
         }
     }
 
@@ -639,9 +755,15 @@ class HfBrowseViewModel(
         beginTracking(model.id)
         downloadJobs[model.id] =
             viewModelScope.launch {
-                runCatching { withContext(Dispatchers.IO) { catalog.listFiles(model.id) } }
-                    .onSuccess { files -> onFilesListed(model.id, files) }
-                    .onFailure { e -> failDownload(model.id, model.id, e) }
+                // Bug fix: [onFilesListed] (quantization classification + starting the plan) used to
+                // run in a separate `.onSuccess { }` NOT covered by this runCatching - only the
+                // network call itself was protected, so any exception while classifying a real repo's
+                // file tree would crash the app instead of failing this one download. Moved inside so
+                // it routes through the same [failDownload] path as a network failure would.
+                runCatching {
+                    val files = withContext(Dispatchers.IO) { catalog.listFiles(model.id) }
+                    onFilesListed(model.id, files)
+                }.onFailure { e -> failDownload(model.id, model.id, e) }
             }
     }
 
@@ -651,34 +773,65 @@ class HfBrowseViewModel(
      * grey badge, [HfCompatibility]). Cached in state once known so re-opening the screen or
      * scrolling doesn't refetch. A model whose size can't be determined (network hiccup) simply
      * stays unknown - never a guessed number, and never labeled unsupported on a failed fetch.
+     *
+     * Called from a `LaunchedEffect` on EVERY visible row (issue: unbounded per-row size fetches on
+     * Browse) - the actual network fetch is gated behind [sizeLookupSemaphore] so fast-scrolling a
+     * long result list queues extra rows instead of firing them all at once and flooding the HF
+     * file-tree endpoint into a rate limit.
      */
     fun loadSize(modelId: String) {
         val current = mutableState.value
         if (modelId in current.sizeEstimates || modelId in current.sizeLoading) return
         mutableState.update { it.copy(sizeLoading = it.sizeLoading + modelId) }
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { catalog.listFiles(modelId) } }
-                .onSuccess { files ->
-                    val estimate = HfSizeEstimator.estimate(files)
-                    // One fetch fills three facts the UI/filters need: the download size, how
-                    // runnable the repo is (badge #108 + Supported filter #107), and which formats it
-                    // ships (Format filter #107). [modelId] is the HF repo id, so it sharpens the
-                    // Apple-only detection HfCompatibility/HfFileFormats do from the namespace.
-                    val runnability = HfCompatibility.classify(files, modelId)
-                    val formats = HfFileFormats.formatsOf(files, modelId)
-                    mutableState.update {
-                        it.copy(
-                            sizeLoading = it.sizeLoading - modelId,
-                            sizeEstimates = it.sizeEstimates + (modelId to estimate),
-                            compatibility = it.compatibility + (modelId to runnability),
-                            fileFormats = it.fileFormats + (modelId to formats),
-                        )
+            // Bug fix (Browse crash on open): the classification below (estimate/compatibility/
+            // formats, all derived from a REAL repo's file tree this app doesn't control the shape
+            // of) used to run in a separate `.onSuccess { }` NOT covered by this runCatching - only
+            // the network call itself was protected. This fires automatically, unconditionally, for
+            // every visible row the instant Browse shows real results (ModelRow's `LaunchedEffect`),
+            // so any exception here used to crash the whole app right when the screen first has
+            // something to show. Moved inside so any such failure routes through the SAME onFailure
+            // handling a network hiccup already gets, rather than escaping uncaught.
+            runCatching {
+                val files =
+                    sizeLookupSemaphore.withPermit {
+                        withContext(Dispatchers.IO) { catalog.listFiles(modelId) }
                     }
-                }.onFailure { e ->
-                    if (e is CancellationException) throw e
-                    mutableState.update { it.copy(sizeLoading = it.sizeLoading - modelId) }
-                    logError(modelId, e)
+                val estimate = HfSizeEstimator.estimate(files)
+                // One fetch fills three facts the UI/filters need: the download size, how
+                // runnable the repo is (badge #108 + Supported filter #107), and which formats it
+                // ships (Format filter #107). [modelId] is the HF repo id, so it sharpens the
+                // Apple-only detection HfCompatibility/HfFileFormats do from the namespace.
+                val runnability = HfCompatibility.classify(files, modelId)
+                val formats = HfFileFormats.formatsOf(files, modelId)
+                mutableState.update {
+                    it.copy(
+                        sizeLoading = it.sizeLoading - modelId,
+                        sizeEstimates = it.sizeEstimates + (modelId to estimate),
+                        compatibility = it.compatibility + (modelId to runnability),
+                        fileFormats = it.fileFormats + (modelId to formats),
+                    )
                 }
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                mutableState.update { it.copy(sizeLoading = it.sizeLoading - modelId) }
+                // A 429 here is an EXPECTED, self-resolving cooldown, exactly as it is on the
+                // search path - not a real error. Routing it to logError put a raw red
+                // "HTTP 429 for https://huggingface.co/api/models/.../tree/main" banner over the
+                // screen, which is one of the ways Browse reads as "broken": scrolling a long
+                // list fires one of these per visible row, so a throttled connection paints the
+                // error banner while every row's size stays permanently unavailable.
+                // Defer to the same cooldown the search path already shows and let the row retry
+                // afterwards instead of failing forever.
+                if (e is HfRateLimitedException) {
+                    // Retry this row's lookup once the cooldown elapses - the size/format/
+                    // compatibility facts the Format, Supported and RTF filters depend on all
+                    // come from this one fetch, so abandoning it silently degrades those filters.
+                    onRateLimited(e) { loadSize(modelId) }
+                    return@onFailure
+                }
+                logError(modelId, e)
+            }
         }
     }
 
@@ -906,15 +1059,17 @@ class HfBrowseViewModel(
      * callback: a no-op when nothing has failed, and [beginTracking]/`isDownloading` prevent
      * double-starting one already back in flight.
      *
-     * EXTERNAL WIRING REQUIRED: nothing registers a connectivity listener yet - the app graph (or
-     * MainActivity) must register a `ConnectivityManager.NetworkCallback` (or equivalent) whose
-     * `onAvailable` calls this. That registration is outside this file's ownership; this is the hook
-     * it should call.
+     * WIRED: VoicesHubScreen's BrowseTabContent registers a `ConnectivityManager.NetworkCallback`
+     * in a DisposableEffect whose `onAvailable` calls this. (This kdoc previously said nothing
+     * registered one - it was stale, and a stale "not wired yet" note is worse than none, because
+     * it invites someone to wire it a second time.)
      */
     fun onConnectivityAvailable() = resumeFailedDownloads()
 
     /** Appends [e] to the retained error log (issue #3), bounded to [MAX_HF_ERROR_LOG] entries, and
-     * returns a display message for the caller's own inline banner. */
+     * returns a display message for the caller's own inline banner. Every search/size/download
+     * failure funnels through here (see the call sites above), so mirroring into [durableErrorLog]
+     * here (issue #88) covers all three without a second logging path. */
     private fun logError(
         modelId: String?,
         e: Throwable,
@@ -926,8 +1081,20 @@ class HfBrowseViewModel(
         mutableState.update { current ->
             current.copy(errorLog = appendError(current.errorLog, HfBrowseError(clock(), modelId, message)))
         }
+        // Durable mirror (issue #88): a null durableErrorLog (no real store wired - see the
+        // constructor param's kdoc) makes this a no-op, same fail-closed shape as [notifier] elsewhere
+        // in this class. DurableErrorLog bounds/persists itself; nothing extra to do here.
+        durableErrorLog?.record(atMs = clock(), source = DURABLE_ERROR_SOURCE, message = durableMessage(modelId, message))
         return message
     }
+
+    // DurableErrorLog's entries carry a plain message string, no separate model-id field (unlike this
+    // screen's own HfBrowseError) - fold the model id in as a prefix so the Help screen's log (which
+    // renders "[source] message") still tells the two apart.
+    private fun durableMessage(
+        modelId: String?,
+        message: String,
+    ): String = if (modelId != null) "$modelId: $message" else message
 
     // Collapses a repeat-identical newest entry into a single "(xN)" row rather than prepending a
     // duplicate (issue #103) - a transient loop (or a 429 that slipped past the cooldown) can't flood
@@ -994,6 +1161,17 @@ class HfBrowseViewModel(
         // mobile connection saturates past ~2-3 large parallel transfers, which surfaced as a batch of
         // socket failures misread as "No internet". Everything past this queues and starts as slots free.
         private const val MAX_CONCURRENT_DOWNLOADS = 3
+
+        // How many per-row loadSize() file-tree fetches may run at once (issue: unbounded per-row
+        // size fetches on Browse). A size lookup is a small GET, not a multi-file transfer, so this
+        // can be a little more generous than [MAX_CONCURRENT_DOWNLOADS] while still keeping a fast
+        // scroll from firing dozens of requests at the HF file-tree endpoint simultaneously.
+        private const val MAX_CONCURRENT_SIZE_LOOKUPS = 3
+
+        // Issue #88: the [DurableErrorLog.record] "source" tag for every error this screen mirrors
+        // into the durable log, so the Help screen's shared log (which shows "[source] message") can
+        // tell a Browse-originated row apart from a crash row or any other subsystem's.
+        private const val DURABLE_ERROR_SOURCE = "browse"
     }
 }
 

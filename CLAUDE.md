@@ -65,12 +65,98 @@ These come straight from the spec and are the whole point of the design:
    built-in-vs-sideloaded distinction is the `Origin` field, used for **display only**.
 6. **One engine loaded at a time.** `EngineManager` calls `unload()` on the previous engine
    before `load()` on the next. A 4 GB phone cannot hold them all.
-7. **Model weights are never bundled in the APK.** Ship a manifest, download into app-private
-   storage, verify SHA-256, then load.
+7. **Model weights are never bundled in the APK; verify what can genuinely be verified, and be
+   honest about what can't.** Download into app-private storage, then:
+   - **Curated `BuiltInCatalog` models** are a fixed, project-controlled set - each file's SHA-256
+     is sourced by hashing the real upstream bytes and pinned in `BuiltInFile.sha256`
+     (`core/.../download/builtin/BuiltInModel.kt`). `HfDownloader` checks every completed file
+     against it and **rejects on mismatch** (deletes the file, surfaces a clear error) before the
+     model ever reaches the resolver. A file whose genuine hash couldn't be sourced carries `null`
+     rather than a fabricated value, and is honestly left unverified - never a silent pass dressed
+     up as a check.
+   - **Arbitrary Hugging Face repos browsed by the user** cannot be hash-verified this way: HF's
+     ETags are not stable content hashes, so there is no known-good value to check a browsed file
+     against. That's a real constraint, not an oversight - integrity there rests on HTTPS-in-transit
+     plus the resolver's fail-closed `inspect()` (rule 4) refusing anything it can't identify, and
+     the app must never claim otherwise in code, comments, or UI.
+   - **Every ingestion path shares one free-storage guard** (`DownloadStorageCap`): both the HF
+     download path and a sideloaded folder (`SideloadCoordinator`) check free space before AND
+     while copying, so neither can fill the device.
+   - `ModelManifest`/`ManifestFile.sha256` remain the seam for a future server-issued manifest (a
+     manifest entry seeds the resolver, never bypasses it) - nothing in production constructs one
+     yet; don't imply it's wired up until it is.
 8. **All inference off the main thread** (coroutines). **Chunk long text into sentences** and
    synthesize sequentially so output can start before the whole thing is generated.
 9. **Never-nesting.** Guard clauses / early `return`/`continue`. No deep `if` pyramids.
    Enforced by detekt (`NestedBlockDepth`, `LongMethod`, `LargeClass`).
+
+## Practices that would have prevented real bugs
+
+Not generic advice - each rule below exists because its absence caused a specific, verified
+defect in this repo. If you're tempted to skip one, re-read the defect it cites.
+
+1. **Derive, don't hand-maintain, any list that must track reality.** Which engines exist, how
+   many, which screens the app can reach - compute these from the source of truth (the
+   filesystem, an enum, `Screen.entries`, `rootProject.subprojects`), never keep a second,
+   hand-written copy. `settings.gradle.kts`/`app/build.gradle.kts` used to hand-list engine
+   modules; `neutts`, `outetts`, `pockettts`, and `supertonic` existed and compiled but were
+   missing from the app's list, so `ServiceLoader` never saw them and they silently shipped in no
+   build at all. Both files now derive the engine set from `engines/*/build.gradle.kts` on disk
+   (see *Adding an engine*).
+   **Corollary: no magic counts in tests.** A test asserting "there are N of these" computes N
+   from the same source of truth. `AllEnginesDiscoveryTest` used to hardcode
+   `expectedEngineCount = 5` while 15 engine modules existed - the test meant to guard
+   `ServiceLoader` discovery kept passing while blind to two-thirds of the engines. It now reads
+   `phonetts.expectedEngineCount`, a Gradle-derived system property (`integration/build.gradle.kts`).
+2. **No silent no-ops on a control path.** `controller?.pause() ?: Unit`, an empty `catch`, or a
+   swallowed null on any user-triggered action (button, tile, notification, widget) is a bug, not
+   a safe default - it used to mean a tapped pause button did nothing, with no log and no crash to
+   find it by. If an action can fail, log it or surface it; never let the failure branch be a
+   silent no-op.
+3. **UI state is derived from its one owner, never mirrored into a second field.** (This is about
+   runtime *state* - distinct from rule 1 of *"The rules that must never be broken"* above, which
+   is SSOT for model *facts*.) `fun play() = startPlaybackFrom(0)` ignored the resume point
+   `DocumentPosition` already recorded - the data existed, nothing read it. Worse, that resume
+   point was keyed to *generation* progress, not *playback* progress, so a skip discarded audio
+   that had already been generated but never heard, while the screen kept showing "playing." On a
+   real device that read as "audio kept going after the UI said it had stopped." If two fields can
+   both answer "where are we" and disagree, delete one of them.
+4. **Foreground services must be started, not merely bound.** `PlaybackService` was a declared
+   foreground media service that the app only ever bound to, and the Activity detached its
+   controller in `onStop()` - so lock-screen/notification controls went dead exactly while the
+   Activity was backgrounded, which is the entire point of a foreground service. Start it
+   (`ContextCompat.startForegroundService`) for anything that must stay controllable off-screen;
+   binding alone couples its lifetime to the Activity's.
+5. **Every user-visible choice survives process death.** Settings toggles, reader position,
+   anything the user set and would notice reverting, gets persisted - before this was enforced, 8
+   Settings toggles and the reader's text position silently reset on process death because no
+   ViewModel used `SavedStateHandle`/`rememberSaveable` and nothing backed them. Persist through
+   `:core`'s store seam (`DurableStore`/`JsonListStore`, `core/src/main/kotlin/com/phonetts/core/
+   store/`) or a dedicated store like `SessionStateStore` - don't add a fourth hand-rolled
+   `getSharedPreferences(...)` namespace next to `PlaybackStateStore`, `PrefsOverrideStore`, and
+   `PrefsPreferenceStore` without a reason the existing seam can't cover.
+6. **Wire the crash hook, don't just build the log it's supposed to feed.**
+   `Thread.setDefaultUncaughtExceptionHandler` appeared nowhere, so the durable error log built to
+   catch crashes recorded nothing on an actual crash - empty exactly when it mattered. A
+   failure-capture path that isn't wired to the real crash hook (`CrashReporter`, installed at app
+   start) is dead code wearing a safety net's clothes.
+7. **A UI control, a persisted value, and a screen all need a test before they're "done."** `:app`
+   shipped with zero tests for a long time; every bug above went out through a green build because
+   nothing exercised the UI layer. `app/src/test/` now has a Robolectric source set:
+   `NavigationReachabilityTest` walks `Screen.entries` against the drawer's `NAV_ITEMS` so a new
+   screen that isn't wired into a reachable path fails the build, and `ScreenSmokeTest` renders
+   every `Screen.entries` value and asserts it doesn't crash. Adding a screen means adding it to
+   `Screen.entries` - the tests find it automatically; leaving one out of reachability/smoke
+   coverage must be a **named, deliberate exception in the test** (see
+   `NavigationReachabilityTest`'s `nonDrawerEntryPoints`), not a silent gap. The same bar applies
+   to anything reachable from a control (rule 2 above) and anything that persists (rule 5 above).
+8. **State what "verified" means - don't imply more than you checked.** "Compiles," "unit-tested,"
+   and "confirmed on device" are different claims; an issue comment or commit message should say
+   which one applies. Issues have been closed "implemented, pending on-device confirmation" and
+   later turned out not to work on real hardware - closing as `completed` (see *Workflow
+   conventions*, step 4) on reasoning alone, for anything device-observed (audio, playback,
+   foreground services, lock-screen controls), is how that happened. If verification stopped short
+   of running on a device, say so instead of letting the closure imply it didn't.
 
 ## Module layout
 
@@ -90,7 +176,11 @@ These come straight from the spec and are the whole point of the design:
   implementations, SharedPreferences-backed override store, downloader). Requires the
   Android SDK. `settings.gradle.kts` includes it **automatically when an SDK is present**
   (`ANDROID_HOME`/`ANDROID_SDK_ROOT`, or `sdk.dir` in `local.properties`); on a core-only
-  machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`.
+  machine it is skipped so the JVM modules still build. Force-skip with `-PskipApp=true`. It has
+  a real test source set (`app/src/test`, Robolectric + Compose UI testing on plain JVM, no
+  emulator needed) including `NavigationReachabilityTest` and `ScreenSmokeTest`, which cover every
+  `Screen.entries` value - see *Practices that would have prevented real bugs*, rule 7, and
+  *Environment quirks* below for why CI doesn't run it yet.
 
 Package root: `com.phonetts`. Core lives under `com.phonetts.core.{engine,model,runtime,registry,
 resolver,audio,download,update,text,prefs,…}` (that list is not exhaustive - see the package tree for
@@ -152,9 +242,11 @@ These bite in the ephemeral cloud sessions; note them so you don't waste a loop 
   and no `core.hooksPath` until you run `scripts/install-hooks.sh`. So a commit runs **no** checks
   automatically here. Run them yourself before committing (`gradle -PskipApp=true :core:test
   ktlintCheck detekt`), and note the hook itself calls `./gradlew` - which fails per the first bullet.
-- **CI lint is core-only** - the `test` job runs `-PskipApp=true`, so `:app` Kotlin is **not**
-  ktlint/detekt-checked by CI. If you touch `:app`, lint it locally with the SDK present
-  (`gradle ktlintCheck detekt`), or style regressions land unnoticed.
+- **CI is core-only for both lint and tests** - the `test` job runs `-PskipApp=true`, so `:app`
+  Kotlin is **not** ktlint/detekt-checked, and `:app`'s Robolectric suite (`app/src/test`) is
+  **not** run, by CI (the `apk` job only assembles the debug APK, it doesn't test it). If you
+  touch `:app`, lint and test it locally with the SDK present
+  (`gradle ktlintCheck detekt :app:testDebugUnitTest`), or regressions land unnoticed.
 - **`JAVA_TOOL_OPTIONS` proxy/truststore noise** is printed on **every** JVM invocation
   (`Picked up JAVA_TOOL_OPTIONS: …`). It's harmless boilerplate, not an error - ignore it.
 - **The container is ephemeral** - only what you commit and push survives. `local.properties`
@@ -184,6 +276,110 @@ tools, always pin the model explicitly: `model: "sonnet"` for research/explorati
 the model unset - an unpinned subagent inherits the (expensive) parent model. Reserve Opus for the
 main orchestrating loop only. This keeps fan-out cheap without hurting result quality on the seam-
 and UI-level tasks this repo involves.
+
+## Orchestrating parallel agents (learned the hard way, in one session)
+
+The rules above are about the code. These are about the *process* of changing it with a fleet of
+agents, and every one of them cost real work before it was written down.
+
+1. **"EXTERNAL WIRING REQUIRED" in an agent's report is a DEFECT, not a note.** If a change needs
+   one line in a file its author could not edit, the change is not done - it is dead code that
+   passes its own tests. This happened **five times in one session**: `SessionStateStore`'s
+   browse/manage/benchmark sections, SHA-256 verification on model downloads,
+   `DocumentLibraryMigration` (which would have made every existing user's saved library
+   permanently invisible), the backup module, and the durable Browse error log. Every one was
+   built, tested, committed - and inert. If you are the orchestrator, treat that phrase as blocking
+   and wire it before you claim the feature landed. If you are the agent, say it loudly at the TOP
+   of your report, not in a closing paragraph.
+2. **A stale "not wired yet" comment is worse than no comment.** Two `EXTERNAL WIRING REQUIRED`
+   notes in `HfBrowseViewModel` outlived their wiring and invited a second one. When you wire
+   something, delete the note that asked for it - and state the wiring as a fact ("VoicesHubScreen
+   passes X"), so the next reader can check it.
+3. **A comment asserting a guarantee is not the guarantee.** `HfDownloader` carried
+   "Curated/manifest downloads still verify SHA-256" while *nothing* verified anything. That
+   sentence is very likely why nobody looked for years: it reads like finished work. Before
+   trusting any comment that claims a safety property, grep for the call that would implement it.
+4. **Force a clean run before diagnosing a test failure.** Gradle's incremental state lies
+   constantly in this repo - especially with several agents writing at once. Repeatedly, "2 tests
+   failed" became "all pass" under `--rerun-tasks` with no code change, and several rounds of
+   "fixes" were spent on nothing. A failure you have not reproduced on a clean run is not yet a
+   failure.
+5. **Verify data an agent claims to have fetched.** An agent reported pinning the real SHA-256 of
+   21 curated model files. Spot-checking one meant downloading it and hashing it - it matched, but
+   fabricated-looking data (hashes, sizes, benchmark numbers, version strings) is exactly what to
+   sample before believing. Cheap check, catastrophic if skipped.
+6. **Shared tree vs. isolated worktree - pick deliberately, both bite.** Agents in the SHARED
+   checkout silently clobber each other's files (one agent's work was wiped mid-task and it
+   recovered onto its own branch, producing a second PR nobody asked for). Agents in ISOLATED
+   worktrees commit to their own branch, so their output does NOT reach yours unless you merge it
+   by hand. And never delete `.claude/worktrees` while any agent is live - doing so destroyed two
+   agents' work outright. Use worktrees for read-only research, the shared tree with strict
+   non-overlapping file ownership for writes, and merge worktree branches explicitly.
+7. **A test must assert a product invariant, not a runtime implementation detail.** An
+   investigation left a test asserting that a self-contradicting sort key MUST make TimSort throw.
+   It need not: that check is best-effort inside the JDK and depends on the merge path for a given
+   input size. It now asserts what actually matters - the sort either throws loudly or returns a
+   complete list, never silently dropping rows.
+8. **Robolectric needs headroom.** The `:app` suite kills its own test JVM ("non-zero exit value
+   10") when run as one batch while individual classes pass - Robolectric holds a full Android SDK
+   image per class. `app/build.gradle.kts` sets `maxHeapSize = "2g"` and `forkEvery = 8` for this.
+   Do not remove them; a runner that dies by exhaustion now blocks releases, because CI runs this
+   suite.
+
+## Verifying your work - the exact commands, and the traps
+
+Run these before you claim anything. `ANDROID_HOME=/opt/android-sdk` (install it per *Build & test*
+if absent), and **system `gradle`, never `./gradlew`** - the wrapper 403s behind this environment's
+proxy.
+
+```bash
+# The seam suite + lint. Fast; run it constantly.
+gradle -PskipApp=true :core:test :integration:test ktlintCheck detekt
+
+# The Android side. :app has NO ktlint/detekt task wired - only these two apply.
+ANDROID_HOME=/opt/android-sdk gradle :app:testDebugUnitTest :app:assembleDebug
+```
+
+Traps, all hit repeatedly:
+
+- **A red test you have not reproduced on a clean run is not yet a failure.** Gradle's incremental
+  state is unreliable here - `ClassNotFoundException` on classes that exist, `Unresolved reference`
+  to symbols that are right there, tests "failing" with no name printed. Re-run with
+  `--rerun-tasks` before you debug. Several rounds of fixes have been spent on nothing.
+- **`ktlintFormat` fixes most style failures for you.** `gradle -PskipApp=true ktlintFormat`. detekt
+  violations (nesting depth, complex conditions, magic numbers, multi-jump loops) must be fixed by
+  hand - and they are not waivable for new code, since each rule traces to a real defect.
+- **`:app` tests fork one JVM per class** (`forkEvery = 1`, `maxHeapSize = 2g`). Necessary, not
+  cosmetic: Robolectric holds a full Android SDK image per class, and several classes call the
+  global `Dispatchers.setMain`, which collides across classes sharing a JVM and produces an
+  order-dependent flake that passes when run alone. Do not "optimise" these away.
+- **The whole `:app` suite is one command away from being wrong about itself.** Confirm the counts,
+  not just the exit code:
+  `for f in app/build/test-results/testDebugUnitTest/*.xml; do grep -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*"' "$f"; done`
+- **Other agents may be mid-write.** Compile errors in files you do not own are usually somebody
+  else's in-flight edit, not your bug - re-run after a pause before chasing them. Say so explicitly
+  in your report rather than silently ignoring a red build.
+
+## Device-only defect classes to check before claiming something works
+
+Everything in this repo that reached the owner as a real-world bug had passed a green build first.
+These are the categories that CI structurally cannot catch on a 4 GB phone, and they are worth a
+deliberate pass whenever you touch the relevant area:
+
+- **Main-thread I/O.** Any non-suspend store call from a `ViewModel.init{}`, a Compose `onClick`,
+  or an `Application.onCreate()` chain. `FilesDurableStore.write` says in its own kdoc that callers
+  must be off the main thread; both `AppGraph`'s migration and the library search path violated it.
+- **Lifecycle scope.** `repeatOnLifecycle(STARTED)` stops collecting the moment the app
+  backgrounds - which for a background-playback app is exactly when it matters. Two collectors in
+  `MainActivity` feed the playback service; they must agree, and they must be `CREATED`.
+- **Memory on 4 GB, no `largeHeap`.** Raw `FloatArray` audio is ~346 MB per hour at 24 kHz. Any
+  buffer, document, or export that materializes in full is an OOM waiting for a long input - and
+  EPUB import made book-length inputs normal. A safety mechanism that only engages when a
+  default-off toggle is set is not a safety mechanism.
+- **Bind-vs-start and null controllers.** A bound-only service dies with its last client; a service
+  reachable from a widget/tile/media button can be started with nothing attached, so any
+  `controller?.foo() ?: Unit` is a silent dead control (practices rule 2, still recurring).
+- **Exported components.** `TtsAutomationActivity` is exported with no permission gate (issue #153).
 
 ## Workflow conventions in this repo
 
@@ -235,10 +431,21 @@ Other conventions:
   count per-commit).
 - **In-app update check (offer, never force):** `core/.../update/UpdateChecker` compares
   `BuildConfig.VERSION_NAME` to the latest GitHub Release and, if newer, the app shows a
-  **dismissible** banner that opens the new APK's download URL - it never downloads or installs on
-  its own. Fail-closed: a network hiccup shows nothing. The **Help screen** also has a manual
-  **"Check for updates"** button (`HelpScreen` → `TtsViewModel.checkForUpdatesNow`) that re-runs the
-  same check on demand and reports "Up to date" / a download offer / a can't-reach note.
+  **dismissible** banner offering it. Fail-closed: a network hiccup shows nothing. The **Help screen**
+  also has a manual **"Check for updates"** button (`HelpScreen` → `TtsViewModel.checkForUpdatesNow`)
+  that re-runs the same check on demand and reports "Up to date" / a download offer / a can't-reach note.
+- **The update download runs IN the app, not the browser.** Handing the release-asset URL to the
+  browser is what used to break: GitHub 302s that URL to a **signed, ~1-hour** `release-assets.
+  githubusercontent.com` link, so a browser download that queues/pauses/retries past the signature's
+  expiry gets a 403 and parks forever ("never finishes"). `:app`'s `ApkUpdateDownloader` streams the
+  APK itself into `cacheDir/updates` with visible progress, re-requesting the stable `github.com` URL
+  on every attempt so each retry follows a **freshly signed** redirect; it then verifies the bytes
+  against the release asset's `sha256` digest (fail-closed - a mismatch deletes the file and refuses).
+  `ApkInstaller` hands the result to the system package installer via a FileProvider `content://` URI
+  (`REQUEST_INSTALL_PACKAGES` + `res/xml/file_paths.xml`). Still offer-never-force: nothing downloads
+  until Download is tapped, nothing installs until Install is tapped, and the OS's own confirm screen
+  is the last gate. The pure decisions (`ApkDownloadState`, percent-or-null, `ApkIntegrity`) live in
+  `:core` and are seam-tested; only the transport and the intent are in `:app`.
 
 ## Adding an engine
 
@@ -254,11 +461,15 @@ Adding a model is **adding a module**, not editing a shared list (rule 5). Creat
 - an `EngineProvider` registered via `META-INF/services/com.phonetts.core.engine.EngineProvider`;
 - seam tests (inspect fail-closed, descriptor facts, speed routing, synthesize invariants).
 
-Then add one `include(":engines:<name>")` line to `settings.gradle.kts` (and, for the app, a
-`runtimeOnly(project(":engines:<name>"))` in `app/build.gradle.kts`). The registry and the entire
-UI recompute themselves from the new descriptor - no `when(model)` switch, no shared list is
-touched. Removing an engine is deleting its module and that one `include` line. A native-runtime
-engine additionally documents its opt-in native wiring in an `INTEGRATION.md` (see
+That's it - there is no `include()` line and no `runtimeOnly` line to add anymore.
+`settings.gradle.kts` auto-discovers every directory under `engines/` that has its own
+`build.gradle.kts` and includes it; `app/build.gradle.kts` and `integration/build.gradle.kts` each
+derive their engine dependency list from `rootProject.subprojects` the same way. (This replaced a
+hand-maintained include/runtimeOnly list that had already drifted - see *Practices that would have
+prevented real bugs*, rule 1.) The registry and the entire UI recompute themselves from the new
+descriptor - no `when(model)` switch, no shared list is touched. Removing an engine is deleting its
+`engines/<name>/` directory, full stop - no other file to edit. A native-runtime engine
+additionally documents its opt-in native wiring in an `INTEGRATION.md` (see
 `engines/ggmltts/INTEGRATION.md`) rather than editing shared app/build files directly.
 
 **Kotlin gotcha - block comments nest, so a literal `/*` inside a comment breaks the build.** Engine

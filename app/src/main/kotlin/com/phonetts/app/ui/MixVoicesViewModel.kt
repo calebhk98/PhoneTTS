@@ -3,14 +3,18 @@ package com.phonetts.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
-import com.phonetts.app.audio.AudioTrackSink
-import com.phonetts.core.audio.buffer.BufferedPlayback
+import com.phonetts.app.speech.ReportingSink
+import com.phonetts.app.speech.SpeechPlayer
 import com.phonetts.core.audio.buffer.GeneratedAudio
+import com.phonetts.core.diagnostics.FailureContext
+import com.phonetts.core.diagnostics.FailureExplainer
 import com.phonetts.core.engine.BlendableVoices
 import com.phonetts.core.engine.BlendedVoiceSpec
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.speech.SpeechSession
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,10 +37,16 @@ import kotlinx.coroutines.withContext
  * A saved mix is just a [BlendedVoiceSpec] recipe persisted via [AppGraph.blendedVoices]; the
  * in-between embedding is recomputed by the engine from the loaded model each time, so nothing but
  * the two source ids + weight is stored.
+ *
+ * Playback goes through the shared [player] ([SpeechPlayer]) rather than a private `AudioTrackSink`
+ * (mission: three ViewModels each building their own sink meant Home/Compare/Mix could play two
+ * audio streams at once) - hitting Preview here barges in on whatever Home or Compare had playing,
+ * and vice versa.
  */
 class MixVoicesViewModel(
     private val graph: AppGraph,
     initialSelection: ModelDescriptor?,
+    private val player: SpeechPlayer = SpeechPlayer.shared,
 ) : ViewModel() {
     data class UiState(
         // Every currently-registered model that can blend voices - the picker's SSOT list.
@@ -59,10 +69,10 @@ class MixVoicesViewModel(
     private val mutableState = MutableStateFlow(initialState(initialSelection))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
-    private val sink = AudioTrackSink()
-    private var playback = BufferedPlayback()
+    // The retained preview session, replaced wholesale on every new preview() call - a fresh
+    // SpeechSession per preview, exactly as the old per-call BufferedPlayback was (see [stop]).
+    private var session: SpeechSession? = null
     private var genJob: Job? = null
-    private var playJob: Job? = null
 
     private fun initialState(initialSelection: ModelDescriptor?): UiState {
         val blendable = graph.catalog.list().filter { it.supportsVoiceBlend }
@@ -132,31 +142,32 @@ class MixVoicesViewModel(
         val model = mutableState.value.selectedModel ?: return
         val spec = buildSpec(model) ?: return
         stop()
-        playback = BufferedPlayback()
         mutableState.update { it.copy(busy = true, status = "Rendering preview…") }
         val phrase = text.ifBlank { PREVIEW_PHRASE }
         val audio = GeneratedAudio()
+        // A fresh SpeechSession per preview (never call start() on it - Mix drives generation
+        // itself via renderPreview's own collect loop below, straight into the SAME `audio` buffer
+        // this session's playback half reads from; see this class's kdoc on why the shared [player]
+        // replaces the old private AudioTrackSink).
+        val fresh = SpeechSession(viewModelScope, Dispatchers.IO, model.sampleRate, audio)
+        session = fresh
         genJob =
             viewModelScope.launch {
                 val ok = renderPreview(model, spec, phrase, audio)
                 mutableState.update { it.copy(busy = false, status = if (ok) null else it.status) }
             }
-        playJob =
-            viewModelScope.launch {
-                // BufferedPlayback.play drives a blocking AudioTrack.write via the sink (issue #18-4b)
-                // - offload it off Main, same as the reader's play paths in TtsViewModel.
-                runCatching { withContext(Dispatchers.IO) { playback.play(audio, model.sampleRate, sink) } }
-                    .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+        val reportingSink =
+            ReportingSink(player.sink) { e ->
+                mutableState.update { it.copy(status = FailureExplainer.explain(e, FailureContext.PLAYING)) }
             }
+        player.play(fresh, reportingSink)
     }
 
     fun stop() {
-        playback.stop()
         genJob?.cancel()
-        playJob?.cancel()
         genJob = null
-        playJob = null
-        sink.stop()
+        session?.let { player.stop(it); it.close() }
+        session = null
     }
 
     override fun onCleared() {
@@ -180,7 +191,10 @@ class MixVoicesViewModel(
                 engine.synthesize(phrase, voice.id, SynthesisParams(model.parameters.associate { it.id to it.default }))
                     .collect(audio::append)
             }
-                .onFailure { e -> mutableState.update { it.copy(status = "Preview failed: ${e.message}") } }
+                .onFailure { e ->
+                    val status = FailureExplainer.explain(e, FailureContext.GENERATING)
+                    mutableState.update { it.copy(status = status) }
+                }
         audio.markComplete()
         return result.isSuccess
     }

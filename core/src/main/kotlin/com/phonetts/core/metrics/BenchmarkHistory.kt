@@ -35,6 +35,7 @@ class BenchmarkHistory(private val store: PreferenceStore) {
         val kept = (history(record.engineId, record.device) + record).takeLast(MAX_SAMPLES)
         val serialized = kept.joinToString(RECORD_SEPARATOR, transform = ::encode)
         store.putString(key(record.engineId, record.device), serialized)
+        addToIndex(record.engineId, record.device)
     }
 
     /** The saved samples for [engineId] on [device], oldest first; empty when nothing valid is stored. */
@@ -48,12 +49,60 @@ class BenchmarkHistory(private val store: PreferenceStore) {
             .sortedBy { it.timestampMillis }
     }
 
+    /**
+     * Every `(engineId, device)` pair that currently has at least one saved sample, in no particular
+     * order. Backed by a small separate index (updated alongside [record]/[replaceHistory]/[clear])
+     * so a caller that doesn't already know which engine+device pairs to ask about - e.g. a full
+     * backup export (issue #149) - can enumerate every saved history without [PreferenceStore]
+     * gaining Android-style key-listing.
+     */
+    fun allKeys(): List<Pair<String, String>> =
+        store.getStringSet(INDEX_KEY).mapNotNull { entry ->
+            val parts = entry.split(FIELD_SEPARATOR)
+            if (parts.size != FIELD_COUNT) return@mapNotNull null
+            parts[0] to parts[1]
+        }
+
+    /**
+     * Wholesale-replaces the saved history for [engineId] on [device] with [records] (only entries
+     * that actually match [engineId]/[device] are kept), sorted oldest-first and trimmed to the most
+     * recent [MAX_SAMPLES] - the same invariant [record] maintains one append at a time. Used by
+     * backup restore (issue #149), where a whole saved history is written back at once rather than
+     * incrementally measured; every other caller should keep using [record]. An empty [records]
+     * behaves like [clear].
+     */
+    fun replaceHistory(
+        engineId: String,
+        device: String,
+        records: List<BenchmarkRecord>,
+    ) {
+        val matching = records.filter { it.engineId == engineId && it.device == device }
+        if (matching.isEmpty()) {
+            clear(engineId, device)
+            return
+        }
+        val kept = matching.sortedBy { it.timestampMillis }.takeLast(MAX_SAMPLES)
+        val serialized = kept.joinToString(RECORD_SEPARATOR, transform = ::encode)
+        store.putString(key(engineId, device), serialized)
+        addToIndex(engineId, device)
+    }
+
     /** Forgets the saved history for [engineId] on [device]. A no-op if none was recorded. */
     fun clear(
         engineId: String,
         device: String,
     ) {
         store.remove(key(engineId, device))
+        val remaining = allKeys().filterNot { it == engineId to device }
+        store.putStringSet(INDEX_KEY, remaining.map { (e, d) -> indexEntry(e, d) }.toSet())
+    }
+
+    private fun addToIndex(
+        engineId: String,
+        device: String,
+    ) {
+        val existing = allKeys().map { (e, d) -> indexEntry(e, d) }.toSet()
+        store.putStringSet(INDEX_KEY, existing + indexEntry(engineId, device))
     }
 
     private fun encode(record: BenchmarkRecord): String =
@@ -68,7 +117,15 @@ class BenchmarkHistory(private val store: PreferenceStore) {
         if (parts.size != FIELD_COUNT) return null
         val timestamp = parts[0].toLongOrNull() ?: return null
         val rtf = parts[1].toDoubleOrNull() ?: return null
-        if (timestamp < 0L || rtf < 0.0) return null
+        // `rtf < 0.0` looks like it rejects a negative value, but NaN fails EVERY relational
+        // comparison (NaN < 0.0 is false, same as NaN >= 0.0), so a stored "NaN" - which
+        // toDoubleOrNull happily parses - used to slip past this guard and reach
+        // BenchmarkRecord's `require(realTimeFactor >= 0.0)`, which throws instead of failing
+        // closed. Mirroring that exact require() condition here (rather than its negation) rejects
+        // NaN the same way the constructor would, restoring this function's own contract: a
+        // malformed/corrupt line is skipped, never a thrown exception (bug: Browse RTF sort crash -
+        // history() feeds HfBrowseViewModel.rtfEstimates, called on every Browse recompute).
+        if (timestamp < 0L || !(rtf >= 0.0)) return null
         return BenchmarkRecord(engineId, device, timestamp, rtf)
     }
 
@@ -77,11 +134,20 @@ class BenchmarkHistory(private val store: PreferenceStore) {
         device: String,
     ) = "$KEY_PREFIX$engineId$FIELD_SEPARATOR$device"
 
+    private fun indexEntry(
+        engineId: String,
+        device: String,
+    ) = "$engineId$FIELD_SEPARATOR$device"
+
     companion object {
         private const val KEY_PREFIX = "benchmark_history."
         private const val RECORD_SEPARATOR = "\n"
         private const val FIELD_SEPARATOR = "|"
         private const val FIELD_COUNT = 2
         private const val MAX_SAMPLES = 50
+
+        // Index of every "engineId|device" pair ever recorded, so allKeys() can enumerate without
+        // PreferenceStore exposing key-listing.
+        private const val INDEX_KEY = "benchmark_history_index"
     }
 }

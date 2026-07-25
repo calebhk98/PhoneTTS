@@ -5,23 +5,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,46 +21,44 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.builtin.BuiltInCatalog
-import com.phonetts.core.prefs.AppTheme
-import com.phonetts.core.update.UpdateStatus
 
 /**
  * In-app help: how to add a voice model, which recommended models exist (read from
  * [BuiltInCatalog] so this can never drift from the actual one-tap list), what a bring-your-own
- * model needs per engine, and troubleshooting. Pure guidance UI - it names no model fact that
- * drives another control; the recommended list is the single source of truth it derives from.
+ * model needs per engine, and troubleshooting - plus the durable error log and a way back into the
+ * first-run walkthrough. Pure guidance UI: no stateful preference lives here anymore - the theme
+ * picker and "About & updates" moved to Settings, since a stateful control doesn't belong on a help
+ * page. It names no model fact that drives another control; the recommended list is the single
+ * source of truth it derives from.
  */
 @Composable
 fun HelpScreen(
-    currentVersion: String,
-    update: UpdateStatus?,
-    checkStatus: String?,
-    onCheckForUpdates: () -> Unit,
-    repoUrl: String,
-    currentTheme: AppTheme,
-    onThemeSelected: (AppTheme) -> Unit,
     // The durable error log's rows, newest-first, already formatted to one line each (see
     // MainActivity). Surfaced here (issue #109) so the user has a copyable "why" when a model - e.g. a
-    // LiteRT .tflite - fails to load or run.
+    // LiteRT .tflite - fails to load or run, or the app itself crashed (each such row is tagged
+    // "[crash] ..." by MainActivity's `source` prefix, since CrashReporter records crashes under the
+    // "crash" source - see com.phonetts.core.diagnostics.CrashLogFormatter).
     errorLogEntries: List<String> = emptyList(),
+    // Forgets every recorded error/crash (durableErrorLog.clear()). Defaults to a no-op so this screen
+    // still compiles/previews standalone; MainActivity wires the real store.
+    onClearErrorLog: () -> Unit = {},
+    // Replays the first-run walkthrough on demand (onboarding itself stays a first-run-only flow,
+    // not a nav destination - this is its one other entry point). Defaults to a no-op so this screen
+    // still compiles/previews standalone.
+    onReplayTutorial: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        UpdatesSection(currentVersion, update, checkStatus, onCheckForUpdates, repoUrl)
-
-        ThemeSection(currentTheme, onThemeSelected)
-
         Section("Getting a voice") {
-            Bullet("Tap Browse models → the Recommended (one-tap) section for a working voice in one tap.")
-            Bullet("Or search Hugging Face in Browse models and tap Download on a result.")
-            Bullet("Or Sideload folder to add a model you already copied onto the phone.")
+            Bullet("Tap Voices → Browse → the Recommended (one-tap) section for a working voice in one tap.")
+            Bullet("Or search Hugging Face in Voices → Browse and tap Download on a result.")
+            Bullet("Or use \"Add model\" on Voices → Downloaded to import a model you already copied onto the phone.")
             Bullet("Everything after the download runs fully offline - no network is used to speak.")
         }
 
@@ -116,7 +106,7 @@ fun HelpScreen(
             )
         }
 
-        ErrorLogSection(errorLogEntries)
+        ErrorLogSection(errorLogEntries, onClearErrorLog)
 
         Section("Troubleshooting") {
             Q("No sound, or it's garbled?", "Piper/Kitten/Kokoro need the espeak add-on in the build; MeloTTS doesn't.")
@@ -129,28 +119,55 @@ fun HelpScreen(
                 "It asked me to pick an engine?",
                 "It couldn't identify the model - pick the matching engine; it's remembered.",
             )
-            Q("Freeing space?", "Manage models shows each model's size and lets you delete it.")
+            Q("Freeing space?", "Voices → Downloaded shows each model's size and lets you delete it.")
+        }
+
+        Section("Tutorial") {
+            Body("Replay the first-run walkthrough - the same one shown the first time the app was opened.")
+            OutlinedButton(onClick = onReplayTutorial) { Text("Replay tutorial") }
         }
     }
 }
 
-// The durable error log (issue #109): survives process death, so a model that failed to load/run on a
-// previous run is still explainable. Only offers the viewer once something is recorded; the dialog is
-// selectable + copyable ("Copy all") so the user can paste a full report rather than screenshot it -
-// mirroring the Browse screen's ErrorLogDialog.
+// The durable error log (issue #109 + crash log): survives process death, so a model that failed to
+// load/run - or a crash - on a previous run is still explainable. Only offers the viewer once
+// something is recorded; the dialog is selectable + copyable ("Copy all") so the user can paste a
+// full report rather than screenshot it - mirroring the Browse screen's ErrorLogDialog. [entries] is
+// already newest-first (DurableErrorLog's contract), so a crash - always the freshest possible entry -
+// is the first line the user sees.
+//
+// [localEntries] mirrors [entries] but is re-seeded only when the CALLER's list actually changes
+// (`remember(entries)`); this lets "Clear log" hide the list immediately even though MainActivity
+// currently reads the durable store directly at composition time rather than from a recomposing
+// state, so it would otherwise take an unrelated recomposition to reflect the clear.
 @Composable
-private fun ErrorLogSection(entries: List<String>) {
+private fun ErrorLogSection(
+    entries: List<String>,
+    onClear: () -> Unit,
+) {
     var showLog by remember { mutableStateOf(false) }
+    var localEntries by remember(entries) { mutableStateOf(entries) }
     Section("Error log") {
-        if (entries.isEmpty()) {
-            Body("No errors recorded yet. If a model fails to load or speak, the reason shows up here.")
+        if (localEntries.isEmpty()) {
+            Body(
+                "No errors recorded yet, including app crashes. If a model fails to load/run, or the " +
+                    "app crashes, the reason shows up here.",
+            )
             return@Section
         }
-        Body("Recorded reasons a model failed to load or run - copy these when reporting a problem.")
-        OutlinedButton(onClick = { showLog = true }) { Text("View error log (${entries.size})") }
+        Body("Recorded reasons the app crashed or a model failed to load/run - copy these when reporting a problem.")
+        OutlinedButton(onClick = { showLog = true }) { Text("View error log (${localEntries.size})") }
     }
     if (showLog) {
-        ErrorLogDialog(entries = entries, onDismiss = { showLog = false })
+        ErrorLogDialog(
+            entries = localEntries,
+            onDismiss = { showLog = false },
+            onClear = {
+                onClear()
+                localEntries = emptyList()
+                showLog = false
+            },
+        )
     }
 }
 
@@ -158,6 +175,7 @@ private fun ErrorLogSection(entries: List<String>) {
 private fun ErrorLogDialog(
     entries: List<String>,
     onDismiss: () -> Unit,
+    onClear: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
     val fullText = remember(entries) { entries.joinToString("\n\n") }
@@ -165,7 +183,10 @@ private fun ErrorLogDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         dismissButton = {
-            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+                OutlinedButton(onClick = onClear) { Text("Clear log") }
+            }
         },
         title = { Text("Error log") },
         text = {
@@ -181,72 +202,6 @@ private fun ErrorLogDialog(
             }
         },
     )
-}
-
-// Version + a manual update check. The app also checks automatically at launch (silent unless a
-// newer build exists); this button lets the user re-check on demand and always gives feedback -
-// "Up to date (v…)", a download offer, or a note when the check couldn't reach GitHub. Installing is
-// always the user's choice (offer, never force): Download only opens the APK URL in the browser.
-@Composable
-private fun UpdatesSection(
-    currentVersion: String,
-    update: UpdateStatus?,
-    checkStatus: String?,
-    onCheckForUpdates: () -> Unit,
-    repoUrl: String,
-) {
-    val uriHandler = LocalUriHandler.current
-    Section("About & updates") {
-        Body("Version $currentVersion")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onCheckForUpdates) { Text("Check for updates") }
-            update?.let { available ->
-                val target = available.apkDownloadUrl ?: available.releasePageUrl
-                Button(onClick = { target?.let(uriHandler::openUri) }, enabled = target != null) {
-                    Text("Download ${available.latestVersion}")
-                }
-            }
-        }
-        OutlinedButton(onClick = { uriHandler.openUri(repoUrl) }) { Text("View on GitHub") }
-        checkStatus?.let { Body(it) }
-    }
-}
-
-// The reading-friendly theme picker (issue #12: a dropdown, not one radio row per theme). Options
-// are derived from AppTheme.entries and labeled by AppTheme.displayName (SSOT: the enum is the
-// single authority for which themes exist and what they're called), so adding a scheme needs no
-// edit here.
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ThemeSection(
-    currentTheme: AppTheme,
-    onThemeSelected: (AppTheme) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Section("Appearance") {
-        Body("Pick a color theme - sepia and true-black are tuned for long reading / OLED battery.")
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-            TextField(
-                value = currentTheme.displayName,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Theme") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-            )
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                AppTheme.entries.forEach { theme ->
-                    DropdownMenuItem(
-                        text = { Text(theme.displayName) },
-                        onClick = {
-                            onThemeSelected(theme)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-        }
-    }
 }
 
 @Composable

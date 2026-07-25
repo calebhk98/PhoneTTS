@@ -10,20 +10,26 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The payoff test. All five engine modules are on this module's classpath, and NOTHING here
- * names any of them - yet ServiceLoader discovers all five and seeds the registry. This is the
+ * The payoff test. EVERY engine module is on this module's classpath, and NOTHING here names any
+ * of them - yet ServiceLoader discovers them all and seeds the registry. This is the
  * single-source-of-truth guarantee proven end-to-end: adding a model is adding a module,
  * removing one is deleting a module, and shared code never changes.
+ *
+ * The expected count comes from Gradle (the count of :engines:* modules on disk), NOT from a
+ * constant here. It used to be a hardcoded 5 while 15 engine modules existed, so this test - the
+ * one thing guarding the drop-in guarantee - was silently ignoring ten of them.
  */
 class AllEnginesDiscoveryTest {
-    private val expectedEngineCount = 5
+    private val expectedEngineCount =
+        System.getProperty(EXPECTED_COUNT_PROPERTY)?.toIntOrNull()
+            ?: error("$EXPECTED_COUNT_PROPERTY not set - run via Gradle, which derives it from the module list")
 
     private fun context() = EngineContext(runtimes = RuntimeRegistry(), phonemizer = FakePhonemizer())
 
     @Test
-    fun discoversAllFiveEngineProviders() {
+    fun discoversEveryEngineProviderOnTheClasspath() {
         val providers = EngineLoader.discoverProviders()
-        assertEquals(expectedEngineCount, providers.size, "expected all five engine modules on the classpath")
+        assertEquals(expectedEngineCount, providers.size, "expected every engine module on the classpath")
 
         val ids = providers.map { it.engineId }
         assertEquals(ids.size, ids.toSet().size, "engine ids must be unique: $ids")
@@ -38,5 +44,9 @@ class AllEnginesDiscoveryTest {
         val engines = registry.list()
         assertEquals(expectedEngineCount, engines.size)
         assertTrue(engines.all { it.id.isNotBlank() && it.displayName.isNotBlank() })
+    }
+
+    private companion object {
+        const val EXPECTED_COUNT_PROPERTY = "phonetts.expectedEngineCount"
     }
 }

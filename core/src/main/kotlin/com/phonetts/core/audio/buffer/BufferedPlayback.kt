@@ -40,6 +40,13 @@ class BufferedPlayback {
     /** Chunks (== sentences) delivered to the sink so far this run. */
     val playedChunks: StateFlow<Int> = playedChunksState.asStateFlow()
 
+    /**
+     * True while this run is paused (see [pause]/[resume]). Public so a caller composing a single
+     * derived state out of several [BufferedPlayback] runs (see `com.phonetts.core.speech.SpeechSession`)
+     * can read it reactively instead of mirroring it into a second flag of its own.
+     */
+    val isPaused: StateFlow<Boolean> = paused.asStateFlow()
+
     fun pause() {
         paused.value = true
         // Halt the hardware now so playback stops mid-sentence, not at the next chunk boundary.

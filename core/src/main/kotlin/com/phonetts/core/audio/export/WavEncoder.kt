@@ -30,9 +30,12 @@ class WavEncoder(
 ) : AudioEncoder() {
     override val format: ExportFormat = FORMAT
 
+    // isCancelled is unused here: writing a WAV header + copying the scratch PCM is fast and does
+    // not run a long uninterruptible native pass the way the MediaCodec-backed formats do.
     override fun openWriter(
         sampleRate: Int,
         out: OutputStream,
+        isCancelled: () -> Boolean,
     ): SegmentWriter = WavStreamWriter(sampleRate, out, scratchDir)
 
     companion object {

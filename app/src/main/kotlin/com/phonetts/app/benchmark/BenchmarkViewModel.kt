@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
 import com.phonetts.core.download.hf.ModelSpeedEstimate
+import com.phonetts.core.format.ByteFormat
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.metrics.BenchmarkEta
 import com.phonetts.core.metrics.BenchmarkMetrics
@@ -45,6 +46,18 @@ private const val NANOS_PER_SECOND = 1_000_000_000.0
  * synthesis even starts (timed around [com.phonetts.core.registry.EngineManager.switchTo]), and a
  * snapshot of this process's RAM footprint against the device's available RAM at run time - all
  * carried in [BenchmarkMetrics] (:core, so the derived math is unit-tested, not re-derived here).
+ *
+ * Issue #131 follow-up: this screen's sort key/direction, name query, and "show history" toggle are
+ * seeded from [graph]'s `sessionState.benchmark()` at construction ([initialUiState]) and written
+ * back on every change (each setter's [persistBenchmark] call) - unlike [com.phonetts.app.manage.
+ * ModelManagementViewModel], no new constructor parameter or call-site change is needed here, since
+ * this class already takes the whole [AppGraph] and `AppGraph.sessionState` already exists. Before
+ * this, [com.phonetts.core.session.SessionStateStore.benchmark]/`.updateBenchmark` were fully unit-
+ * tested in isolation but never called from anywhere in `:app` - the exact "built but never wired"
+ * defect issue #131 tracks. A restored sort key this build no longer has (an enum value renamed) is
+ * DROPPED for the default (see [restoreSortKey]) rather than applied blind - this screen has no
+ * filter that can go "stuck empty" the way Manage's engine filter can (a bad sort key here just
+ * reorders the same rows), but it must still never crash on a garbage stored value.
  */
 class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
     /** One model's measured result (or a failure), ready to render in the table and copy out. */
@@ -95,27 +108,66 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
         val query: String = "",
     )
 
-    private val mutableState = MutableStateFlow(UiState())
+    private val mutableState = MutableStateFlow(initialUiState())
     val state: StateFlow<UiState> = mutableState.asStateFlow()
+
+    /**
+     * The sort/query/history-visibility this screen starts with (issue #131) - restored from
+     * `graph.sessionState.benchmark()`. A blank/never-saved document (or, in a plain unit test that
+     * hands this class a graph with no session history) falls through to [UiState]'s own defaults.
+     */
+    private fun initialUiState(): UiState {
+        val saved = graph.sessionState.benchmark()
+        return UiState(
+            sort = Sort(key = restoreSortKey(saved.sortKey), ascending = saved.ascending),
+            query = saved.query,
+            showHistory = saved.filters[FILTER_SHOW_HISTORY].toBoolean(),
+        )
+    }
+
+    // Fail-closed (issue #131): a sort key this build's SortKey enum no longer has - renamed,
+    // removed - falls back to the default rather than crashing or leaving the table unsorted by a
+    // null key. Mirrors ModelManagementViewModel.restoreSortKey's rationale for the same reason.
+    private fun restoreSortKey(raw: String?): SortKey = SortKey.entries.find { it.name == raw } ?: Sort.DEFAULT.key
+
+    // Mirrors the just-updated [mutableState] into the session store (issue #131) - called from
+    // every setter below. `String?.toBoolean()` treats anything other than the literal "true"
+    // (including null, garbage, or an absent key) as false, so this can never crash on a corrupt
+    // stored value either.
+    private fun persistBenchmark() {
+        val current = mutableState.value
+        graph.sessionState.updateBenchmark {
+            it.copy(
+                sortKey = current.sort.key.name,
+                ascending = current.sort.ascending,
+                query = current.query,
+                filters = mapOf(FILTER_SHOW_HISTORY to current.showHistory.toString()),
+            )
+        }
+    }
 
     /** Reveal or hide the persisted-history / thermal-regression view (issue #39). Off by default. */
     fun toggleHistory() {
         mutableState.update { it.copy(showHistory = !it.showHistory) }
+        persistBenchmark()
     }
 
     /** Choose which column the results table is sorted by (issue #115). */
     fun setSortKey(key: SortKey) {
         mutableState.update { it.copy(sort = it.sort.copy(key = key)) }
+        persistBenchmark()
     }
 
     /** Flip the sort between ascending and descending (issue #115). */
     fun toggleSortDirection() {
         mutableState.update { it.copy(sort = it.sort.copy(ascending = !it.sort.ascending)) }
+        persistBenchmark()
     }
 
     /** Update the name filter applied to the results table (issue #115). */
     fun setQuery(query: String) {
         mutableState.update { it.copy(query = query) }
+        persistBenchmark()
     }
 
     /**
@@ -324,7 +376,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun optionalFmt(value: Double?): String = value?.let { fmt(it) } ?: "unknown"
 
-    private fun ramText(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "unknown"
+    private fun ramText(bytes: Long?): String = bytes?.let { "~${ByteFormat.format(it)}" } ?: "unknown"
 
     companion object {
         // Multiple sentences on purpose (issue: TTFA == total Gen time): AbstractVoiceEngine emits
@@ -338,8 +390,12 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
             "The quick brown fox jumps over the lazy dog. " +
                 "Pack my box with five dozen liquor jugs. " +
                 "The five boxing wizards jump quickly."
-        private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
         private const val PROGRESS_TICK_MILLIS = 1_000L
+
+        // Persisted-filter map key (issue #131) - see [persistBenchmark]/[initialUiState]. A plain
+        // string key into the session store's ListViewSession.filters map, same encoding rationale
+        // as ModelManagementViewModel's own filter keys.
+        private const val FILTER_SHOW_HISTORY = "showHistory"
 
         /**
          * The rows to actually show, filtered by [query] (case-insensitive name match) and ordered by

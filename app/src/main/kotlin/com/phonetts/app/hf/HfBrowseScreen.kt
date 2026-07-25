@@ -51,6 +51,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.DiagnosticsKind
+import com.phonetts.core.format.ByteFormat
+import com.phonetts.core.format.CountFormat
+import com.phonetts.core.registry.NO_ENGINE_YET_LABEL
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfEndpoints
 import com.phonetts.core.download.hf.HfEngineClassifier
@@ -68,6 +71,7 @@ import com.phonetts.core.download.hf.QuantizationFilter
 import com.phonetts.core.download.hf.RunCompatibility
 import com.phonetts.core.download.hf.needsRtf
 import com.phonetts.core.download.hf.needsSize
+import com.phonetts.core.model.DeviceRamFit
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
@@ -279,6 +283,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                                 onCancel = { viewModel.cancelDownload(model.id) },
                                 onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(model.repoId)) },
                             ),
+                        totalRamBytes = viewModel.deviceTotalRamBytes,
                     )
                 }
             }
@@ -332,6 +337,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                                     onCancel = { viewModel.cancelDownload(voice.id) },
                                     onOpenPage = { uriHandler.openUri(HfEndpoints.modelPageUrl(voice.repoId)) },
                                 ),
+                            totalRamBytes = viewModel.deviceTotalRamBytes,
                         )
                     }
                     if (filteredPiperVoices.isEmpty()) {
@@ -373,6 +379,7 @@ fun HfBrowseScreen(viewModel: HfBrowseViewModel) {
                             estimate = state.sizeEstimates[model.id],
                             loading = model.id in state.sizeLoading,
                             onLoad = { viewModel.loadSize(model.id) },
+                            totalRamBytes = viewModel.deviceTotalRamBytes,
                         ),
                     actions =
                         RowActions(
@@ -986,7 +993,7 @@ private fun formatDiagnosticsLine(
     formatter: DateFormat,
 ): String {
     val time = formatter.format(Date(entry.atMs))
-    val kind = if (entry.kind == DiagnosticsKind.FAILURE) "FAILED" else "downloaded, no engine yet"
+    val kind = if (entry.kind == DiagnosticsKind.FAILURE) "FAILED" else "downloaded, $NO_ENGINE_YET_LABEL"
     return "[$time] ${entry.modelId} - $kind: ${entry.detail}"
 }
 
@@ -1030,11 +1037,17 @@ private data class RowActions(
 /** A result row's on-demand size lookup (issue #7): the estimate once fetched, whether a fetch is
  * in flight, and how to trigger one - bundled into one parameter for the same reason as [RowActions].
  * The fetch is now triggered automatically (bug #4 - no more "Show download size" tap gate); [onLoad]
- * is idempotent (see [HfBrowseViewModel.loadSize]) so calling it once per row composition is safe. */
+ * is idempotent (see [HfBrowseViewModel.loadSize]) so calling it once per row composition is safe.
+ * [totalRamBytes] rides along here too (issue #137: surface the "may not fit this device" warning
+ * at the Browse/download decision point, not only on the Manage screen after downloading) rather
+ * than as its own [ModelRow] parameter, to stay under detekt's LongParameterList limit - it isn't
+ * really about size specifically, but this is the one bundle every row already carries a byte count
+ * through. */
 private data class SizeState(
     val estimate: HfSizeEstimate?,
     val loading: Boolean,
     val onLoad: () -> Unit,
+    val totalRamBytes: Long = 0L,
 )
 
 @Composable
@@ -1044,6 +1057,7 @@ private fun RecommendedRow(
     queued: Boolean,
     isInstalled: Boolean,
     actions: RowActions,
+    totalRamBytes: Long = 0L,
 ) {
     ModelCard {
         Row(
@@ -1058,7 +1072,13 @@ private fun RecommendedRow(
                 // Bug #5: a curated model's approximate size is already known up front (no network
                 // round trip needed), so its param/speed hint can be derived immediately too.
                 val fileNames = remember(model.id) { model.files.map { it.localName } }
-                SpeedHintLine(totalBytes = model.approxSizeMb.toLong() * BYTES_PER_MB, precisionHints = fileNames)
+                val approxBytes = model.approxSizeMb.toLong() * BYTES_PER_MB
+                SpeedHintLine(totalBytes = approxBytes, precisionHints = fileNames)
+                // Issue #137: the "may not fit this device" warning used to exist only on the Manage
+                // screen, AFTER a model was already downloaded - too late to inform the choice this
+                // screen is actually for. A curated model's approximate size is known up front, so
+                // this can warn before the tap, not after.
+                WontFitWarning(peakRamBytes = approxBytes, totalRamBytes = totalRamBytes)
             }
             DownloadControl(progress != null, isInstalled, actions.onDownload, actions.onCancel)
         }
@@ -1092,13 +1112,22 @@ private fun ModelRow(
                 Text(model.id, fontWeight = FontWeight.Bold)
                 Text("▼ ${model.downloads}   ♥ ${model.likes}", style = MaterialTheme.typography.bodyMedium)
                 // pipelineTag + tags come straight from the HF API response - no extra network call,
-                // just fields the parser already kept that the UI wasn't showing.
-                val tags = listOfNotNull(model.pipelineTag) + model.tags.take(MAX_TAGS_SHOWN)
-                val subtitle = tags.joinToString(" · ")
+                // just fields the parser already kept that the UI wasn't showing. Built in a plain
+                // try/catch, not inline in the Text call (defense-in-depth: a Browse screen must
+                // never crash outright over one row's data - see HfBrowseViewModel's fail-closed
+                // fixes for the same rationale) - a subtitle that can't be built is simply omitted,
+                // never a reason to take the whole result list down.
+                val subtitle = remember(model.id, model.pipelineTag, model.tags) { safeSubtitle(model) }
                 if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall)
                 CompatibilityBadge(compatibility)
                 SizeLine(sizeState)
                 SpeedHintLine(totalBytes = sizeState.estimate?.knownBytes, precisionHints = model.tags)
+                // Issue #137: same warning as the Manage screen shows after download
+                // (ModelManagementScreen.wontFitWarning), reusing the same DeviceRamFit logic - but
+                // surfaced HERE, at the Browse/download decision point, using the fetched download
+                // size as the pre-download RAM proxy (there is no ModelDescriptor/engine yet to carry
+                // a declared resourceCost estimate for a repo that isn't downloaded).
+                WontFitWarning(peakRamBytes = sizeState.estimate?.knownBytes, totalRamBytes = sizeState.totalRamBytes)
             }
             DownloadControl(progress != null, isInstalled, actions.onDownload, actions.onCancel)
         }
@@ -1106,6 +1135,15 @@ private fun ModelRow(
         OpenPageLink(actions.onOpenPage)
     }
 }
+
+/** [ModelRow]'s tag/pipeline-tag subtitle line, computed outside of composition proper so an
+ * unexpected exception building it (e.g. a future change to this formatting) can be caught and
+ * turned into "no subtitle" instead of an uncaught crash - see [ModelRow]'s call site. */
+private fun safeSubtitle(model: HfModelSummary): String =
+    runCatching {
+        val tags = listOfNotNull(model.pipelineTag) + model.tags.take(MAX_TAGS_SHOWN)
+        tags.joinToString(" · ")
+    }.getOrDefault("")
 
 /**
  * An honest, file-tree-derived runnability label (issue #108) - greyed out, and never disables the
@@ -1172,9 +1210,37 @@ private fun SpeedHintLine(
     // The leading "~" already signals these are estimates (issue #106 removed the "(both estimated)"
     // suffix that only wasted a line).
     Text(
-        "~${formatParamCount(speed.paramCount)} params · " +
+        "~${CountFormat.formatParamCount(speed.paramCount)} params · " +
             "~${formatRealtimeMultiple(speed.realtimeMultiple)}x real-time",
         style = MaterialTheme.typography.bodySmall,
+    )
+}
+
+/**
+ * "May not fit this device" warning at the Browse/download decision point (issue #137 - previously
+ * this only appeared on the Manage screen, AFTER a model was already downloaded, which is too late
+ * to inform the choice). Reuses [DeviceRamFit.modelExceedsDeviceRam] - the exact same fit test
+ * [ModelManagementScreen]'s post-download warning uses - rather than a second threshold anywhere
+ * (spec rule 1 SSOT: a fact/decision like "does this fit" must have exactly one authority). The one
+ * real difference from the Manage screen: there, [peakRamBytes] is the engine's declared
+ * `resourceCost.approxPeakRamBytes` (or an observed peak); here, before download, there is no
+ * ModelDescriptor/engine assigned yet, so the best honest stand-in is the model's own download size
+ * (already fetched/known for this exact row - see [SizeLine]/[RecommendedRow]'s approxSizeMb) -
+ * labeled "(estimated)" so it never reads as a verified measurement. Renders nothing when the size
+ * isn't known yet, or when [DeviceRamFit] says it fits (never shown as a "tight but OK" tier -
+ * spec/DeviceRamFit's own rule: only a genuine won't-fit warns).
+ */
+@Composable
+private fun WontFitWarning(
+    peakRamBytes: Long?,
+    totalRamBytes: Long,
+) {
+    if (peakRamBytes == null) return
+    if (!DeviceRamFit.modelExceedsDeviceRam(peakRamBytes, totalRamBytes)) return
+    Text(
+        "May not fit this device - est. ~${ByteFormat.format(peakRamBytes)}+ RAM needed",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
     )
 }
 
@@ -1222,7 +1288,7 @@ private fun DownloadProgress(
         )
         val etaText = progress.etaSeconds(now)?.let { " · ≈${formatDuration(it)} left" } ?: ""
         Text(
-            "${formatBytes(progress.bytesDone)} / ${formatBytes(bytesTotal)}$etaText",
+            "${ByteFormat.format(progress.bytesDone)} / ${ByteFormat.format(bytesTotal)}$etaText",
             style = MaterialTheme.typography.bodySmall,
         )
     }
@@ -1271,7 +1337,7 @@ private fun DownloadsSubheader(downloads: Map<String, HfDownloadProgress>) {
         val percent = if (total > 0L) ((done.toDouble() / total) * PERCENT_MAX).toInt().coerceIn(0, PERCENT_MAX) else 0
         val eta = aggregateEtaText(progresses, done, total, now)
         Text(
-            "${formatBytes(done)} / ${formatBytes(total)} · $percent% done$eta",
+            "${ByteFormat.format(done)} / ${ByteFormat.format(total)} · $percent% done$eta",
             style = MaterialTheme.typography.bodySmall,
         )
         val fraction = if (total > 0L) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
@@ -1351,13 +1417,7 @@ private fun DownloadControl(
 
 private fun formatSize(estimate: HfSizeEstimate): String {
     val prefix = if (estimate.isExact) "" else "≥"
-    return "$prefix${formatBytes(estimate.knownBytes)}"
-}
-
-private fun formatBytes(bytes: Long): String {
-    val mb = bytes / (1024.0 * 1024.0)
-    if (mb >= MB_TO_GB_THRESHOLD) return "%.2f GB".format(mb / 1024.0)
-    return "%.1f MB".format(mb)
+    return "$prefix${ByteFormat.format(estimate.knownBytes)}"
 }
 
 private fun formatDuration(seconds: Double): String {
@@ -1380,17 +1440,6 @@ private fun formatClock(seconds: Double): String {
     return "%d:%02d".format(minutes, secs)
 }
 
-/** Bug #5 display helper: an estimated parameter count as a compact "82M"/"1.2B" label. */
-private fun formatParamCount(count: Long): String {
-    if (count <= 0L) return "?"
-    val millions = count / 1_000_000.0
-    if (millions >= THOUSAND) return "%.1fB".format(millions / THOUSAND)
-    if (millions >= 1.0) return "%.0fM".format(millions)
-    val thousands = count / 1_000.0
-    if (thousands >= 1.0) return "%.0fK".format(thousands)
-    return count.toString()
-}
-
 /** Bug #5 display helper: one decimal place is plenty of precision for a heuristic estimate. */
 private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
 
@@ -1398,8 +1447,6 @@ private const val MAX_TAGS_SHOWN = 4
 private const val ERROR_BANNER_MAX_LINES = 3
 private const val BYTES_PER_MB = 1024L * 1024L
 private const val PARAMS_PER_M = 1_000_000.0
-private const val THOUSAND = 1000.0
-private const val MB_TO_GB_THRESHOLD = 1024.0
 private const val SECONDS_PER_MINUTE = 60L
 private const val MINUTES_PER_HOUR = 60L
 private const val SECONDS_PER_HOUR = 3600L

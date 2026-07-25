@@ -38,6 +38,11 @@ private val COMPACT_ACTION_INDICES = intArrayOf(0, 1, 2)
  * lock-screen controls with a progress scrubber (issue #26). Split out of [PlaybackService] itself
  * so that class's job stays "reconcile playback state", not "assemble notification UI" - keeping
  * both comfortably under the never-nesting/function-count limits (spec §8/CLAUDE.md).
+ *
+ * This is the ONE notification the user should see while generating AND playing (a Play tap is
+ * generate-and-stream together, spec §6.1) - [GenerationNotifier] steps aside and folds its live
+ * progress into [GenerationProgressSignal] instead of posting a second, competing row whenever this
+ * notification is up; [statusText] reads that signal back into the "Playing"/"Paused" subtitle.
  */
 class PlaybackNotificationFactory(private val context: Context) {
     init {
@@ -53,7 +58,7 @@ class PlaybackNotificationFactory(private val context: Context) {
         NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title ?: DEFAULT_NOTIFICATION_TITLE)
-            .setContentText(if (paused) "Paused" else "Playing")
+            .setContentText(statusText(paused))
             .setOngoing(!paused)
             .setContentIntent(openAppPendingIntent())
             .addAction(skipAction(PLAYBACK_ACTION_PREV_PARAGRAPH))
@@ -64,6 +69,16 @@ class PlaybackNotificationFactory(private val context: Context) {
             .applyProgress(progress)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+
+    // "Playing"/"Paused", with "· Generating sentence N of M" appended while generation (which
+    // usually runs ahead of playback) hasn't finished yet - the ONE fact a second notification would
+    // otherwise have shown. Reads the shared, in-process signal GenerationNotifier writes to; null
+    // once a run completes (GenerationNotifier.clear()), so the subtitle reverts to the plain state.
+    private fun statusText(paused: Boolean): String {
+        val base = if (paused) "Paused" else "Playing"
+        val progress = GenerationProgressSignal.current ?: return base
+        return "$base · ${progress.describe()}"
+    }
 
     // A determinate bar in the shade backs up the lock-screen session scrubber (some launchers
     // render the notification bar, some the session seekbar). Skipped until an estimated total is

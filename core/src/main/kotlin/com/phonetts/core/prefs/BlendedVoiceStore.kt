@@ -19,6 +19,16 @@ class BlendedVoiceStore(private val store: PreferenceStore) {
     fun forModel(modelId: String): List<BlendedVoiceSpec> = store.getStringSet(key(modelId)).mapNotNull(::decode)
 
     /**
+     * Every model id that currently has at least one saved mix, in no particular order. Backed by a
+     * small separate index (updated alongside [save]/[remove]) so a caller that doesn't already know
+     * which models to ask about - e.g. a full backup export (issue #149) - can still enumerate every
+     * saved mix without this store gaining Android-style key-listing, which [PreferenceStore] never
+     * exposed. A model id lingering in the index after its last mix is removed is harmless: [forModel]
+     * for it simply returns an empty list.
+     */
+    fun allModelIds(): Set<String> = store.getStringSet(MODEL_INDEX_KEY)
+
+    /**
      * Saves [spec] (adding it, or replacing any existing mix with the same [BlendedVoiceSpec.id]).
      * Returns the updated list for the spec's model.
      */
@@ -26,6 +36,7 @@ class BlendedVoiceStore(private val store: PreferenceStore) {
         val kept = forModel(spec.modelId).filterNot { it.id == spec.id }
         val updated = kept + spec
         store.putStringSet(key(spec.modelId), updated.map(::encode).toSet())
+        store.putStringSet(MODEL_INDEX_KEY, allModelIds() + spec.modelId)
         return updated
     }
 
@@ -61,6 +72,10 @@ class BlendedVoiceStore(private val store: PreferenceStore) {
 
     private companion object {
         const val KEY_PREFIX = "blended_voices_"
+
+        // Small index of every model id that has (or had) a saved mix, so all-models enumeration
+        // (backup export, issue #149) doesn't need PreferenceStore to expose key-listing.
+        const val MODEL_INDEX_KEY = "blended_voices_index"
 
         // Unit Separator (U+001F): a control char that never appears in a voice id/name/model id, so
         // records split unambiguously without escaping. A record missing a field is dropped on read.

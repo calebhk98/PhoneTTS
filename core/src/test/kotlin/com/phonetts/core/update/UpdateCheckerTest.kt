@@ -102,4 +102,41 @@ class UpdateCheckerTest {
 
         assertFalse(status.updateAvailable)
     }
+
+    // The in-app downloader needs the asset's own facts (name/size/hash) - it must take them from the
+    // release GitHub advertises, never invent them.
+    @Test
+    fun carriesTheAssetsNameSizeAndSha256ForTheInAppDownload() {
+        val sha = "f".repeat(64)
+        val asset =
+            """[{"name":"phonetts-v0.1.9.apk","browser_download_url":"https://gh/dl/a.apk",""" +
+                """"size":85449800,"digest":"sha256:$sha"}]"""
+        val body =
+            """[{"tag_name":"v0.1.9","html_url":"https://gh/rel","draft":false,""" +
+                """"prerelease":false,"assets":$asset}]"""
+
+        val status = UpdateChecker(FakeHttpClient(listOf("/releases" to body))).check("0.1.3", owner, repo)
+
+        assertEquals("phonetts-v0.1.9.apk", status.apkFileName)
+        assertEquals(85_449_800L, status.apkSizeBytes)
+        assertEquals(sha, status.apkSha256)
+    }
+
+    @Test
+    fun leavesTheHashNullWhenTheReleaseAdvertisesNoneOrAnUnknownAlgorithm() {
+        // Older releases carry no `digest`; a non-sha256 digest is not something we can check against,
+        // and "unknown" must stay null rather than being passed off as a hash.
+        val noDigest = checkerFor(release("v0.1.9")).check("0.1.3", owner, repo)
+        assertNull(noDigest.apkSha256)
+        assertNull(noDigest.apkSizeBytes, "a size the API didn't advertise must stay unknown, not 0")
+
+        val md5Asset =
+            """[{"name":"a.apk","browser_download_url":"https://gh/dl/a.apk","digest":"md5:abc"}]"""
+        val body =
+            """[{"tag_name":"v0.1.9","html_url":"https://gh/rel","draft":false,""" +
+                """"prerelease":false,"assets":$md5Asset}]"""
+        val status = UpdateChecker(FakeHttpClient(listOf("/releases" to body))).check("0.1.3", owner, repo)
+
+        assertNull(status.apkSha256)
+    }
 }
