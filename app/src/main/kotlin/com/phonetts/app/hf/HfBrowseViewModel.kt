@@ -113,8 +113,21 @@ class HfBrowseViewModel(
     /** This device's TOTAL RAM in bytes, read once (it never changes for the life of the process) -
      * the one figure [com.phonetts.core.model.DeviceRamFit] checks to decide whether a browsed
      * model's estimated size can't possibly fit. Exposed as a plain property (not app state) since
-     * it never changes and the UI needs no recomposition trigger for it. */
-    val deviceTotalRamBytes: Long = totalRamBytes()
+     * it never changes and the UI needs no recomposition trigger for it.
+     *
+     * Bug fix (Browse crash on open): like [recommended]/[isRecommendedAvailable] just above, this
+     * runs as part of CONSTRUCTING this class - before the screen has anything to show - by calling
+     * an injected probe ([totalRamBytes], wired to `DeviceInfo.totalRamBytes(context)` in production:
+     * `ActivityManager.getMemoryInfo()` under the hood, a real Binder call that can throw on a
+     * misbehaving OEM framework or a dead system-server binder). [totalRamBytes]'s own kdoc already
+     * promises "0L, fail-closed" for an ordinary failed reading; that guarantee did not extend to an
+     * exception, so a throwing probe here used to take the whole Browse screen down before it could
+     * render anything - the exact bug class [isRecommendedAvailable] exists to prevent, just left
+     * unguarded on this one property. runCatching extends the same fail-closed contract: a
+     * misbehaving RAM probe now yields "unknown" (0L, DeviceRamFit's own "can't say" value) instead
+     * of crashing construction.
+     */
+    val deviceTotalRamBytes: Long = runCatching { totalRamBytes() }.getOrDefault(0L)
 
     // One coroutine per repo id currently in flight (listing files, or fetching them) - a map, not
     // a single slot, so the user can start a second download while the first is still running and

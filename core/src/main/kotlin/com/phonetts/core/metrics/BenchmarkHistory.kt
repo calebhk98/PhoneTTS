@@ -35,6 +35,13 @@ class BenchmarkHistory(private val store: PreferenceStore) {
         val kept = (history(record.engineId, record.device) + record).takeLast(MAX_SAMPLES)
         val serialized = kept.joinToString(RECORD_SEPARATOR, transform = ::encode)
         store.putString(key(record.engineId, record.device), serialized)
+        store.putStringSet(
+            INDEX_KEY,
+            allKeys().map {
+                    (e, d) ->
+                indexEntry(e, d)
+            }.toSet() + indexEntry(record.engineId, record.device),
+        )
     }
 
     /** The saved samples for [engineId] on [device], oldest first; empty when nothing valid is stored. */
@@ -48,12 +55,65 @@ class BenchmarkHistory(private val store: PreferenceStore) {
             .sortedBy { it.timestampMillis }
     }
 
+    /**
+     * Every `(engineId, device)` pair that currently has at least one saved sample, in no particular
+     * order. Backed by a small separate index (updated alongside [record]/[replaceHistory]/[clear])
+     * so a caller that doesn't already know which engine+device pairs to ask about - e.g. a full
+     * backup export (issue #149) - can enumerate every saved history without [PreferenceStore]
+     * gaining Android-style key-listing.
+     */
+    fun allKeys(): List<Pair<String, String>> =
+        store.getStringSet(INDEX_KEY).mapNotNull { entry ->
+            val parts = entry.split(FIELD_SEPARATOR)
+            if (parts.size != FIELD_COUNT) return@mapNotNull null
+            parts[0] to parts[1]
+        }
+
+    /**
+     * Wholesale-replaces the saved history for [engineId] on [device] with [records] (only the ones
+     * that actually match [engineId]/[device] are kept), sorted oldest-first and trimmed to the most
+     * recent [MAX_SAMPLES] - the same invariant [record] maintains one append at a time. Used by
+     * backup restore (issue #149), where a whole saved history is being written back at once rather
+     * than incrementally measured; every other caller should keep using [record]. An empty [records]
+     * behaves like [clear].
+     */
+    fun replaceHistory(
+        engineId: String,
+        device: String,
+        records: List<BenchmarkRecord>,
+    ) {
+        val matching = records.filter { it.engineId == engineId && it.device == device }
+        if (matching.isEmpty()) {
+            clear(engineId, device)
+            return
+        }
+        val serialized =
+            matching.sortedBy {
+                it.timestampMillis
+            }.takeLast(MAX_SAMPLES).joinToString(RECORD_SEPARATOR, transform = ::encode)
+        store.putString(key(engineId, device), serialized)
+        store.putStringSet(
+            INDEX_KEY,
+            allKeys().map {
+                    (e, d) ->
+                indexEntry(e, d)
+            }.toSet() + indexEntry(engineId, device),
+        )
+    }
+
     /** Forgets the saved history for [engineId] on [device]. A no-op if none was recorded. */
     fun clear(
         engineId: String,
         device: String,
     ) {
         store.remove(key(engineId, device))
+        store.putStringSet(
+            INDEX_KEY,
+            allKeys().filterNot { it == engineId to device }.map {
+                    (e, d) ->
+                indexEntry(e, d)
+            }.toSet(),
+        )
     }
 
     private fun encode(record: BenchmarkRecord): String =
@@ -85,11 +145,20 @@ class BenchmarkHistory(private val store: PreferenceStore) {
         device: String,
     ) = "$KEY_PREFIX$engineId$FIELD_SEPARATOR$device"
 
+    private fun indexEntry(
+        engineId: String,
+        device: String,
+    ) = "$engineId$FIELD_SEPARATOR$device"
+
     companion object {
         private const val KEY_PREFIX = "benchmark_history."
         private const val RECORD_SEPARATOR = "\n"
         private const val FIELD_SEPARATOR = "|"
         private const val FIELD_COUNT = 2
         private const val MAX_SAMPLES = 50
+
+        // Index of every "engineId|device" pair ever recorded, so allKeys() can enumerate without
+        // PreferenceStore exposing key-listing.
+        private const val INDEX_KEY = "benchmark_history_index"
     }
 }

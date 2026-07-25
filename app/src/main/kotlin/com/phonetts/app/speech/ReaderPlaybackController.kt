@@ -77,6 +77,14 @@ class ReaderPlaybackController(
     data class State(
         val playing: Boolean = false,
         val paused: Boolean = false,
+        /**
+         * Generation is still filling the buffer. Deliberately independent of [playing]: stopping
+         * audio does NOT stop generation, so a user can listen, stop, come back later and find the
+         * document already synthesized ahead. Derived from the session, never written by hand.
+         */
+        val generating: Boolean = false,
+        /** Sentences generated so far, for the "still generating" readout. */
+        val sentencesReady: Int = 0,
         val currentSentenceIndex: Int? = null,
         val playbackElapsedMillis: Long = 0,
         val playbackTotalMillis: Long = 0,
@@ -406,6 +414,8 @@ class ReaderPlaybackController(
                         it.copy(
                             playing = s.isPlaying,
                             paused = s.isPaused,
+                            generating = s.isGenerating,
+                            sentencesReady = s.sentencesReady,
                             currentSentenceIndex = if (active) attempt.fromSentence + s.currentSentence else null,
                             playbackElapsedMillis = if (active) elapsedMillis else it.playbackElapsedMillis,
                         )

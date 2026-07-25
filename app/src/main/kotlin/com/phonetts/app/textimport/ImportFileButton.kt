@@ -7,15 +7,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import com.phonetts.core.text.extract.DocxTextExtractor
+import com.phonetts.core.text.extract.EpubTextExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * A button that lets the user pick a document (.txt/.md/.docx/.pdf/…) and turns it into text for
- * the synthesizer input, in addition to typing/pasting. The set of accepted types comes from the
- * modular [FileTextImporter] registry, so adding a new extractor widens what this accepts with no
- * change here. Reading + extraction run off the main thread.
+ * A button that lets the user pick a document (.txt/.md/.docx/.pdf/.epub/…) and turns it into
+ * text for the synthesizer input, in addition to typing/pasting. The set of accepted types comes
+ * from the modular [FileTextImporter] registry, so adding a new extractor widens what this accepts
+ * with no change here. Reading + extraction run off the main thread.
  */
 @Composable
 fun ImportFileButton(
@@ -46,4 +47,5 @@ private val ACCEPTED_MIME_TYPES =
         "text/*",
         "application/pdf",
         DocxTextExtractor.DOCX_MIME,
+        EpubTextExtractor.EPUB_MIME,
     )

@@ -34,7 +34,7 @@ class TextExtractorRegistry(extractors: List<TextExtractor> = emptyList()) {
     }
 
     companion object {
-        /** A registry seeded with the pure-JVM built-in extractors (plain text, Markdown, HTML, .docx). */
+        /** A registry seeded with the pure-JVM built-in extractors (plain text, Markdown, HTML, .docx, EPUB). */
         fun withDefaults(): TextExtractorRegistry =
             TextExtractorRegistry(
                 listOf(
@@ -42,6 +42,7 @@ class TextExtractorRegistry(extractors: List<TextExtractor> = emptyList()) {
                     MarkdownTextExtractor(),
                     HtmlTextExtractor(),
                     DocxTextExtractor(),
+                    EpubTextExtractor(),
                 ),
             )
     }

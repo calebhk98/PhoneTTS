@@ -98,6 +98,7 @@ class HfBrowseFailClosedRegressionTest {
         isRuntimeAvailable: (String) -> Boolean = { false },
         benchmarkHistory: BenchmarkHistory? = null,
         modelCatalog: ModelCatalog = ModelCatalog(),
+        totalRamBytes: () -> Long = { 0L },
     ): HfBrowseViewModel {
         val importer =
             ModelImporter(
@@ -113,6 +114,7 @@ class HfBrowseFailClosedRegressionTest {
             modelCatalog = modelCatalog,
             isRuntimeAvailable = isRuntimeAvailable,
             benchmarkHistory = benchmarkHistory,
+            totalRamBytes = totalRamBytes,
         )
     }
 
@@ -158,6 +160,27 @@ class HfBrowseFailClosedRegressionTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `constructing the view model does not throw when totalRamBytes throws, and reads back as unknown`() {
+        // deviceTotalRamBytes is a property initializer - it runs DURING construction, before the
+        // screen renders anything, exactly like the isRuntimeAvailable probe above. In production
+        // this is wired to DeviceInfo.totalRamBytes(context), i.e. a real ActivityManager Binder
+        // call (`getMemoryInfo`) that can throw on a misbehaving OEM framework or dead system-server
+        // binder - a real, if rare, on-device failure mode this test simulates directly rather than
+        // trying to reproduce the underlying Binder condition.
+        val viewModel =
+            newViewModel(
+                searchResponseJson = "[]",
+                totalRamBytes = { throw IllegalStateException("simulated ActivityManager binder failure") },
+            )
+
+        // Fail-closed to the same "unknown" value totalRamBytes' own kdoc already promises for an
+        // ordinary failed reading (0L - DeviceRamFit's own "can't say, never warn" sentinel) - a
+        // thrown exception must degrade the same way a merely-wrong reading already does, not crash
+        // construction outright.
+        assertEquals(0L, viewModel.deviceTotalRamBytes)
     }
 
     @Test

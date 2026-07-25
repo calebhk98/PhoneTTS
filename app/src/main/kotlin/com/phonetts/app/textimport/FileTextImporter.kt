@@ -86,7 +86,7 @@ class FileTextImporter(
             }
 
     companion object {
-        /** The built-in pure-JVM extractors (:core) plus the PDF extractor (:app). */
+        /** The built-in pure-JVM extractors (:core, including EPUB) plus the PDF extractor (:app). */
         fun defaultRegistry(): TextExtractorRegistry =
             TextExtractorRegistry.withDefaults().apply { register(PdfTextExtractor()) }
     }

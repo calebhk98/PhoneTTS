@@ -91,6 +91,10 @@ class TtsViewModel(
         // Derived from ReaderPlaybackController.state - see this class's kdoc. Never written by hand.
         val playing: Boolean = false,
         val paused: Boolean = false,
+        // Generation is still running. Independent of [playing]: Stop halts audio only, so this can
+        // be true with nothing playing - that is the "keep generating ahead while I'm away" case.
+        val generating: Boolean = false,
+        val sentencesReady: Int = 0,
         val status: String? = null,
         // Lock-screen/notification progress (issue #26): elapsed reflects audio actually delivered to
         // the sink; total is the synthesis-free listening estimate for the text being played. Both in
@@ -294,6 +298,8 @@ class TtsViewModel(
                     it.copy(
                         playing = r.playing,
                         paused = r.paused,
+                        generating = r.generating,
+                        sentencesReady = r.sentencesReady,
                         currentSentenceIndex = r.currentSentenceIndex,
                         playbackElapsedMillis = r.playbackElapsedMillis,
                         playbackTotalMillis = r.playbackTotalMillis,
@@ -811,25 +817,33 @@ class TtsViewModel(
      * disclosed change from the pre-SpeechSession behaviour, which cancelled generation outright).
      */
     /**
-     * The user pressed Stop. That means stop EVERYTHING, generation included.
+     * Stop the AUDIO. Generation deliberately keeps running.
      *
-     * The split between "stop the consumer" and "abandon the whole session" is the right shape at
-     * the SpeechSession layer - a producer that knows nothing about playback is exactly the point,
-     * and a skip/seek must not cancel generation. But Stop is a user intent, not a transport
-     * primitive: leaving the producer running would keep the phone synthesizing a whole book with
-     * no audio coming out, burning CPU and battery on a device this app specifically targets for
-     * being weak. Deciding that is the ViewModel's job, which is why it lives here and not in
-     * :core.
+     * This is the point of separating the producer from the consumer: someone listens for a while,
+     * stops, goes and does something else, and comes back expecting the document to have been
+     * synthesized ahead in the meantime - so pressing Play again is instant rather than waiting on
+     * the model all over again. Stopping the producer here would throw that away and make the
+     * separation pointless.
      *
-     * The already-generated audio is NOT discarded - the buffer is retained, so pressing Play again
-     * replays it rather than re-synthesizing.
+     * [stopGeneration] is the separate, explicit control for "stop working entirely".
      */
     fun stop() {
         // Tell the service (if bound) this stop is user-initiated, so it doesn't misread the
         // resulting playing→stopped edge as a natural end-of-document and chime (issue #32).
         onUserStopRequested?.invoke()
-        abandonPlayback()
+        val s = mutableState.value
+        readerController.stop(s.selected, s.voiceId, s.params.speed, s.text.takeIf { it.isNotBlank() }?.let(::documentIdFor))
     }
+
+    /**
+     * Stop generating too - the explicit "stop working entirely" action, offered only while
+     * generation is actually running.
+     *
+     * Separate from [stop] on purpose: a user who wants their battery back needs a way to say so,
+     * but it must not be the default meaning of the Stop button. Already-generated audio survives,
+     * so Play still replays what was produced instead of re-synthesizing it.
+     */
+    fun stopGeneration() = abandonPlayback()
 
     // The stronger teardown for a model/voice switch (issue #45) - fully cancels generation too, so
     // the about-to-be-unloaded engine's synthesis coroutine can't race EngineManager.switchTo().

@@ -728,8 +728,42 @@ private fun TransportBar(
             enabled = state.playing,
             modifier = Modifier.size(TRANSPORT_BUTTON_SIZE),
         ) {
-            Icon(Icons.Filled.Stop, "Stop", modifier = Modifier.size(TRANSPORT_ICON_SIZE))
+            Icon(
+                Icons.Filled.Stop,
+                contentDescription = "Stop audio (keeps generating ahead)",
+                modifier = Modifier.size(TRANSPORT_ICON_SIZE),
+            )
         }
+    }
+    GenerationAheadRow(state, viewModel)
+}
+
+/**
+ * Shown only while generation is still running with nothing playing - i.e. after Stop, or after the
+ * audio caught up and drained while the model keeps working ahead.
+ *
+ * Stop halts audio ONLY, on purpose: the point of separating the producer from the consumer is that
+ * you can stop listening, come back later, and find the document already synthesized rather than
+ * waiting on the model again. That is invisible unless the UI says so, and a user who does want the
+ * battery back needs an explicit way to ask - hence this row rather than overloading Stop.
+ */
+@Composable
+private fun GenerationAheadRow(
+    state: TtsViewModel.UiState,
+    viewModel: TtsViewModel,
+) {
+    if (!state.generating || state.playing) return
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Still generating ahead - ${state.sentencesReady} sentences ready",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = viewModel::stopGeneration) { Text("Stop generating") }
     }
 }
 
