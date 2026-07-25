@@ -1,5 +1,6 @@
 package com.phonetts.app.playback
 
+import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -46,6 +47,18 @@ private val PLAYBACK_ACTIONS =
  * ([PlaybackChime]) when a run finishes *naturally* rather than on a user Stop (issue #32).
  */
 class PlaybackService : Service() {
+    companion object {
+        // In-memory (never persisted - a fresh process starts with no playback anyway) signal read
+        // by GenerationNotifier so it can tell whether this service already has the ONE media
+        // notification up and, if so, step aside instead of posting a second, competing row (see
+        // GenerationNotifier's kdoc). Written only by this class as it enters/leaves the foreground;
+        // @Volatile since GenerationNotifier reads it from whatever thread the generation flow's
+        // collector runs on.
+        @Volatile
+        var isForegroundActive: Boolean = false
+            private set
+    }
+
     private val binder = LocalBinder()
     private var controller: PlaybackController? = null
     private var mediaSession: MediaSessionCompat? = null
@@ -109,6 +122,11 @@ class PlaybackService : Service() {
         fun sleepTimerRemainingMillis(): Long = sleepTimer.remainingMillis()
 
         val isSleepTimerRunning: Boolean get() = sleepTimer.isRunning
+
+        /** Whether the lock-screen media session is active - exposed for tests to verify the
+         * `MediaSessionCompat.isActive` flag the lock screen depends on (rule 3, background
+         * playback spec); nothing in production reads this today. */
+        val isMediaSessionActive: Boolean get() = this@PlaybackService.mediaSession?.isActive == true
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -141,6 +159,7 @@ class PlaybackService : Service() {
     private fun ensureForeground() {
         if (isForeground) return
         isForeground = true
+        isForegroundActive = true
         val notification =
             notifications.build(
                 paused = false,
@@ -152,6 +171,7 @@ class PlaybackService : Service() {
 
     override fun onDestroy() {
         isForeground = false
+        isForegroundActive = false
         sleepTimer.cancel()
         audioFocus.abandon()
         unregisterBecomingNoisy()
@@ -194,6 +214,7 @@ class PlaybackService : Service() {
             finishPlayback()
             return
         }
+        isForegroundActive = true
         wasPlaying = true
         // A fresh (or resumed) play clears any stale user-stop flag left by a barge-in restart
         // (select model / skip paragraph both stop() then immediately start again), so a later
@@ -259,6 +280,7 @@ class PlaybackService : Service() {
     }
 
     private fun stopPlaybackForeground() {
+        isForegroundActive = false
         sleepTimer.cancel()
         audioFocus.abandon()
         unregisterBecomingNoisy()
@@ -282,8 +304,22 @@ class PlaybackService : Service() {
     private fun buildMediaSession(): MediaSessionCompat =
         MediaSessionCompat(this, MEDIA_SESSION_TAG).apply {
             setCallback(sessionCallback)
+            // Ties this session to the manifest-registered MediaButtonReceiver (see
+            // AndroidManifest.xml) so a hardware/Bluetooth media-button broadcast - which can arrive
+            // even when this service isn't currently running - gets routed back into
+            // onStartCommand's MediaButtonReceiver.handleIntent call above, rather than having
+            // nowhere to land.
+            setMediaButtonReceiver(mediaButtonPendingIntent())
             isActive = true
         }
+
+    private fun mediaButtonPendingIntent(): PendingIntent {
+        val intent =
+            Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                setClass(this@PlaybackService, MediaButtonReceiver::class.java)
+            }
+        return PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+    }
 
     private val sessionCallback =
         object : MediaSessionCompat.Callback() {

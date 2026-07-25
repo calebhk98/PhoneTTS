@@ -30,6 +30,16 @@ import com.phonetts.core.metrics.GenerationStats
  * and [com.phonetts.app.hf.DownloadNotifier]: every method checks
  * [NotificationManagerCompat.areNotificationsEnabled] first, so a denied permission (or notifications
  * disabled for the app) just means no notification appears, never a `SecurityException` crash.
+ *
+ * Two ongoing rows for one activity is bad UX: every generation this class is told about today is
+ * itself the run backing an active playback (see [com.phonetts.app.ui.TtsViewModel] - "Play" sets
+ * `playing = true` and starts generation together; export never calls this class at all). So
+ * whenever [PlaybackService] already has its own media notification in the foreground
+ * ([PlaybackService.isForegroundActive]), this class steps aside instead of racing it: it still
+ * records progress into [GenerationProgressSignal] (which [PlaybackNotificationFactory] folds into
+ * that ONE notification's subtitle), but posts nothing of its own, and clears any row it may have
+ * shown before playback caught up. Only when there is genuinely no playback session (a possible
+ * future generation-only path) does it fall back to its own standalone row, exactly as before.
  */
 class GenerationNotifier(context: Context) {
     private val appContext = context.applicationContext
@@ -52,18 +62,30 @@ class GenerationNotifier(context: Context) {
 
     /** Dismiss the row - call on generation completion, stop/barge-in, or failure alike, so nothing
      * lingers claiming a generation is still in progress once it definitely isn't. */
-    fun clear() = manager.cancel(GENERATION_NOTIFICATION_ID)
+    fun clear() {
+        GenerationProgressSignal.current = null
+        manager.cancel(GENERATION_NOTIFICATION_ID)
+    }
 
     private fun post(
         chunksDone: Int,
         totalChunks: Int,
     ) {
+        val progress = GenerationProgressSignal.Progress(chunksDone, totalChunks)
+        GenerationProgressSignal.current = progress
+        if (PlaybackService.isForegroundActive) {
+            // The media notification is already up and will fold this progress into its own
+            // subtitle (PlaybackNotificationFactory) - don't also show a second, competing row.
+            // Cancel is a no-op if this class never posted one for this run.
+            manager.cancel(GENERATION_NOTIFICATION_ID)
+            return
+        }
         if (!hasPermission()) return
         val builder =
             NotificationCompat.Builder(appContext, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("Generating speech…")
-                .setContentText(progressText(chunksDone, totalChunks))
+                .setContentText(progress.describe())
                 .setOnlyAlertOnce(true)
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -93,17 +115,6 @@ class GenerationNotifier(context: Context) {
             return
         }
         builder.setProgress(totalChunks, chunksDone.coerceIn(0, totalChunks), false)
-    }
-
-    private fun progressText(
-        chunksDone: Int,
-        totalChunks: Int,
-    ): String {
-        if (totalChunks <= 0) return "Generating sentence ${chunksDone + 1}…"
-        // chunksDone counts FULLY finished sentences (AbstractVoiceEngine emits one chunk per
-        // sentence), so the sentence actually in flight is one past that, clamped to the total.
-        val inFlight = (chunksDone + 1).coerceAtMost(totalChunks)
-        return "Generating sentence $inFlight of $totalChunks"
     }
 
     private fun hasPermission(): Boolean = manager.areNotificationsEnabled()

@@ -65,6 +65,8 @@ class FakeEngine(
         private set
     var lastVoiceId: String? = null
         private set
+    var synthesizeCount = 0
+        private set
 
     override fun inspect(bundle: ModelBundle): EngineMatch? {
         inspectCount++
@@ -95,6 +97,7 @@ class FakeEngine(
         voiceId: String,
         params: SynthesisParams,
     ): Flow<FloatArray> {
+        synthesizeCount++
         lastParams = params
         lastSpeed = params.speed
         lastVoiceId = voiceId

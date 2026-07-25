@@ -86,11 +86,34 @@
 
         <!-- Foreground service driving background playback + the lock-screen media session
              (com.phonetts.app.playback.PlaybackService). Not exported: only this app binds to
-             it. -->
+             it. The MEDIA_BUTTON intent-filter is what lets the androidx MediaButtonReceiver below
+             find THIS service as the target to forward hardware/Bluetooth media-button broadcasts
+             to (headset button, Bluetooth remote play/pause) when the app isn't already running -
+             without it those events have nowhere to land even though PlaybackService.onStartCommand
+             already calls MediaButtonReceiver.handleIntent to consume them. -->
         <service
             android:name=".playback.PlaybackService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <!-- Paired with the service's MEDIA_BUTTON intent-filter above: this is the well-known
+             androidx component that receives the ACTION_MEDIA_BUTTON broadcast and re-dispatches it
+             into PlaybackService (see MediaSessionCompat.setMediaButtonReceiver in
+             PlaybackService.buildMediaSession). Its absence was a real gap - without a manifest
+             receiver to catch the broadcast, hardware media-button events had nowhere to go even
+             though the service-side handling already existed. exported=true is required: the
+             broadcast is sent from the system/Bluetooth stack, a different UID than this app. -->
+        <receiver
+            android:name="androidx.media.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
 
         <!-- Home-screen widget (issue #25): last document title + Play/Pause. Its button fires the
              same PlaybackService action the notification uses. Exported so the launcher can host it. -->

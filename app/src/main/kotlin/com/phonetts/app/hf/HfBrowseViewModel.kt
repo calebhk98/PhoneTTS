@@ -135,16 +135,31 @@ class HfBrowseViewModel(
      * Curated one-tap models (proven working; see docs/MODEL-VERIFICATION.md), minus any whose
      * required runtime isn't available on this build - so a standard APK shows the four ONNX models
      * and a native (-PwithCosyVoice) build also shows CosyVoice3.
+     *
+     * Bug fix (Browse crash on open): this runs synchronously as part of constructing this class -
+     * BEFORE the screen has anything to show - so a runtime-availability probe that throws (rather
+     * than returning false) used to take the whole Browse screen down before it could even open,
+     * with no way to search/scroll/retry around it. [isRuntimeAvailable] already documents itself as
+     * "fail-closed: defaults to not available" for a normal false answer; [isRecommendedAvailable]
+     * extends that same fail-closed guarantee to an exception, so a misbehaving probe just hides the
+     * one model it's asked about instead of crashing construction.
      */
-    val recommended: List<BuiltInModel> =
-        BuiltInCatalog.ALL.filter { model -> model.requiresRuntimeId?.let(isRuntimeAvailable) ?: true }
+    val recommended: List<BuiltInModel> = BuiltInCatalog.ALL.filter(::isRecommendedAvailable)
+
+    private fun isRecommendedAvailable(model: BuiltInModel): Boolean {
+        val runtimeId = model.requiresRuntimeId ?: return true
+        return runCatching { isRuntimeAvailable(runtimeId) }.getOrDefault(false)
+    }
 
     // Populate the list immediately so the screen isn't just the handful of recommended models until
     // the user types - a blank query lists the top TTS models (HfEndpoints.searchModelsUrl). Fail-
     // closed: no network just leaves results empty with an error line, the recommended list still shows.
+    // Both calls are themselves internally fail-closed for their async work; wrapped here too (bug fix:
+    // Browse crash on open) so nothing added to either in the future can throw OUT of init{} and take
+    // the whole screen down before it has rendered anything at all.
     init {
-        search()
-        loadDiagnostics()
+        runCatching { search() }
+        runCatching { loadDiagnostics() }
     }
 
     /** True if [rawId] (an [HfModelSummary.id] or [BuiltInModel.id]) is already on disk - resolved
@@ -160,8 +175,18 @@ class HfBrowseViewModel(
      * can `remember` this keyed on exactly the fields it depends on - see [HfBrowseScreen] (issue
      * #3): recomputing this on every unrelated state change, e.g. a download-progress tick, is
      * what made the sort/filter dropdown janky.
+     *
+     * Bug fix (Browse crash on open): called directly from a Compose `remember` block with no
+     * surrounding try/catch of its own, and it runs the instant real Hugging Face results first land
+     * - exactly the moment "opening Browse" turns from the empty/loading state into real data. It
+     * also touches on-device state this class doesn't otherwise validate (e.g. [rtfEstimates] reads
+     * the real, SharedPreferences-backed [benchmarkHistory] for every installed+benchmarked result).
+     * A Browse screen must never crash outright (spec rule 4's fail-closed spirit, applied to
+     * rendering, not just model detection): on any unexpected exception, fall back to the raw
+     * fetched results - unsorted/unfiltered is still a working screen, a crash is not.
      */
-    fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> = applyFilters(state, state.results)
+    fun displayedResults(state: HfBrowseUiState): List<HfModelSummary> =
+        runCatching { applyFilters(state, state.results) }.getOrDefault(state.results)
 
     // Shared by displayedResults (the full current result set) and loadMore's "how many pages do I
     // still need?" check (a growing prefix of it) - one filter pipeline, so the count loadMore reads
@@ -196,14 +221,19 @@ class HfBrowseViewModel(
 
     /** The Format filter menu's choices - every [HfFileFormat] present across the file trees fetched
      * so far (issue #107), derived from data via [HfFileFormats.availableFormats], never a hardcoded
-     * list. Same [state]-parameter rationale as [displayedResults]. */
-    fun availableFormats(state: HfBrowseUiState): List<HfFileFormat> = HfFileFormats.availableFormats(state.fileFormats)
+     * list. Same [state]-parameter rationale as [displayedResults]; same fail-closed-to-empty
+     * rationale too (Browse crash on open) - an empty menu is a minor UX loss, a crash is not. */
+    fun availableFormats(state: HfBrowseUiState): List<HfFileFormat> =
+        runCatching { HfFileFormats.availableFormats(state.fileFormats) }.getOrDefault(emptyList())
 
     /** The Engine-type filter menu's choices - each registered engine a current result maps to, plus
      * [HfEngineClassifier.UNKNOWN] when any result matches none (issue #107). Derived from the live
-     * registry ids + the current results, never a hardcoded model list. */
+     * registry ids + the current results, never a hardcoded model list. Fail-closed to empty, same
+     * rationale as [availableFormats]. */
     fun availableEngines(state: HfBrowseUiState): List<String> =
-        HfEngineClassifier.availableEngines(HfEngineClassifier.engineLabels(state.results, knownEngineIds))
+        runCatching {
+            HfEngineClassifier.availableEngines(HfEngineClassifier.engineLabels(state.results, knownEngineIds))
+        }.getOrDefault(emptyList())
 
     /** [results]' ids that already have a downloaded/resolved bundle on this device - the input
      * [HfResultsView.filterByInstalled] needs (issue: installed filter). Read live off
