@@ -4,6 +4,8 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.StorageLocation
+import com.phonetts.core.diagnostics.FailureContext
+import com.phonetts.core.diagnostics.FailureExplainer
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.model.InstalledModelFacts
 import com.phonetts.core.model.ManageModelFacts
@@ -183,7 +185,10 @@ class ModelManagementViewModel(
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { modelManager.remove(modelId) } }
                 .onSuccess { mutableState.update { it.copy(deletingId = null) } }
-                .onFailure { e -> mutableState.update { it.copy(deletingId = null, error = e.message) } }
+                .onFailure { e ->
+                    val error = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
+                    mutableState.update { it.copy(deletingId = null, error = error) }
+                }
             refresh()
         }
     }
@@ -194,7 +199,10 @@ class ModelManagementViewModel(
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) { modelManager.removeUnresolved(bundleId) } }
                 .onSuccess { mutableState.update { it.copy(deletingUnresolvedId = null) } }
-                .onFailure { e -> mutableState.update { it.copy(deletingUnresolvedId = null, error = e.message) } }
+                .onFailure { e ->
+                    val error = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
+                    mutableState.update { it.copy(deletingUnresolvedId = null, error = error) }
+                }
             refresh()
         }
     }
@@ -217,9 +225,8 @@ class ModelManagementViewModel(
             runCatching { withContext(Dispatchers.IO) { modelManager.assignEngine(bundleId, engineId) } }
                 .onSuccess { mutableState.update { it.copy(assigningUnresolvedId = null) } }
                 .onFailure { e ->
-                    mutableState.update {
-                        it.copy(assigningUnresolvedId = null, error = e.message ?: "Couldn't use that engine.")
-                    }
+                    val error = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
+                    mutableState.update { it.copy(assigningUnresolvedId = null, error = error) }
                 }
             refresh()
         }

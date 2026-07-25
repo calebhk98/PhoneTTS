@@ -80,6 +80,14 @@ class PlaybackService : Service() {
     private var isForeground = false
     private var userStopRequested = false
 
+    // The last state/title actually pushed onto the media session. Read back by LocalBinder so tests
+    // can assert the lock screen was given a usable state and action mask - Robolectric does not
+    // reflect setPlaybackState/setMetadata back through either a framework or a compat controller,
+    // so the only honest thing to assert is what this service published. Whether Android then renders
+    // it is Android's half of the contract, and only a device can confirm that.
+    private var lastPlaybackState: PlaybackStateCompat? = null
+    private var lastSessionTitle: String? = null
+
     // Pause when the audio output route goes "noisy" - headphones unplugged or Bluetooth audio
     // disconnected - so speech doesn't suddenly blast from the phone speaker. This is the standard
     // media-app behavior and is separate from audio focus (which does not fire on an unplug).
@@ -127,6 +135,17 @@ class PlaybackService : Service() {
          * `MediaSessionCompat.isActive` flag the lock screen depends on (rule 3, background
          * playback spec); nothing in production reads this today. */
         val isMediaSessionActive: Boolean get() = this@PlaybackService.mediaSession?.isActive == true
+
+        /** The session's current playback state - what the lock screen builds its transport buttons
+         * from. Test-visible for the same reason as [isMediaSessionActive]: asserting it through a
+         * framework MediaController does not work under Robolectric, which cannot observe a
+         * MediaSessionCompat's state, so the guarantee has to be checked at the source. */
+        val sessionPlaybackState: PlaybackStateCompat?
+            get() = this@PlaybackService.lastPlaybackState
+
+        /** The session's current title metadata - what the lock screen shows as the track name. */
+        val sessionTitle: String?
+            get() = this@PlaybackService.lastSessionTitle
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -160,6 +179,16 @@ class PlaybackService : Service() {
         if (isForeground) return
         isForeground = true
         isForegroundActive = true
+        // Activate and seed the session BEFORE posting the notification.
+        //
+        // A media notification whose MediaSession carries no PlaybackState and is not active gives
+        // the lock screen nothing to render controls from: no state, no action mask, so no buttons.
+        // That is precisely the reported "lock screen only shows generation, does not show media
+        // controls" - the row appears, the controls do not. Posting first and relying on a later
+        // onStateChanged to fill the session in leaves that window open for as long as it takes the
+        // Activity to forward state, which is forever if the app is backgrounded.
+        mediaSession?.isActive = true
+        updateSession(paused = false, title = null)
         val notification =
             notifications.build(
                 paused = false,
@@ -349,6 +378,7 @@ class PlaybackService : Service() {
         title?.let { builder.putString(MediaMetadataCompat.METADATA_KEY_TITLE, it) }
         val total = controller?.progress?.totalMillis ?: 0L
         if (total > 0L) builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, total)
+        lastSessionTitle = title
         mediaSession?.setMetadata(builder.build())
     }
 
@@ -356,11 +386,12 @@ class PlaybackService : Service() {
         val state = if (paused) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_PLAYING
         val position = controller?.progress?.elapsedMillis ?: PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN
         val speed = if (paused) PLAYBACK_SPEED_PAUSED else PLAYBACK_SPEED_NORMAL
-        mediaSession?.setPlaybackState(
+        val published =
             PlaybackStateCompat.Builder()
                 .setActions(PLAYBACK_ACTIONS)
                 .setState(state, position, speed)
-                .build(),
-        )
+                .build()
+        lastPlaybackState = published
+        mediaSession?.setPlaybackState(published)
     }
 }

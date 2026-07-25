@@ -14,6 +14,8 @@ import com.phonetts.core.compare.Tournament
 import com.phonetts.core.compare.bracketRoundSizes
 import com.phonetts.core.compare.mergeUnique
 import com.phonetts.core.compare.prefetchAhead
+import com.phonetts.core.diagnostics.FailureContext
+import com.phonetts.core.diagnostics.FailureExplainer
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
@@ -241,7 +243,10 @@ class CompareViewModel(
     private suspend fun deleteModelFromDisk(modelId: String): Boolean {
         val removal =
             runCatching { withContext(Dispatchers.IO) { graph.modelManager.remove(modelId) } }
-                .onFailure { e -> mutableState.update { it.copy(status = "Delete failed: ${e.message}") } }
+                .onFailure { e ->
+                    val status = FailureExplainer.explain(e, FailureContext.MANAGING_MODEL)
+                    mutableState.update { it.copy(status = status) }
+                }
                 .getOrNull() ?: return false
         refreshModels()
         return removal.removedFromCatalog || removal.filesDeleted
@@ -338,7 +343,9 @@ class CompareViewModel(
                 val audioA = GeneratedAudio()
                 if (!generateInto(descriptorA, voiceA, s.text, audioA)) {
                     audioA.close()
-                    mutableState.update { it.copy(busy = false, status = "A failed: see status") }
+                    // generateInto's own onFailure already set a friendly, explained status (issue
+                    // #136) - don't clobber it with a placeholder that points right back at itself.
+                    mutableState.update { it.copy(busy = false) }
                     return@launch
                 }
                 bufferA = audioA
@@ -350,7 +357,8 @@ class CompareViewModel(
                 val audioB = GeneratedAudio()
                 if (!generateInto(descriptorB, voiceB, s.text, audioB)) {
                     audioB.close()
-                    mutableState.update { it.copy(busy = false, status = "B failed: see status") }
+                    // Same as the A branch above: keep generateInto's own explained status.
+                    mutableState.update { it.copy(busy = false) }
                     return@launch
                 }
                 bufferB = audioB
@@ -380,7 +388,10 @@ class CompareViewModel(
                 // The engine's synthesize() flow already runs inference off the collecting thread
                 // (AbstractVoiceEngine.flowOn) - no extra withContext needed around collect itself.
                 engine.synthesize(text, voiceId, params).collect(into::append)
-            }.onFailure { e -> mutableState.update { it.copy(status = "Generation failed: ${e.message}") } }
+            }.onFailure { e ->
+                val status = FailureExplainer.explain(e, FailureContext.GENERATING)
+                mutableState.update { it.copy(status = status) }
+            }
         into.markComplete()
         return result.isSuccess
     }
@@ -420,7 +431,10 @@ class CompareViewModel(
         // BufferedPlayback.play drives a blocking AudioTrack.write via the sink (issue #18-4b) -
         // offload it off Main, same as TtsViewModel/MixVoicesViewModel's playback calls.
         runCatching { withContext(Dispatchers.IO) { playback.play(audio, rate, sink) } }
-            .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+            .onFailure { e ->
+                val status = FailureExplainer.explain(e, FailureContext.PLAYING)
+                mutableState.update { it.copy(status = status) }
+            }
     }
 
     /** Replay A's already-generated buffer, without regenerating. No-op before a comparison has run. */
@@ -474,7 +488,10 @@ class CompareViewModel(
             withContext(Dispatchers.IO) {
                 output.use { wavEncoder().encode(audio.snapshot().asFlow(), rate, it) }
             }
-        }.onFailure { e -> mutableState.update { it.copy(status = "Save failed: ${e.message}") } }
+        }.onFailure { e ->
+            val status = FailureExplainer.explain(e, FailureContext.EXPORTING)
+            mutableState.update { it.copy(status = status) }
+        }
             .isSuccess
 
     // The app's already-configured WAV encoder (app-writable scratch dir - see ExportFormats kdoc

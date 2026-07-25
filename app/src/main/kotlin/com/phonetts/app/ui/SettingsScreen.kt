@@ -115,7 +115,12 @@ fun SettingsScreen(
         }
 
         SettingsSection("Tone") {
-            SettingToggle(BassCut().displayName, "Cut low rumble for a clearer voice.", state.bassCut, viewModel::setBassCut)
+            SettingToggle(
+                BassCut().displayName,
+                "Cut low rumble for a clearer voice.",
+                state.bassCut,
+                viewModel::setBassCut,
+            )
             SettingToggle(
                 PresenceBoost().displayName,
                 "Lift the presence range so speech sits forward.",
@@ -308,7 +313,11 @@ private fun NavigationRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(row.label)
-            Text(row.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                row.subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Icon(
             Icons.Filled.ChevronRight,

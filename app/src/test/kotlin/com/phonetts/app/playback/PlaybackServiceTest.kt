@@ -74,15 +74,14 @@ class PlaybackServiceTest {
 
         binder.onStateChanged(playing = true, paused = false, title = "Chapter 1")
 
-        val session = mediaControllerFrom(currentPlaybackNotification())
-        val actions = session.playbackState?.actions ?: 0L
+        val actions = binder.sessionPlaybackState?.actions ?: 0L
         assertTrue("ACTION_PLAY", actions and PlaybackStateCompat.ACTION_PLAY != 0L)
         assertTrue("ACTION_PAUSE", actions and PlaybackStateCompat.ACTION_PAUSE != 0L)
         assertTrue("ACTION_STOP", actions and PlaybackStateCompat.ACTION_STOP != 0L)
         assertTrue("ACTION_SKIP_TO_NEXT", actions and PlaybackStateCompat.ACTION_SKIP_TO_NEXT != 0L)
         assertTrue("ACTION_SKIP_TO_PREVIOUS", actions and PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS != 0L)
-        assertEquals(PlaybackStateCompat.STATE_PLAYING, session.playbackState?.state)
-        assertEquals("Chapter 1", session.metadata?.getString(MediaMetadataCompat.METADATA_KEY_TITLE))
+        assertEquals(PlaybackStateCompat.STATE_PLAYING, binder.sessionPlaybackState?.state)
+        assertEquals("Chapter 1", binder.sessionTitle)
     }
 
     @Test
@@ -93,8 +92,7 @@ class PlaybackServiceTest {
 
         binder.onStateChanged(playing = true, paused = true, title = null)
 
-        val session = mediaControllerFrom(currentPlaybackNotification())
-        assertEquals(PlaybackStateCompat.STATE_PAUSED, session.playbackState?.state)
+        assertEquals(PlaybackStateCompat.STATE_PAUSED, binder.sessionPlaybackState?.state)
     }
 
     @Test
@@ -139,12 +137,19 @@ class PlaybackServiceTest {
                     ?: error("no playback notification posted")
             }
 
+    // Reads the session THROUGH the notification, exactly as the lock screen does: if this can't
+    // find a session with state and actions, neither can the lock screen, which is the bug being
+    // guarded. Deliberately uses the FRAMEWORK MediaController rather than MediaControllerCompat -
+    // the notification carries a framework MediaSession.Token, and routing it through the support
+    // library's Token wrapper throws ClassCastException under Robolectric. The action bit values are
+    // identical between PlaybackState and PlaybackStateCompat, so the assertions are unaffected.
     @Suppress("DEPRECATION")
-    private fun mediaControllerFrom(notification: Notification): MediaControllerCompat {
-        val token =
-            notification.extras.getParcelable<MediaSessionCompat.Token>(Notification.EXTRA_MEDIA_SESSION)
-                ?: error("notification is not tied to a MediaSession - lock screen has nothing to render")
-        return MediaControllerCompat(context, token)
+    private fun mediaControllerFrom(notification: Notification): android.media.session.MediaController {
+        val frameworkToken =
+            notification.extras.getParcelable<android.media.session.MediaSession.Token>(
+                Notification.EXTRA_MEDIA_SESSION,
+            ) ?: error("notification is not tied to a MediaSession - lock screen has nothing to render")
+        return android.media.session.MediaController(context, frameworkToken)
     }
 
     private class FakePlaybackController : PlaybackController {
