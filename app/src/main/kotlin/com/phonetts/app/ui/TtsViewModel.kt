@@ -41,6 +41,7 @@ import com.phonetts.core.text.DocumentId
 import com.phonetts.core.text.TextChunker
 import com.phonetts.core.update.ApkDownloadState
 import com.phonetts.core.update.UpdateStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -286,6 +287,19 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     // Debounced write of the reader's text into the durable session document (see scheduleTextPersist).
     private var textPersistJob: Job? = null
+
+    // Which playback run is the live one.
+    //
+    // Every skip/seek/switch cancels the previous playJob and starts a new one. A cancelled
+    // coroutine still runs the code after its last suspension point, and that code used to set
+    // `playing = false` unconditionally - so the OLD run's teardown landed AFTER the new run had
+    // already set `playing = true`, leaving the UI showing "not playing" while audio was audibly
+    // playing, with Stop and skip-back inert because they key off that flag. Device-confirmed.
+    //
+    // Each run captures the token it was started with and only writes terminal state if it is still
+    // the current one. A superseded run cannot touch shared state.
+    private var playbackRunToken = 0
+
 
     // The audio generated for the current document, RETAINED across every transport action.
     //
@@ -843,6 +857,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val playSink = playbackSink(s)
         currentStartSentenceIndex = reusable.fromSentence
         beginProgressTracking(descriptor, sentencesFrom(s.text, reusable.fromSentence), s.params.speed)
+        val token = beginPlaybackRun()
         mutableState.update { it.copy(playing = true, paused = false, status = null) }
         playJob =
             viewModelScope.launch {
@@ -855,9 +870,9 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                             fromIndex = reusable.bufferIndexFor(startSentenceIndex),
                         )
                     }
-                }.onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+                }.onFailure { e -> reportPlaybackFailure(e) }
                 recordListened(descriptor)
-                mutableState.update { it.copy(playing = false, paused = false) }
+                finishPlaybackRun(token)
             }
     }
 
@@ -959,14 +974,15 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 val ok = generate(descriptor, voiceId, s.params, effectiveText, audio, startSentenceIndex, documentId)
                 if (ok) mutableState.update { it.copy(loadedModelId = descriptor.modelId) }
             }
+        val token = beginPlaybackRun()
         playJob =
             viewModelScope.launch {
                 // Same offload as the cached-replay branch above (issue #18-4b) - the blocking
                 // AudioTrack write must not run on Main.
                 runCatching { withContext(Dispatchers.IO) { playback.play(audio, descriptor.sampleRate, playSink) } }
-                    .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+                    .onFailure { e -> reportPlaybackFailure(e) }
                 recordListened(descriptor)
-                mutableState.update { it.copy(playing = false, paused = false) }
+                finishPlaybackRun(token)
             }
     }
 
@@ -1148,6 +1164,30 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 resumeSentenceIndex = resumeIndex.takeIf { idx -> idx > 0 },
             )
         }
+    }
+
+    // Start a new playback run and return its token. Anything the run writes to shared state later
+    // must be guarded by [isCurrentRun].
+    private fun beginPlaybackRun(): Int {
+        playbackRunToken += 1
+        return playbackRunToken
+    }
+
+    private fun isCurrentRun(token: Int): Boolean = token == playbackRunToken
+
+    // Terminal state for a playback run - applied ONLY by the run that is still current, so a
+    // superseded run's teardown can never contradict the run that replaced it.
+    private fun finishPlaybackRun(token: Int) {
+        if (!isCurrentRun(token)) return
+        mutableState.update { it.copy(playing = false, paused = false) }
+    }
+
+    // A cancellation is not a playback failure - it is a skip, a seek, or a Stop the user asked for.
+    // Reporting it as "Playback failed: StandaloneCoroutine was cancelled" was noise the user saw as
+    // an error toast on every skip (device-confirmed: "Skipping forward showed an error").
+    private fun reportPlaybackFailure(error: Throwable) {
+        if (error is CancellationException) return
+        mutableState.update { it.copy(status = "Playback failed: ${error.message}") }
     }
 
     // Measured listening time for the run that just ended - samples actually delivered to the sink
