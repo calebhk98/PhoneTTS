@@ -9,10 +9,14 @@ import androidx.compose.ui.test.onRoot
 import androidx.test.core.app.ApplicationProvider
 import com.phonetts.app.AppGraph
 import com.phonetts.app.PhoneTtsApplication
-import com.phonetts.app.compare.CompareScreen
-import com.phonetts.app.compare.CompareViewModel
 import com.phonetts.app.testing.ShadowEnvironmentAllFilesAccess
+import com.phonetts.app.ui.SettingsScreen
+import com.phonetts.app.ui.SettingsUpdateActions
+import com.phonetts.app.ui.SettingsUpdateInfo
+import com.phonetts.app.ui.TtsViewModel
 import com.phonetts.app.ui.theme.PhoneTtsTheme
+import com.phonetts.core.prefs.AppTheme
+import com.phonetts.core.update.ApkDownloadState
 import org.junit.Test
 import org.junit.runner.Description
 import org.junit.runner.RunWith
@@ -34,18 +38,41 @@ class DebugDumpTest {
     }
 
     @Test
-    fun dumpCompare() {
+    fun dumpSettings() {
         val rule = createComposeRule()
         val sb = StringBuilder()
         val statement =
             object : Statement() {
                 override fun evaluate() {
-                    rule.setContent { PhoneTtsTheme { CompareScreen(CompareViewModel(graph(), initialText = "")) } }
+                    rule.setContent {
+                        PhoneTtsTheme {
+                            SettingsScreen(
+                                viewModel = TtsViewModel(graph()),
+                                updateInfo =
+                                    SettingsUpdateInfo(
+                                        currentVersion = "test",
+                                        update = null,
+                                        updateDownload = ApkDownloadState.Idle,
+                                        checkStatus = null,
+                                        repoUrl = "https://example.invalid/owner/repo",
+                                    ),
+                                updateActions =
+                                    SettingsUpdateActions(
+                                        onCheckForUpdates = {},
+                                        onDownloadUpdate = {},
+                                        onCancelUpdateDownload = {},
+                                    ),
+                                currentTheme = AppTheme.SYSTEM,
+                                onThemeSelected = {},
+                                onNavigateRow = {},
+                            )
+                        }
+                    }
                     rule.waitForIdle()
                     dump(rule.onRoot().fetchSemanticsNode(), "", sb)
                 }
             }
-        rule.apply(statement, Description.createTestDescription(DebugDumpTest::class.java, "dumpCompare")).evaluate()
+        rule.apply(statement, Description.createTestDescription(DebugDumpTest::class.java, "dumpSettings")).evaluate()
         throw AssertionError(sb.toString())
     }
 }

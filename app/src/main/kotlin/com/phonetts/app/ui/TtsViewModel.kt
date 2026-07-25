@@ -11,6 +11,7 @@ import com.phonetts.app.speech.ExportController
 import com.phonetts.app.speech.FavoritesController
 import com.phonetts.app.speech.ReaderPlaybackController
 import com.phonetts.app.speech.ReaderPreferencesController
+import com.phonetts.app.speech.ReportingSink
 import com.phonetts.app.speech.SideloadController
 import com.phonetts.app.speech.SpeechPlayer
 import com.phonetts.core.audio.AudioSink
@@ -788,8 +789,12 @@ class TtsViewModel(
     // beyond-native tempo transform when enabled. PLAYBACK ONLY - export/generation never call this
     // (issue #43).
     private fun playbackSink(s: UiState): AudioSink {
-        if (!s.tempoBoost) return player.sink
-        return TransformingSink(player.sink, TempoStretch(s.tempoFactor))
+        val raw = if (s.tempoBoost) TransformingSink(player.sink, TempoStretch(s.tempoFactor)) else player.sink
+        // See ReportingSink's kdoc: SpeechSession's consumer coroutine has no catch of its own
+        // around a sink failure, so this is what turns a hardware AudioTrack error back into the
+        // friendly "Playback failed: …" status every screen used to show, instead of an uncaught
+        // exception in viewModelScope.
+        return ReportingSink(raw) { e -> mutableState.update { it.copy(status = FailureExplainer.explain(e, FailureContext.PLAYING)) } }
     }
 
     /** Pause audio playback; generation keeps running and filling the buffer. */
