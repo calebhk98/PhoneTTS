@@ -58,8 +58,13 @@ fun HelpScreen(
     onThemeSelected: (AppTheme) -> Unit,
     // The durable error log's rows, newest-first, already formatted to one line each (see
     // MainActivity). Surfaced here (issue #109) so the user has a copyable "why" when a model - e.g. a
-    // LiteRT .tflite - fails to load or run.
+    // LiteRT .tflite - fails to load or run, or the app itself crashed (each such row is tagged
+    // "[crash] ..." by MainActivity's `source` prefix, since CrashReporter records crashes under the
+    // "crash" source - see com.phonetts.core.diagnostics.CrashLogFormatter).
     errorLogEntries: List<String> = emptyList(),
+    // Forgets every recorded error/crash (durableErrorLog.clear()). Defaults to a no-op so this screen
+    // still compiles/previews standalone; MainActivity wires the real store.
+    onClearErrorLog: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -129,7 +134,7 @@ fun HelpScreen(
             )
         }
 
-        ErrorLogSection(errorLogEntries)
+        ErrorLogSection(errorLogEntries, onClearErrorLog)
 
         Section("Troubleshooting") {
             Q("No sound, or it's garbled?", "Piper/Kitten/Kokoro need the espeak add-on in the build; MeloTTS doesn't.")
@@ -147,23 +152,45 @@ fun HelpScreen(
     }
 }
 
-// The durable error log (issue #109): survives process death, so a model that failed to load/run on a
-// previous run is still explainable. Only offers the viewer once something is recorded; the dialog is
-// selectable + copyable ("Copy all") so the user can paste a full report rather than screenshot it -
-// mirroring the Browse screen's ErrorLogDialog.
+// The durable error log (issue #109 + crash log): survives process death, so a model that failed to
+// load/run - or a crash - on a previous run is still explainable. Only offers the viewer once
+// something is recorded; the dialog is selectable + copyable ("Copy all") so the user can paste a
+// full report rather than screenshot it - mirroring the Browse screen's ErrorLogDialog. [entries] is
+// already newest-first (DurableErrorLog's contract), so a crash - always the freshest possible entry -
+// is the first line the user sees.
+//
+// [localEntries] mirrors [entries] but is re-seeded only when the CALLER's list actually changes
+// (`remember(entries)`); this lets "Clear log" hide the list immediately even though MainActivity
+// currently reads the durable store directly at composition time rather than from a recomposing
+// state, so it would otherwise take an unrelated recomposition to reflect the clear.
 @Composable
-private fun ErrorLogSection(entries: List<String>) {
+private fun ErrorLogSection(
+    entries: List<String>,
+    onClear: () -> Unit,
+) {
     var showLog by remember { mutableStateOf(false) }
+    var localEntries by remember(entries) { mutableStateOf(entries) }
     Section("Error log") {
-        if (entries.isEmpty()) {
-            Body("No errors recorded yet. If a model fails to load or speak, the reason shows up here.")
+        if (localEntries.isEmpty()) {
+            Body(
+                "No errors recorded yet, including app crashes. If a model fails to load/run, or the " +
+                    "app crashes, the reason shows up here.",
+            )
             return@Section
         }
-        Body("Recorded reasons a model failed to load or run - copy these when reporting a problem.")
-        OutlinedButton(onClick = { showLog = true }) { Text("View error log (${entries.size})") }
+        Body("Recorded reasons the app crashed or a model failed to load/run - copy these when reporting a problem.")
+        OutlinedButton(onClick = { showLog = true }) { Text("View error log (${localEntries.size})") }
     }
     if (showLog) {
-        ErrorLogDialog(entries = entries, onDismiss = { showLog = false })
+        ErrorLogDialog(
+            entries = localEntries,
+            onDismiss = { showLog = false },
+            onClear = {
+                onClear()
+                localEntries = emptyList()
+                showLog = false
+            },
+        )
     }
 }
 
@@ -171,6 +198,7 @@ private fun ErrorLogSection(entries: List<String>) {
 private fun ErrorLogDialog(
     entries: List<String>,
     onDismiss: () -> Unit,
+    onClear: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
     val fullText = remember(entries) { entries.joinToString("\n\n") }
@@ -178,7 +206,10 @@ private fun ErrorLogDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         dismissButton = {
-            OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(fullText)) }) { Text("Copy all") }
+                OutlinedButton(onClick = onClear) { Text("Clear log") }
+            }
         },
         title = { Text("Error log") },
         text = {

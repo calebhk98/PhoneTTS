@@ -61,6 +61,10 @@ class PlaybackService : Service() {
     // one of those is treated as the flow completing on its own. [wasPlaying] gates the cue to a
     // real playing→stopped edge, so a spurious "not playing" (e.g. the initial bound state) is silent.
     private var wasPlaying = false
+
+    // True once startForeground has been called for this service instance, so ensureForeground is
+    // idempotent and a repeat start command doesn't rebuild the notification needlessly.
+    private var isForeground = false
     private var userStopRequested = false
 
     // Pause when the audio output route goes "noisy" - headphones unplugged or Bluetooth audio
@@ -120,11 +124,34 @@ class PlaybackService : Service() {
         startId: Int,
     ): Int {
         mediaSession?.let { MediaButtonReceiver.handleIntent(it, intent) }
+        // The service is now genuinely STARTED (MainActivity calls startForegroundService when
+        // playback begins) rather than bind-only, which is what stopped it from being destroyed the
+        // moment the app backgrounded and the lock-screen controls went dead. That contract is
+        // strict: once startForegroundService has been called we MUST post a foreground
+        // notification promptly or the system kills the process with
+        // ForegroundServiceDidNotStartInTimeException. Do it here rather than relying on a
+        // subsequent state callback arriving in time.
+        ensureForeground()
         handleAction(intent?.action)
         return START_NOT_STICKY
     }
 
+    // Post the ongoing notification if it isn't already up. Idempotent: startForeground with the
+    // same id just updates the existing row.
+    private fun ensureForeground() {
+        if (isForeground) return
+        isForeground = true
+        val notification =
+            notifications.build(
+                paused = false,
+                title = null,
+                sessionToken = mediaSession?.sessionToken,
+            )
+        startForeground(PLAYBACK_NOTIFICATION_ID, notification)
+    }
+
     override fun onDestroy() {
+        isForeground = false
         sleepTimer.cancel()
         audioFocus.abandon()
         unregisterBecomingNoisy()

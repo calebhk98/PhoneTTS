@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -49,16 +50,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.format.ByteFormat
+import com.phonetts.core.format.CountFormat
 import com.phonetts.core.model.DeviceRamFit
 import com.phonetts.core.model.ExportableModel
 import com.phonetts.core.model.ManageModelFacts
 import com.phonetts.core.model.ModelListExport
 import com.phonetts.core.model.Origin
+import com.phonetts.core.registry.ManagedEngineFilter
+import com.phonetts.core.registry.ManagedModelEntry
+import com.phonetts.core.registry.NO_ENGINE_YET_LABEL
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
 import com.phonetts.core.resolver.SelectableEngine
-import kotlin.math.ln
-import kotlin.math.pow
 
 /**
  * Lists every model currently in the catalog with its on-disk footprint and a Delete button
@@ -90,7 +94,7 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Storage used: ${formatBytes(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
+            Text("Storage used: ${ByteFormat.format(state.totalBytes)}", style = MaterialTheme.typography.bodyLarge)
             // Issue: no way to copy the list of downloaded models. Copies a plain-text listing
             // (name, origin, size, plus the downloaded-but-unclaimed bundles) for pasting into a
             // note or bug report. Disabled until there's actually something to copy.
@@ -102,7 +106,8 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
         // Both numbers shown so neither reads as the one that decides whether a model "fits" - that
         // decision is against total RAM only (see [ramHint]), free RAM is shown purely as context.
         Text(
-            "Device RAM: ${formatBytes(state.availableRamBytes)} free of ${formatBytes(state.totalRamBytes)} total",
+            "Device RAM: ${ByteFormat.format(state.availableRamBytes)} free of " +
+                "${ByteFormat.format(state.totalRamBytes)} total",
             style = MaterialTheme.typography.bodyMedium,
         )
 
@@ -123,18 +128,37 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
             Text("No models downloaded yet.")
         }
 
-        if (state.usage.isNotEmpty()) {
+        if (state.usage.isNotEmpty() || state.unresolved.isNotEmpty()) {
             ManageControls(
                 sort = state.sort,
                 query = state.query,
                 onSortKey = viewModel::setSortKey,
                 onToggleDirection = viewModel::toggleSortDirection,
                 onQuery = viewModel::setQuery,
+                filterState =
+                    ManageFilterState(
+                        origin = state.originFilter,
+                        engine = state.engineFilter,
+                        minSizeBytes = state.minSizeBytes,
+                        maxSizeBytes = state.maxSizeBytes,
+                        availableEngineIds = state.availableEngineIds,
+                        hasUnresolved = state.unresolved.isNotEmpty(),
+                    ),
+                filterCallbacks =
+                    ManageFilterCallbacks(
+                        onOrigin = viewModel::setOriginFilter,
+                        onEngine = viewModel::setEngineFilter,
+                        onSize = viewModel::setSizeFilter,
+                        onClear = viewModel::clearAdvancedFilters,
+                    ),
             )
         }
 
-        val visibleUsage =
-            ModelManagementViewModel.visibleUsage(state.usage, state.factsByModelId, state.sort, state.query)
+        // Issue: sort/filter ignoring engine-less models - a resolved model row AND an unclaimed
+        // bundle row now go through the exact SAME sort/filter pass ([ModelManagementViewModel.
+        // visibleEntries]/[ManagedModelListView]), instead of the unresolved list being appended
+        // afterward raw, unsorted, and unfiltered.
+        val visibleEntries = ModelManagementViewModel.visibleEntries(state)
 
         // Re-sorting keeps stable item keys (by modelId), so a LazyColumn would otherwise preserve the
         // scroll anchor and "follow" whatever row was on top - the user changed the order to see the new
@@ -145,49 +169,99 @@ fun ModelManagementScreen(viewModel: ModelManagementViewModel) {
 
         // Display names collide (several "KittenTTS", two "Kokoro"); the rows sharing a name get their
         // unique folder id shown underneath to tell them apart (issue #123). Computed once over the
-        // whole visible set so a name is "duplicated" consistently regardless of scroll position.
+        // whole visible set so a name is "duplicated" consistently regardless of scroll position. Only
+        // resolved rows carry a real descriptor display name to disambiguate; an unresolved bundle's
+        // id is already unique by construction.
         val duplicateNames =
-            visibleUsage.groupingBy { it.descriptor.displayName }.eachCount().filterValues { it > 1 }.keys
+            visibleEntries
+                .filterIsInstance<ManagedModelEntry.Resolved>()
+                .groupingBy { it.usage.descriptor.displayName }
+                .eachCount()
+                .filterValues { it > 1 }
+                .keys
+
+        if ((state.usage.isNotEmpty() || state.unresolved.isNotEmpty()) && visibleEntries.isEmpty()) {
+            Text("No downloaded models match the current filters.", style = MaterialTheme.typography.bodyMedium)
+        }
 
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(visibleUsage, key = { it.descriptor.modelId }) { usage ->
-                ModelUsageRow(
-                    usage = usage,
-                    peakRamBytes = state.peakRamByModelId[usage.descriptor.modelId],
-                    totalRamBytes = state.totalRamBytes,
-                    facts = state.factsByModelId[usage.descriptor.modelId],
-                    disambiguate = usage.descriptor.displayName in duplicateNames,
-                    isDeleting = state.deletingId == usage.descriptor.modelId,
-                    onDelete = { viewModel.delete(usage.descriptor.modelId) },
-                )
-                HorizontalDivider()
-            }
-            items(state.unresolved, key = { it.bundleId }) { unresolved ->
-                UnresolvedUsageRow(
-                    unresolved = unresolved,
-                    selectableEngines = state.selectableEngines,
-                    isDeleting = state.deletingUnresolvedId == unresolved.bundleId,
-                    isAssigning = state.assigningUnresolvedId == unresolved.bundleId,
-                    onDelete = { viewModel.deleteUnresolved(unresolved.bundleId) },
-                    onAssignEngine = { engineId -> viewModel.assignEngine(unresolved.bundleId, engineId) },
-                )
+            items(visibleEntries, key = { it.entryKey() }) { entry ->
+                when (entry) {
+                    is ManagedModelEntry.Resolved ->
+                        ModelUsageRow(
+                            usage = entry.usage,
+                            peakRamBytes = state.peakRamByModelId[entry.usage.descriptor.modelId],
+                            totalRamBytes = state.totalRamBytes,
+                            facts = state.factsByModelId[entry.usage.descriptor.modelId],
+                            disambiguate = entry.usage.descriptor.displayName in duplicateNames,
+                            isDeleting = state.deletingId == entry.usage.descriptor.modelId,
+                            onDelete = { viewModel.delete(entry.usage.descriptor.modelId) },
+                        )
+                    is ManagedModelEntry.Unresolved ->
+                        UnresolvedUsageRow(
+                            unresolved = entry.usage,
+                            selectableEngines = state.selectableEngines,
+                            isDeleting = state.deletingUnresolvedId == entry.usage.bundleId,
+                            isAssigning = state.assigningUnresolvedId == entry.usage.bundleId,
+                            onDelete = { viewModel.deleteUnresolved(entry.usage.bundleId) },
+                            onAssignEngine = { engineId -> viewModel.assignEngine(entry.usage.bundleId, engineId) },
+                        )
+                }
                 HorizontalDivider()
             }
         }
     }
 }
 
-// Sort/filter controls for the downloaded-models list (issue #115): a name filter, a sort-key
-// dropdown, and an ascending/descending toggle. Compact so it stays usable on a phone. The ordering
-// itself is the pure [ModelManagementViewModel.visibleUsage]; this only reports the user's choices.
+// A unique LazyColumn key across BOTH entry kinds (issue: a duplicate-key crash already bit this
+// app once on the Browse screen's list - see v0.1.12). A resolved model's modelId and an unresolved
+// bundle's bundleId live in different id spaces already, but this prefixes them anyway so the two
+// can never collide even in the (unexpected) event they ever shared a raw id.
+private fun ManagedModelEntry.entryKey(): String =
+    when (this) {
+        is ManagedModelEntry.Resolved -> "m:${usage.descriptor.modelId}"
+        is ManagedModelEntry.Unresolved -> "u:${usage.bundleId}"
+    }
+
+/** The Origin/Engine/size-range filter values (issue: downloaded models has only a name filter),
+ * bundled so [ManageControls] stays under detekt's parameter-count limit. */
+private data class ManageFilterState(
+    val origin: Origin?,
+    val engine: ManagedEngineFilter,
+    val minSizeBytes: Long?,
+    val maxSizeBytes: Long?,
+    /** Every engine id an installed model actually maps to right now - live, never hardcoded. */
+    val availableEngineIds: List<String>,
+    /** Whether the "No engine" bucket is worth offering at all (issue: never fabricate a filter
+     * option for a bucket that's currently empty). */
+    val hasUnresolved: Boolean,
+)
+
+/** The filter callbacks, bundled for the same reason as [ManageFilterState]. */
+private data class ManageFilterCallbacks(
+    val onOrigin: (Origin?) -> Unit,
+    val onEngine: (ManagedEngineFilter) -> Unit,
+    val onSize: (min: Long?, max: Long?) -> Unit,
+    val onClear: () -> Unit,
+)
+
+// Sort/filter controls for the downloaded-models list (issue #115, extended by issue: downloaded
+// models has only a name filter): a name filter, a sort-key dropdown, an ascending/descending
+// toggle, and - behind "More filters" (mirroring HfBrowseScreen's collapsible pattern, issue #106)
+// - Origin/Engine dropdowns plus a min/max size range. The ordering/filtering itself is the pure
+// [ModelManagementViewModel.visibleEntries]/[com.phonetts.core.registry.ManagedModelListView];
+// this only reports the user's choices.
 @Composable
 private fun ManageControls(
-    sort: ModelManagementViewModel.Sort,
+    sort: Sort,
     query: String,
-    onSortKey: (ModelManagementViewModel.SortKey) -> Unit,
+    onSortKey: (SortKey) -> Unit,
     onToggleDirection: () -> Unit,
     onQuery: (String) -> Unit,
+    filterState: ManageFilterState,
+    filterCallbacks: ManageFilterCallbacks,
 ) {
+    var expanded by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
             value = query,
@@ -204,19 +278,167 @@ private fun ManageControls(
                 Text(if (sort.ascending) "Ascending" else "Descending")
             }
         }
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "Fewer filters ▴" else "More filters ▾")
+        }
+        if (expanded) ManageMoreFilters(filterState, filterCallbacks)
     }
 }
 
+/** The collapsed-away Origin/Engine/size filters (mirrors HfBrowseScreen's `MoreFilters`, issue
+ * #106) - kept in its own composable so the common case (no filter) doesn't pay for laying these
+ * out at all. */
+@Composable
+private fun ManageMoreFilters(
+    filterState: ManageFilterState,
+    callbacks: ManageFilterCallbacks,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OriginFilterMenu(filterState.origin, callbacks.onOrigin, Modifier.weight(1f))
+            EngineFilterMenu(
+                engine = filterState.engine,
+                availableEngineIds = filterState.availableEngineIds,
+                hasUnresolved = filterState.hasUnresolved,
+                onSelect = callbacks.onEngine,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        SizeRangeFilterRow(filterState.minSizeBytes, filterState.maxSizeBytes, callbacks.onSize)
+        if (isAdvancedFilterActive(filterState)) {
+            TextButton(onClick = callbacks.onClear) { Text("Clear filters") }
+        }
+    }
+}
+
+private fun isAdvancedFilterActive(filterState: ManageFilterState): Boolean =
+    filterState.origin != null ||
+        filterState.engine != ManagedEngineFilter.All ||
+        filterState.minSizeBytes != null ||
+        filterState.maxSizeBytes != null
+
+/** Origin filter (issue: downloaded models has only a name filter) - choices come from
+ * [Origin.entries], the real enum, never a hardcoded pair of strings. */
+@Composable
+private fun OriginFilterMenu(
+    selected: Origin?,
+    onSelect: (Origin?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Origin: ${selected?.let(::originLabel) ?: "All"}")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("All origins") }, onClick = { expanded = false; onSelect(null) })
+            Origin.entries.forEach { origin ->
+                DropdownMenuItem(
+                    text = { Text(originLabel(origin)) },
+                    onClick = {
+                        expanded = false
+                        onSelect(origin)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Engine filter (issue: downloaded models has only a name filter) - choices are the installed
+ * models' OWN engine ids ([availableEngineIds], derived live from the catalog, never a hardcoded
+ * engine roster) plus a "No engine" bucket offered only while [hasUnresolved] bundles exist. */
+@Composable
+private fun EngineFilterMenu(
+    engine: ManagedEngineFilter,
+    availableEngineIds: List<String>,
+    hasUnresolved: Boolean,
+    onSelect: (ManagedEngineFilter) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Engine: ${engineFilterLabel(engine)}")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("All engines") },
+                onClick = { expanded = false; onSelect(ManagedEngineFilter.All) },
+            )
+            availableEngineIds.forEach { engineId ->
+                DropdownMenuItem(
+                    text = { Text(engineId) },
+                    onClick = {
+                        expanded = false
+                        onSelect(ManagedEngineFilter.Specific(engineId))
+                    },
+                )
+            }
+            if (hasUnresolved) {
+                DropdownMenuItem(
+                    text = { Text("No engine") },
+                    onClick = { expanded = false; onSelect(ManagedEngineFilter.NoEngine) },
+                )
+            }
+        }
+    }
+}
+
+private fun engineFilterLabel(engine: ManagedEngineFilter): String =
+    when (engine) {
+        is ManagedEngineFilter.All -> "All"
+        is ManagedEngineFilter.NoEngine -> "No engine"
+        is ManagedEngineFilter.Specific -> engine.engineId
+    }
+
+/** Min/max on-disk size filter, entered in MB (mirrors HfBrowseScreen's `SizeParamFilterRow`, issue
+ * #107) and converted to raw bytes only on Apply, so a blank field means "no bound" rather than a
+ * fabricated zero. Collapsed by default; starts open if a bound from a previous visit is active. */
+@Composable
+private fun SizeRangeFilterRow(
+    minSizeBytes: Long?,
+    maxSizeBytes: Long?,
+    onApply: (min: Long?, max: Long?) -> Unit,
+) {
+    var minMb by remember(minSizeBytes) { mutableStateOf(bytesToMbText(minSizeBytes)) }
+    var maxMb by remember(maxSizeBytes) { mutableStateOf(bytesToMbText(maxSizeBytes)) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = minMb,
+                onValueChange = { minMb = it },
+                label = { Text("Min size (MB)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = maxMb,
+                onValueChange = { maxMb = it },
+                label = { Text("Max size (MB)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Button(onClick = { onApply(mbTextToBytes(minMb), mbTextToBytes(maxMb)) }) { Text("Apply size filter") }
+    }
+}
+
+private fun bytesToMbText(bytes: Long?): String = bytes?.let { "%.0f".format(it / BYTES_PER_MB.toDouble()) } ?: ""
+
+private fun mbTextToBytes(text: String): Long? =
+    text.trim().toDoubleOrNull()?.takeIf { it > 0.0 }?.let { (it * BYTES_PER_MB).toLong() }
+
 @Composable
 private fun ManageSortKeyMenu(
-    selected: ModelManagementViewModel.SortKey,
-    onSelect: (ModelManagementViewModel.SortKey) -> Unit,
+    selected: SortKey,
+    onSelect: (SortKey) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(onClick = { expanded = true }) { Text("Sort: ${selected.label}") }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            ModelManagementViewModel.SortKey.values().forEach { key ->
+            SortKey.entries.forEach { key ->
                 DropdownMenuItem(
                     text = { Text(key.label) },
                     onClick = {
@@ -309,10 +531,10 @@ private fun metadataLine(
 ): String =
     listOfNotNull(
         originLabel(usage.descriptor.origin),
-        formatBytes(usage.sizeBytes),
+        ByteFormat.format(usage.sizeBytes),
         // Always an estimate now (the a-priori per-engine figure), so it says so - the previous number
         // was silently a whole-process measurement for benchmarked models (issue #123).
-        peakRamBytes?.let { "~${formatBytes(it)} RAM est." },
+        peakRamBytes?.let { "~${ByteFormat.format(it)} RAM est." },
     ).joinToString(" · ")
 
 /** The row's overflow menu: Details toggle, Open on Hugging Face (when a repo id is known), Delete. */
@@ -389,26 +611,13 @@ private fun ModelFactsBlock(facts: ManageModelFacts?) {
 
 private fun paramCountLine(facts: ManageModelFacts): String? {
     val count = facts.paramCount ?: return null
-    return "~${formatParamCount(count)} params (estimated)"
+    return "~${CountFormat.formatParamCount(count)} params (estimated)"
 }
 
 private fun realtimeLine(facts: ManageModelFacts): String? {
     val multiple = facts.realtimeMultiple ?: return null
     val label = if (facts.realtimeIsMeasured) "measured" else "estimated"
     return "~${formatRealtimeMultiple(multiple)}x real-time ($label)"
-}
-
-/** A compact "82M"/"1.2B" parameter-count label - mirrors the Browse screen's own formatter
- * ([com.phonetts.app.hf.HfBrowseScreen]'s `formatParamCount`), duplicated here rather than shared
- * since it is pure display formatting, not a model fact. */
-private fun formatParamCount(count: Long): String {
-    if (count <= 0L) return "?"
-    val millions = count / 1_000_000.0
-    if (millions >= THOUSAND) return "%.1fB".format(millions / THOUSAND)
-    if (millions >= 1.0) return "%.0fM".format(millions)
-    val thousands = count / 1_000.0
-    if (thousands >= 1.0) return "%.0fK".format(thousands)
-    return count.toString()
 }
 
 private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
@@ -441,7 +650,7 @@ private fun UnresolvedUsageRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(unresolved.bundleId, fontWeight = FontWeight.Bold)
-                Text("Already downloaded (" + formatBytes(unresolved.sizeBytes) + ") · no engine can use it yet")
+                Text("Already downloaded (" + ByteFormat.format(unresolved.sizeBytes) + ") · $NO_ENGINE_YET_LABEL")
                 Text("Redownloading won't help - " + unresolved.reason, style = MaterialTheme.typography.bodySmall)
             }
             DeleteControl(isDeleting, onDelete)
@@ -495,7 +704,7 @@ private fun EngineAssignmentControl(
 private fun wontFitWarning(peakRamBytes: Long?, totalRamBytes: Long): String? {
     if (peakRamBytes == null) return null
     if (!DeviceRamFit.modelExceedsDeviceRam(peakRamBytes, totalRamBytes)) return null
-    return "May not fit this device - needs ~${formatBytes(peakRamBytes)} RAM"
+    return "May not fit this device - needs ~${ByteFormat.format(peakRamBytes)} RAM"
 }
 
 @Composable
@@ -577,17 +786,8 @@ private fun buildModelListText(state: ModelManagementViewModel.UiState): String 
     return ModelListExport.build(resolved, state.unresolved)
 }
 
-/** "1.5 GB" / "320 KB" / "512 B" style formatting for a storage-usage display. */
-private fun formatBytes(bytes: Long): String {
-    if (bytes < UNIT) return "$bytes B"
-    val exponent = (ln(bytes.toDouble()) / ln(UNIT.toDouble())).toInt().coerceIn(1, UNIT_PREFIXES.size)
-    val value = bytes / UNIT.toDouble().pow(exponent)
-    val rounded = Math.round(value * ROUNDING_FACTOR) / ROUNDING_FACTOR
-    return "$rounded ${UNIT_PREFIXES[exponent - 1]}B"
-}
-
 private const val ERROR_MAX_LINES = 3
-private const val UNIT = 1024L
-private const val ROUNDING_FACTOR = 10.0
-private val UNIT_PREFIXES = charArrayOf('K', 'M', 'G', 'T')
-private const val THOUSAND = 1000.0
+
+// The size-range filter is entered/shown in MB, same as HfBrowseScreen's own size filter, and
+// converted to raw bytes only on Apply (issue: downloaded models has only a name filter).
+private const val BYTES_PER_MB = 1024L * 1024L

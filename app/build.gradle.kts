@@ -128,6 +128,16 @@ android {
         buildConfig = true // exposes BuildConfig.VERSION_NAME to the in-app update check
     }
 
+    // Robolectric needs the merged app resources/manifest on the unit-test classpath (issue: :app
+    // had zero tests - see app/src/test). Without isIncludeAndroidResources, Robolectric can't
+    // resolve resource ids and every test touching a Composable that reads a resource fails.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -235,4 +245,16 @@ dependencies {
     // Interpreter API artifact: the newer com.google.ai.edge.litert Kotlin API is compiled with Kotlin
     // metadata newer than this project's compiler (2.0.21) can read. Not in the version catalog yet.
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
+
+    // --- :app unit tests (app/src/test) - Robolectric + Compose UI testing on plain JVM, no ---
+    // --- emulator. This module previously had NO test source set at all (the highest-priority ---
+    // --- gap: see app/src/test/kotlin/com/phonetts/app for what's now covered). ---
+    testImplementation(libs.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }

@@ -7,7 +7,14 @@ import com.phonetts.app.StorageLocation
 import com.phonetts.core.metrics.BenchmarkHistory
 import com.phonetts.core.model.InstalledModelFacts
 import com.phonetts.core.model.ManageModelFacts
+import com.phonetts.core.model.Origin
 import com.phonetts.core.prefs.ResourceUsageStore
+import com.phonetts.core.registry.ManagedEngineFilter
+import com.phonetts.core.registry.ManagedModelEntry
+import com.phonetts.core.registry.ManagedModelFilter
+import com.phonetts.core.registry.ManagedModelListView
+import com.phonetts.core.registry.ManagedSort
+import com.phonetts.core.registry.ManagedSortKey
 import com.phonetts.core.registry.ModelManager
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
@@ -70,23 +77,6 @@ class ModelManagementViewModel(
     private val benchmarkHistory: BenchmarkHistory? = null,
     private val deviceName: String = "",
 ) : ViewModel() {
-    /** Which downloaded-model field the list is ordered by (issue #115). */
-    enum class SortKey(val label: String) {
-        NAME("Name"),
-        SIZE("Size"),
-        RAM("Est. RAM"),
-        SPEED("Speed"),
-        ENGINE("Engine"),
-        ORIGIN("Origin"),
-    }
-
-    /** The chosen sort key and direction (issue #115). */
-    data class Sort(val key: SortKey, val ascending: Boolean) {
-        companion object {
-            val DEFAULT = Sort(SortKey.NAME, ascending = true)
-        }
-    }
-
     data class UiState(
         val usage: List<ModelUsage> = emptyList(),
         val totalBytes: Long = 0L,
@@ -116,7 +106,22 @@ class ModelManagementViewModel(
         val sort: Sort = Sort.DEFAULT,
         /** Case-insensitive name filter for the downloaded-models list (issue #115); blank shows all. */
         val query: String = "",
-    )
+        /** Origin restriction (issue: downloaded models has only a name filter). Null = no restriction;
+         * [Origin.entries] is the only source of the choices offered, never a hardcoded pair. */
+        val originFilter: Origin? = null,
+        /** Engine restriction - [ManagedEngineFilter.All] by default. The choices a UI offers for
+         * this come from [availableEngineIds] (plus "No engine" when [unresolved] is non-empty),
+         * never a hardcoded engine list. */
+        val engineFilter: ManagedEngineFilter = ManagedEngineFilter.All,
+        val minSizeBytes: Long? = null,
+        val maxSizeBytes: Long? = null,
+    ) {
+        /** Every distinct engine id an installed model actually maps to right now (issue: downloaded
+         * models has only a name filter) - the live SSOT for the Engine filter's choices, derived
+         * fresh from [usage] rather than any hardcoded roster of known engines. */
+        val availableEngineIds: List<String>
+            get() = usage.map { it.descriptor.engineId }.distinct().sorted()
+    }
 
     private val mutableState = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = mutableState.asStateFlow()
@@ -276,37 +281,62 @@ class ModelManagementViewModel(
         mutableState.update { it.copy(query = query) }
     }
 
+    /** Restrict the downloaded-models list to one [Origin], or null to clear (issue: downloaded
+     * models has only a name filter). */
+    fun setOriginFilter(origin: Origin?) {
+        mutableState.update { it.copy(originFilter = origin) }
+    }
+
+    /** Restrict the downloaded-models list to one engine, "No engine", or [ManagedEngineFilter.All]
+     * (issue: downloaded models has only a name filter). */
+    fun setEngineFilter(filter: ManagedEngineFilter) {
+        mutableState.update { it.copy(engineFilter = filter) }
+    }
+
+    /** Apply a min/max on-disk size bound (bytes; either may be null) to the downloaded-models list
+     * (issue: downloaded models has only a name filter). */
+    fun setSizeFilter(
+        minSizeBytes: Long?,
+        maxSizeBytes: Long?,
+    ) {
+        mutableState.update { it.copy(minSizeBytes = minSizeBytes, maxSizeBytes = maxSizeBytes) }
+    }
+
+    /** Clear the origin/engine/size filters (name filter and sort are untouched). */
+    fun clearAdvancedFilters() {
+        mutableState.update {
+            it.copy(originFilter = null, engineFilter = ManagedEngineFilter.All, minSizeBytes = null, maxSizeBytes = null)
+        }
+    }
+
     companion object {
         /**
-         * The downloaded models to actually show, filtered by [query] (case-insensitive name match)
-         * and ordered by [sort] (issue #115). RAM/Speed keys read the derived [facts]; a model with no
-         * such fact sorts last in ascending order rather than being dropped. Pure, so the composable
-         * can call it straight on the collected state.
+         * The unified, sorted, filtered downloaded-models list - a resolved [ModelUsage] AND an
+         * unclaimed [UnresolvedModelUsage] bundle go through the exact same pass (issue: sort/filter
+         * ignoring engine-less models; before this, [unresolved] was appended afterward raw, never
+         * sorted or filtered). Pure, so the composable can call it straight on the collected state.
          */
-        fun visibleUsage(
-            usage: List<ModelUsage>,
-            facts: Map<String, ManageModelFacts>,
-            sort: Sort,
-            query: String,
-        ): List<ModelUsage> {
-            val needle = query.trim()
-            val filtered =
-                usage.filter { needle.isEmpty() || it.descriptor.displayName.contains(needle, ignoreCase = true) }
-            val sorted = filtered.sortedWith(usageComparator(sort.key, facts))
-            return if (sort.ascending) sorted else sorted.reversed()
+        fun visibleEntries(state: UiState): List<ManagedModelEntry> {
+            val entries =
+                state.usage.map { ManagedModelEntry.Resolved(it) } +
+                    state.unresolved.map { ManagedModelEntry.Unresolved(it) }
+            val filter =
+                ManagedModelFilter(
+                    query = state.query,
+                    origin = state.originFilter,
+                    engine = state.engineFilter,
+                    minSizeBytes = state.minSizeBytes,
+                    maxSizeBytes = state.maxSizeBytes,
+                )
+            return ManagedModelListView.visible(entries, state.factsByModelId, state.sort, filter)
         }
-
-        private fun usageComparator(
-            key: SortKey,
-            facts: Map<String, ManageModelFacts>,
-        ): Comparator<ModelUsage> =
-            when (key) {
-                SortKey.NAME -> compareBy { it.descriptor.displayName.lowercase() }
-                SortKey.SIZE -> compareBy { it.sizeBytes }
-                SortKey.RAM -> compareBy { facts[it.descriptor.modelId]?.peakRamBytes ?: Long.MAX_VALUE }
-                SortKey.SPEED -> compareBy { facts[it.descriptor.modelId]?.realtimeMultiple ?: Double.MAX_VALUE }
-                SortKey.ENGINE -> compareBy { it.descriptor.engineId.lowercase() }
-                SortKey.ORIGIN -> compareBy { it.descriptor.origin.name }
-            }
     }
 }
+
+/** Which downloaded-model field the list is ordered by (issue #115) - an alias for the pure
+ * `:core` type so [ManagedModelListView] does the actual comparing (issue: sort/filter ignoring
+ * engine-less models) while this screen's call sites keep their existing short names. */
+typealias SortKey = ManagedSortKey
+
+/** The chosen sort key and direction (issue #115) - see [SortKey]. */
+typealias Sort = ManagedSort

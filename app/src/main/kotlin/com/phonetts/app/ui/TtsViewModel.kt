@@ -33,6 +33,7 @@ import com.phonetts.core.metrics.trackGeneration
 import com.phonetts.core.model.ModelDescriptor
 import com.phonetts.core.model.ModelParameter
 import com.phonetts.core.prefs.DocumentPosition
+import com.phonetts.core.session.ReaderSession
 import com.phonetts.core.prefs.LastUsedSelection
 import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.store.FavoriteVoiceRef
@@ -41,6 +42,7 @@ import com.phonetts.core.text.TextChunker
 import com.phonetts.core.update.ApkDownloadState
 import com.phonetts.core.update.UpdateStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -282,12 +284,42 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     // a Cancel/Dismiss can abandon it and so a second Download tap can't start a duplicate.
     private var updateDownloadJob: Job? = null
 
-    // The most recently generated buffer, kept so a Play tap that exactly matches what was last
-    // generated (same model/voice/text/params) replays instantly instead of re-synthesizing -
-    // still the ONE generation path (spec §6.1), just not re-run when nothing changed.
-    private var cachedAudio: GeneratedAudio? = null
-    private var cachedKey: GenKey? = null
+    // Debounced write of the reader's text into the durable session document (see scheduleTextPersist).
+    private var textPersistJob: Job? = null
 
+    // The audio generated for the current document, RETAINED across every transport action.
+    //
+    // This is what makes "audio is never lost no matter how you start/pause/stop/skip" true. It used
+    // to be a single-slot cache written ONLY on fully-successful generation, so any skip, seek, stop
+    // or voice change threw away everything that run had produced and the next Play re-synthesized
+    // from scratch. Now the buffer survives, and because [GenKey] is keyed on the FULL text (not the
+    // sentence-sliced text fed to the engine), skipping around inside one document keeps matching
+    // the same session instead of inventing a new one.
+    //
+    // [GeneratedAudio] is append-only and retained by design, and BufferedPlayback.play() takes a
+    // `fromIndex`, so replaying or seeking within what has already been generated needs no
+    // re-synthesis at all - it is just a different start index into the same buffer.
+    private var session: GenSession? = null
+
+    // One generation's worth of audio plus what it covers. [fromSentence] is the document sentence
+    // that chunk 0 of [audio] corresponds to, so a request to play sentence N maps to buffer index
+    // N - fromSentence whenever that index is already generated.
+    private class GenSession(
+        val key: GenKey,
+        val fromSentence: Int,
+        val audio: GeneratedAudio,
+    ) {
+        /** True when [sentence] has already been generated into this buffer. */
+        fun covers(sentence: Int): Boolean {
+            if (sentence < fromSentence) return false
+            return sentence - fromSentence < audio.count.value
+        }
+
+        fun bufferIndexFor(sentence: Int): Int = sentence - fromSentence
+    }
+
+    // Identity of a generation: same model, voice, params and WHOLE document => the same audio,
+    // whatever sentence playback happens to start from.
     private data class GenKey(
         val modelId: String,
         val voiceId: String,
@@ -314,6 +346,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 longDocumentMode = graph.longDocumentPreferences.enabled(),
             )
         }
+        restoreSession()
         checkForUpdate(announce = false)
     }
 
@@ -515,7 +548,23 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
      */
     fun toggleFavoriteVoice(voice: Voice) {
         val modelId = mutableState.value.selected?.modelId ?: return
-        graph.favoritesStore.toggleFavoriteVoice(modelId, voice.id)
+        toggleFavoriteVoice(modelId, voice.id)
+    }
+
+    /**
+     * Star/unstar a voice belonging to ANY model, without selecting it.
+     *
+     * The single-argument overload above can only act on the currently selected model, which was
+     * fine while the only way to reach a star was to open that model's own voice dropdown. The
+     * unified voice sheet lists every model's voices at once, so starring one used to require
+     * selecting its model first - meaning a tap on a star silently switched the voice and barged in
+     * on playback. Favoriting is a bookmark, not a selection; it should never move playback.
+     */
+    fun toggleFavoriteVoice(
+        modelId: String,
+        voiceId: String,
+    ) {
+        graph.favoritesStore.toggleFavoriteVoice(modelId, voiceId)
         mutableState.update { it.copy(favoriteVoiceRefs = graph.favoritesStore.favoriteVoices()) }
     }
 
@@ -590,8 +639,33 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         return false
     }
 
-    fun setText(text: String) =
+    fun setText(text: String) {
         mutableState.update { it.copy(text = text, resumeSentenceIndex = resumeIndexFor(text)) }
+        scheduleTextPersist(text)
+    }
+
+    // Persist the reader's text so a relaunch restores it. Debounced rather than written on every
+    // keystroke - the document can be book-length, and rewriting it per character would hammer the
+    // disk on a budget phone. The pending write is also flushed on stop()/onCleared() so a kill
+    // between keystrokes cannot lose more than the debounce window.
+    //
+    // This also un-strands DocumentMemory: its resume position is keyed by a hash of the text, so
+    // once the text itself stopped surviving a restart, every saved resume point became unreachable.
+    private fun scheduleTextPersist(text: String) {
+        textPersistJob?.cancel()
+        textPersistJob =
+            viewModelScope.launch {
+                delay(TEXT_PERSIST_DEBOUNCE_MS)
+                withContext(Dispatchers.IO) { graph.sessionState.updateReader { it.copy(text = text) } }
+            }
+    }
+
+    // Write any debounced text immediately (teardown paths).
+    private fun flushTextPersist() {
+        textPersistJob?.cancel()
+        textPersistJob = null
+        runCatching { graph.sessionState.updateReader { it.copy(text = mutableState.value.text) } }
+    }
 
     // The saved resume point for this text, if any (issue #28) - surfaced only when it's past the
     // start (index 0 would just be "press Play"). Reads the per-document memory keyed by text content.
@@ -612,26 +686,67 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
     /** A− : one step smaller reading font (issue #29), persisted immediately. */
     fun decreaseTextScale() = mutableState.update { it.copy(readingScale = graph.readingTextPreferences.decreased()) }
 
-    fun setTrimSilence(on: Boolean) = mutableState.update { it.copy(trimSilence = on) }
+    // Put the user back where they were. Called once at startup, before the update check, so a
+    // relaunch shows the text they were reading and the toggles they had set instead of a blank
+    // screen with every setting reverted.
+    private fun restoreSession() {
+        val saved = graph.sessionState.reader()
+        applyReaderSessionToState()
+        if (saved.text.isBlank()) return
+        mutableState.update { it.copy(text = saved.text, resumeSentenceIndex = resumeIndexFor(saved.text)) }
+    }
 
-    fun setNormalizeVolume(on: Boolean) = mutableState.update { it.copy(normalizeVolume = on) }
+    // Every audio toggle writes through to the durable session document as well as UI state. They
+    // used to be UI-state-only, so all eight silently reverted to their defaults on every launch -
+    // a Settings screen whose settings did not persist. One helper so no toggle can be added later
+    // that quietly forgets to save.
+    private fun persistToggle(
+        on: Boolean,
+        apply: (ReaderSession, Boolean) -> ReaderSession,
+    ) {
+        graph.sessionState.updateReader { apply(it, on) }
+        applyReaderSessionToState()
+    }
 
-    fun setCrossfadeJoins(on: Boolean) = mutableState.update { it.copy(crossfadeJoins = on) }
+    // Push the persisted reader session back into UI state, so the two never disagree about what a
+    // toggle is currently set to.
+    private fun applyReaderSessionToState() {
+        val saved = graph.sessionState.reader()
+        mutableState.update {
+            it.copy(
+                trimSilence = saved.trimSilence,
+                normalizeVolume = saved.normalizeVolume,
+                crossfadeJoins = saved.crossfadeJoins,
+                bassCut = saved.bassCut,
+                presenceBoost = saved.presenceBoost,
+                deEss = saved.deEss,
+                tempoBoost = saved.tempoBoost,
+                tempoFactor = saved.tempoFactor,
+            )
+        }
+    }
 
-    fun setBassCut(on: Boolean) = mutableState.update { it.copy(bassCut = on) }
+    fun setTrimSilence(on: Boolean) = persistToggle(on) { s, v -> s.copy(trimSilence = v) }
 
-    fun setPresenceBoost(on: Boolean) = mutableState.update { it.copy(presenceBoost = on) }
+    fun setNormalizeVolume(on: Boolean) = persistToggle(on) { s, v -> s.copy(normalizeVolume = v) }
 
-    fun setDeEss(on: Boolean) = mutableState.update { it.copy(deEss = on) }
+    fun setCrossfadeJoins(on: Boolean) = persistToggle(on) { s, v -> s.copy(crossfadeJoins = v) }
+
+    fun setBassCut(on: Boolean) = persistToggle(on) { s, v -> s.copy(bassCut = v) }
+
+    fun setPresenceBoost(on: Boolean) = persistToggle(on) { s, v -> s.copy(presenceBoost = v) }
+
+    fun setDeEss(on: Boolean) = persistToggle(on) { s, v -> s.copy(deEss = v) }
 
     /** Toggle the opt-in, playback-only beyond-native tempo boost (issue #43). Off by default. */
-    fun setTempoBoost(on: Boolean) = mutableState.update { it.copy(tempoBoost = on) }
+    fun setTempoBoost(on: Boolean) = persistToggle(on) { s, v -> s.copy(tempoBoost = v) }
 
     /** Set the beyond-native tempo factor (clamped to [TempoStretch]'s advertised 0.1x-10x range). */
-    fun setTempoFactor(factor: Float) =
-        mutableState.update {
-            it.copy(tempoFactor = factor.coerceIn(TempoStretch.MIN_FACTOR, TempoStretch.MAX_FACTOR))
-        }
+    fun setTempoFactor(factor: Float) {
+        val clamped = factor.coerceIn(TempoStretch.MIN_FACTOR, TempoStretch.MAX_FACTOR)
+        graph.sessionState.updateReader { it.copy(tempoFactor = clamped) }
+        mutableState.update { it.copy(tempoFactor = clamped) }
+    }
 
     /** Toggle long-document (spill-to-disk) mode (issue #34), persisted immediately. Off by default. */
     fun setLongDocumentMode(on: Boolean) =
@@ -683,12 +798,12 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val audio = newGeneratedAudio(descriptor)
         val documentId = documentIdFor(s.text)
         val key = GenKey(descriptor.modelId, voiceId, s.text, s.paramValues)
+        // Publish the session up front, exactly as the Play path does, so a Generate that is
+        // interrupted still leaves its audio playable instead of discarding it.
+        beginSession(GenSession(key, fromSentence = 0, audio = audio))
         genJob =
             viewModelScope.launch {
                 val ok = generate(descriptor, voiceId, s.params, s.text, audio, startSentenceIndex = 0, documentId = documentId)
-                if (ok) {
-                    cache(audio, key)
-                }
                 val loaded = if (ok) descriptor.modelId else null
                 mutableState.update { it.copy(busy = false, loadedModelId = loaded ?: it.loadedModelId) }
             }
@@ -703,19 +818,80 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         return GeneratedAudio(ChunkSpill(graph.newSpillFile(), descriptor.sampleRate * SPILL_WINDOW_SECONDS))
     }
 
-    // Cache a freshly-generated buffer for instant replay, releasing the previous cache's spill file
-    // (a no-op for a non-spilled buffer) so long-document scratch files don't accumulate.
-    private fun cache(
-        audio: GeneratedAudio,
-        key: GenKey,
-    ) {
-        cachedAudio?.close()
-        cachedAudio = audio
-        cachedKey = key
+    // Adopt a new generation session, releasing the previous one's spill scratch file (a no-op for a
+    // non-spilled buffer) so long-document scratch files don't accumulate.
+    private fun beginSession(next: GenSession) {
+        if (session !== next) session?.audio?.close()
+        session = next
     }
 
-    /** Play from the top - the primary Play button (a method reference, so kept parameterless). */
-    fun play() = startPlaybackFrom(0)
+    // Seek inside audio we already have: stop only the CONSUMER, then start a fresh one at the right
+    // buffer index. Generation (genJob) is deliberately left running - it may still be filling the
+    // buffer ahead of playback, and cancelling it is what used to throw away generated-but-unheard
+    // sentences on every skip.
+    private fun replayFrom(
+        reusable: GenSession,
+        descriptor: ModelDescriptor,
+        s: UiState,
+        startSentenceIndex: Int,
+    ) {
+        playback.stop()
+        playJob?.cancel()
+        progressJob?.cancel()
+        sentenceProgressJob?.cancel()
+        playback = BufferedPlayback()
+        val playSink = playbackSink(s)
+        currentStartSentenceIndex = reusable.fromSentence
+        beginProgressTracking(descriptor, sentencesFrom(s.text, reusable.fromSentence), s.params.speed)
+        mutableState.update { it.copy(playing = true, paused = false, status = null) }
+        playJob =
+            viewModelScope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        playback.play(
+                            reusable.audio,
+                            descriptor.sampleRate,
+                            playSink,
+                            fromIndex = reusable.bufferIndexFor(startSentenceIndex),
+                        )
+                    }
+                }.onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+                recordListened(descriptor)
+                mutableState.update { it.copy(playing = false, paused = false) }
+            }
+    }
+
+    /**
+     * The primary Play button. Resumes by default.
+     *
+     * It used to be `startPlaybackFrom(0)` - hardcoded to the top, never consulting the resume point
+     * that [DocumentMemory] was already recording, which is why Play after a Pause/Stop always
+     * restarted the document. Now it continues from where playback actually stopped, and only falls
+     * back to the top when there is no resume point or the saved one is no longer valid for the
+     * current voice/engine/speed (see [validatedResumeIndex]).
+     */
+    fun play() = startPlaybackFrom(validatedResumeIndex() ?: 0)
+
+    /**
+     * The saved resume point, but ONLY if it still describes what would be generated now.
+     *
+     * [DocumentPosition] deliberately carries engineId/voiceId/speed so a caller can make exactly
+     * this check - and nothing ever made it, so a resume point recorded against one voice was
+     * happily offered after switching to another. Text changes already invalidate implicitly (the
+     * position is keyed by a hash of the text), which is the "unless the voice or text was changed"
+     * requirement; this adds the voice/engine/speed half.
+     */
+    private fun validatedResumeIndex(): Int? {
+        val s = mutableState.value
+        val descriptor = s.selected ?: return null
+        if (s.text.isBlank()) return null
+        val saved = graph.documentMemory.resume(documentIdFor(s.text)) ?: return null
+        if (saved.sentenceIndex <= 0) return null
+        if (saved.engineId != descriptor.engineId) return null
+        if (saved.voiceId != (s.voiceId ?: descriptor.defaultVoiceId)) return null
+        if (saved.speed != s.params.speed) return null
+        return saved.sentenceIndex
+    }
 
     /**
      * "Read from here" (issue #24): start playback from the sentence containing character [charOffset]
@@ -736,11 +912,24 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         val descriptor = s.selected ?: return
         if (!requireNonBlankText(s.text)) return
         val voiceId = s.voiceId ?: descriptor.defaultVoiceId
+        val documentId = documentIdFor(s.text)
+        // Keyed on the WHOLE document, not the sentence-sliced text handed to the engine - so moving
+        // around inside one document keeps matching the same session instead of minting a new key
+        // (and therefore re-synthesizing) on every skip.
+        val key = GenKey(descriptor.modelId, voiceId, s.text, s.paramValues)
+
+        // Already generated? Then this is pure seeking: leave generation alone (it may still be
+        // running ahead) and just restart the consumer at the right buffer index. Nothing is
+        // re-synthesized and nothing already produced is discarded.
+        val reusable = session?.takeIf { it.key == key && it.covers(startSentenceIndex) }
+        if (reusable != null) {
+            replayFrom(reusable, descriptor, s, startSentenceIndex)
+            return
+        }
+
         // Slice the sentence list at [startSentenceIndex] and feed only that onward through the SAME
         // one generation path (spec §6.1) - no second synthesis path. Index 0 keeps the full text.
         val effectiveText = sentencesFrom(s.text, startSentenceIndex)
-        val documentId = documentIdFor(s.text)
-        val key = GenKey(descriptor.modelId, voiceId, effectiveText, s.paramValues)
         stop()
         // A fresh instance per session (see the field doc above) - stop() above just latched the
         // previous one's "stopped" flag for good.
@@ -753,26 +942,6 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         currentStartSentenceIndex = startSentenceIndex
         beginProgressTracking(descriptor, effectiveText, s.params.speed)
 
-        val cached = cachedAudio?.takeIf { cachedKey == key }
-        if (cached != null) {
-            // Exact match for what's already generated (e.g. right after Generate, or replaying
-            // the last Play) - play it straight from the buffer, no re-synthesis, no delay.
-            mutableState.update { it.copy(playing = true, paused = false, status = null) }
-            playJob =
-                viewModelScope.launch {
-                    // BufferedPlayback.play drives AudioTrack.write(..., WRITE_BLOCKING) via the sink
-                    // (issue #18-4b) - offload it off Main so scrolling/navigating stays responsive
-                    // during playback. Core's BufferedPlayback/AudioTrackSink threading is untouched;
-                    // only this call site moves.
-                    runCatching {
-                        withContext(Dispatchers.IO) { playback.play(cached, descriptor.sampleRate, playSink) }
-                    }
-                        .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
-                    mutableState.update { it.copy(playing = false, paused = false) }
-                }
-            return
-        }
-
         // Play IS generate-and-stream (spec §6.1: one generation path, no separate "Generate"
         // button) - this status is the only feedback during the gap between tapping Play and the
         // first audio chunk landing (switching/loading the model can take a few seconds on a
@@ -780,13 +949,15 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         mutableState.update { it.copy(playing = true, paused = false, status = "Loading voice…", stats = null) }
 
         val audio = newGeneratedAudio(descriptor)
+        // Adopt the session BEFORE generation starts, not after it succeeds. The old code cached only
+        // on success, so an interrupted run's audio was unreachable and had to be regenerated; the
+        // buffer is retained and append-only, so publishing it up front means whatever lands in it
+        // stays usable no matter how the run ends.
+        beginSession(GenSession(key, startSentenceIndex, audio))
         genJob =
             viewModelScope.launch {
                 val ok = generate(descriptor, voiceId, s.params, effectiveText, audio, startSentenceIndex, documentId)
-                if (ok) {
-                    cache(audio, key)
-                    mutableState.update { it.copy(loadedModelId = descriptor.modelId) }
-                }
+                if (ok) mutableState.update { it.copy(loadedModelId = descriptor.modelId) }
             }
         playJob =
             viewModelScope.launch {
@@ -794,6 +965,7 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 // AudioTrack write must not run on Main.
                 runCatching { withContext(Dispatchers.IO) { playback.play(audio, descriptor.sampleRate, playSink) } }
                     .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+                recordListened(descriptor)
                 mutableState.update { it.copy(playing = false, paused = false) }
             }
     }
@@ -936,13 +1108,24 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                         mutableState.update { it.copy(stats = stats, status = null) }
                     }
             }.onFailure { e ->
-                // One chunk == one sentence (AbstractVoiceEngine emits per TextChunker sentence), so
-                // the next sentence to (re)try is startSentenceIndex + the chunks that fully landed.
-                recordStop(descriptor, voiceId, params, documentId, startSentenceIndex + chunksDone, e)
+                // One chunk == one sentence (AbstractVoiceEngine emits per TextChunker sentence).
+                //
+                // The resume point must follow what has been HEARD, not what has been generated.
+                // Generation deliberately runs ahead of playback, so using chunksDone here (as this
+                // did) put the resume point past sentences the user never heard - those sentences
+                // were dropped from the buffer AND skipped over on resume, which is silent content
+                // loss, not merely wasted work. playedChunks is what actually reached the sink.
+                val heard = minOf(chunksDone, playback.playedChunks.value)
+                recordStop(descriptor, voiceId, params, documentId, startSentenceIndex + heard, e)
             }
         audio.markComplete()
         generationNotifier.clear() // dismiss on completion or failure alike - nothing left in flight
-        if (result.isSuccess) clearResume(documentId)
+        if (result.isSuccess) {
+            clearResume(documentId)
+            // Feed the Stats page's lifetime counters. GenerationStats already computed this figure
+            // per run and then discarded it; this is the only place it is accumulated.
+            graph.usageStatsStore.recordGeneration(WordCounter.count(text))
+        }
         return result.isSuccess
     }
 
@@ -965,6 +1148,34 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
                 resumeSentenceIndex = resumeIndex.takeIf { idx -> idx > 0 },
             )
         }
+    }
+
+    // Measured listening time for the run that just ended - samples actually delivered to the sink
+    // divided by the sample rate, never ListeningTimeEstimator's prediction. Zero-length runs are
+    // not recorded, so the Stats page shows an honest empty state rather than a fabricated zero.
+    private fun recordListened(descriptor: ModelDescriptor) {
+        val samples = playback.playedSamples.value
+        if (samples <= 0L) return
+        val millis = samples * MILLIS_PER_SECOND / descriptor.sampleRate
+        graph.usageStatsStore.recordPlayback(descriptor.modelId, millis)
+    }
+
+    // Save where playback actually reached, so the next Play continues from there. Called on every
+    // teardown (Stop, skip, voice switch), not only on failure - the resume point is a fact about
+    // what the user heard, and it should not depend on HOW the run ended.
+    //
+    // Nothing is recorded when playback never advanced (position 0 is just "Play"), so a Stop before
+    // any audio played leaves no stale offer behind.
+    private fun rememberPlaybackPosition() {
+        val s = mutableState.value
+        val descriptor = s.selected ?: return
+        if (s.text.isBlank()) return
+        val heard = currentStartSentenceIndex + playback.playedChunks.value
+        if (heard <= 0) return
+        graph.documentMemory.record(
+            DocumentPosition(documentIdFor(s.text), descriptor.engineId, s.voiceId ?: descriptor.defaultVoiceId, s.params.speed, heard),
+        )
+        mutableState.update { it.copy(resumeSentenceIndex = heard) }
     }
 
     // A clean, fully-generated document has no resume point - forget any saved one and clear the offer.
@@ -999,6 +1210,10 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
         // Tell the service (if bound) this stop is user-initiated, so it doesn't misread the
         // resulting playing→stopped edge as a natural end-of-document and chime (issue #32).
         onUserStopRequested?.invoke()
+        // Record where playback actually got to BEFORE tearing the run down, so the next Play
+        // continues instead of restarting. Deliberately not left to generate()'s failure path: a
+        // deliberate Stop is not a failure, but it still has a resume point.
+        rememberPlaybackPosition()
         playback.stop() // step 2a: stop draining the generated-audio buffer
         playJob?.cancel()
         genJob?.cancel() // step 1: cancel synthesis
@@ -1242,11 +1457,16 @@ class TtsViewModel(private val graph: AppGraph) : ViewModel() {
 
     override fun onCleared() {
         stop() // also clears the generation notification (see stop()'s own note)
-        cachedAudio?.close() // release the last buffer's spill scratch file, if any (issue #34)
+        flushTextPersist() // never lose the last edits to an unwritten debounce window
+        session?.audio?.close() // release the last buffer's spill scratch file, if any (issue #34)
     }
 
     private companion object {
         const val VOICE_SAMPLE_PHRASE = "The quick brown fox jumps over the lazy dog."
+
+        // Long enough that typing doesn't cause a write per character, short enough that a process
+        // death loses at most this much of what was typed.
+        const val TEXT_PERSIST_DEBOUNCE_MS = 800L
 
         // Default beyond-native tempo factor when the (off-by-default) boost is first enabled - a
         // mild speed-up the user then adjusts. Not a native model parameter; see UiState.tempoFactor.

@@ -1,6 +1,8 @@
 package com.phonetts.core.registry
 
+import com.phonetts.core.model.ManageModelFacts
 import com.phonetts.core.model.ModelDescriptor
+import com.phonetts.core.model.Origin
 import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.OverrideStore
 import com.phonetts.core.resolver.SelectableEngine
@@ -34,6 +36,176 @@ data class UnresolvedModelUsage(
     val sizeBytes: Long,
     val reason: String,
 )
+
+/**
+ * THE canonical, user-facing wording for "this bundle is downloaded but no engine has claimed it
+ * yet" - every screen that shows an [UnresolvedModelUsage] uses this exact phrase. Before this,
+ * three screens phrased the same fact three different ways ("no engine can use it yet" on Manage,
+ * "no engine yet" in the copy-list export, "downloaded, no engine yet" in the Browse diagnostics
+ * log) - the same duplication CLAUDE.md rule 1 forbids for data, just applied to copy instead.
+ */
+const val NO_ENGINE_YET_LABEL = "no engine yet"
+
+/**
+ * One row of the "downloaded models" list, unifying a resolved [ModelUsage] with an unclaimed
+ * [UnresolvedModelUsage] bundle (issue: the Manage screen's sort/filter only ever ran over
+ * [ModelUsage] - unresolved bundles were appended afterward raw, unsorted, and unfiltered, so a
+ * user searching/sorting the list would never see them move or disappear along with everything
+ * else). Both variants now go through the SAME [ManagedModelListView] pass.
+ *
+ * [Unresolved] has no descriptor, so it carries null for every fact ([engineId], [origin]) that
+ * only a resolved model has; [ManagedModelListView] treats those the same way the pre-existing
+ * RAM/Speed sort already treated a resolved model with no measured/estimated fact - it sorts LAST
+ * in ascending order rather than being dropped from the list.
+ */
+sealed class ManagedModelEntry {
+    /** Display name - a resolved model's [ModelDescriptor.displayName], or an unresolved bundle's id. */
+    abstract val name: String
+    abstract val sizeBytes: Long
+
+    /** The catalog id used to key [ManageModelFacts]/[ManagedModelListView.visible] - a resolved
+     * model's `modelId`, or an unresolved bundle's `bundleId`. */
+    abstract val modelId: String
+
+    /** Null for [Unresolved] - no engine claimed it, so there is nothing to report. */
+    abstract val engineId: String?
+
+    /** Null for [Unresolved] - origin is a fact of a resolved [ModelDescriptor], never guessed. */
+    abstract val origin: Origin?
+
+    data class Resolved(val usage: ModelUsage) : ManagedModelEntry() {
+        override val name get() = usage.descriptor.displayName
+        override val sizeBytes get() = usage.sizeBytes
+        override val modelId get() = usage.descriptor.modelId
+        override val engineId get() = usage.descriptor.engineId
+        override val origin get() = usage.descriptor.origin
+    }
+
+    data class Unresolved(val usage: UnresolvedModelUsage) : ManagedModelEntry() {
+        override val name get() = usage.bundleId
+        override val sizeBytes get() = usage.sizeBytes
+        override val modelId get() = usage.bundleId
+        override val engineId: String? = null
+        override val origin: Origin? = null
+    }
+}
+
+/** Which field the unified downloaded-models list ([ManagedModelEntry]) is ordered by (issue #115,
+ * extended to also cover unresolved bundles). */
+enum class ManagedSortKey(val label: String) {
+    NAME("Name"),
+    SIZE("Size"),
+    RAM("Est. RAM"),
+    SPEED("Speed"),
+    ENGINE("Engine"),
+    ORIGIN("Origin"),
+}
+
+/** The chosen sort key and direction for the unified downloaded-models list (issue #115). */
+data class ManagedSort(val key: ManagedSortKey, val ascending: Boolean) {
+    companion object {
+        val DEFAULT = ManagedSort(ManagedSortKey.NAME, ascending = true)
+    }
+}
+
+/**
+ * The Engine filter's choice (issue: downloaded models has only a name filter): every option is
+ * derived from LIVE data, never a hardcoded model/engine list - [All] and [NoEngine] are the only
+ * two fixed buckets, and [Specific] always carries an engine id read off an actual installed
+ * model's descriptor (see [ManagedModelListView] callers).
+ */
+sealed class ManagedEngineFilter {
+    object All : ManagedEngineFilter()
+
+    /** Only unresolved bundles - the one bucket no engine id can represent. */
+    object NoEngine : ManagedEngineFilter()
+
+    data class Specific(val engineId: String) : ManagedEngineFilter()
+}
+
+/**
+ * The Manage screen's full filter choice (issue: downloaded models has only a name filter): a name
+ * substring, an [Origin] restriction, an [ManagedEngineFilter] restriction, and an optional
+ * min/max on-disk size range - every option a caller offers for these must come from live data
+ * ([Origin.entries], the installed models' actual engine ids, "No engine" only when an unresolved
+ * bundle actually exists), never a fabricated list (CLAUDE.md rule 1).
+ */
+data class ManagedModelFilter(
+    val query: String = "",
+    val origin: Origin? = null,
+    val engine: ManagedEngineFilter = ManagedEngineFilter.All,
+    val minSizeBytes: Long? = null,
+    val maxSizeBytes: Long? = null,
+)
+
+/**
+ * Pure sort + filter over the unified [ManagedModelEntry] list - the one place a resolved model row
+ * and an unclaimed bundle row are ordered/restricted together (issue: sort/filter ignoring
+ * engine-less models). No Android dependency, so this is provable with a plain JVM seam test.
+ */
+object ManagedModelListView {
+    fun visible(
+        entries: List<ManagedModelEntry>,
+        facts: Map<String, ManageModelFacts>,
+        sort: ManagedSort,
+        filter: ManagedModelFilter,
+    ): List<ManagedModelEntry> {
+        val needle = filter.query.trim()
+        val filtered = entries.filter { matches(it, needle, filter) }
+        val sorted = filtered.sortedWith(comparator(sort.key, facts))
+        return if (sort.ascending) sorted else sorted.reversed()
+    }
+
+    private fun matches(
+        entry: ManagedModelEntry,
+        needle: String,
+        filter: ManagedModelFilter,
+    ): Boolean {
+        if (needle.isNotEmpty() && !entry.name.contains(needle, ignoreCase = true)) return false
+        if (filter.origin != null && entry.origin != filter.origin) return false
+        if (!matchesEngine(entry, filter.engine)) return false
+        return matchesSize(entry.sizeBytes, filter.minSizeBytes, filter.maxSizeBytes)
+    }
+
+    private fun matchesEngine(
+        entry: ManagedModelEntry,
+        engineFilter: ManagedEngineFilter,
+    ): Boolean =
+        when (engineFilter) {
+            is ManagedEngineFilter.All -> true
+            is ManagedEngineFilter.NoEngine -> entry.engineId == null
+            is ManagedEngineFilter.Specific -> entry.engineId == engineFilter.engineId
+        }
+
+    private fun matchesSize(
+        sizeBytes: Long,
+        minSizeBytes: Long?,
+        maxSizeBytes: Long?,
+    ): Boolean {
+        if (minSizeBytes != null && sizeBytes < minSizeBytes) return false
+        if (maxSizeBytes != null && sizeBytes > maxSizeBytes) return false
+        return true
+    }
+
+    private fun comparator(
+        key: ManagedSortKey,
+        facts: Map<String, ManageModelFacts>,
+    ): Comparator<ManagedModelEntry> =
+        when (key) {
+            ManagedSortKey.NAME -> compareBy { it.name.lowercase() }
+            ManagedSortKey.SIZE -> compareBy { it.sizeBytes }
+            ManagedSortKey.RAM -> compareBy { facts[it.modelId]?.peakRamBytes ?: Long.MAX_VALUE }
+            ManagedSortKey.SPEED -> compareBy { facts[it.modelId]?.realtimeMultiple ?: Double.MAX_VALUE }
+            ManagedSortKey.ENGINE -> compareBy { it.engineId?.lowercase() ?: SORTS_LAST }
+            ManagedSortKey.ORIGIN -> compareBy { it.origin?.name ?: SORTS_LAST }
+        }
+
+    // A String-keyed "sorts last in ascending order" sentinel - the same convention the numeric
+    // Long.MAX_VALUE/Double.MAX_VALUE fallbacks above use, just for the Engine/Origin comparators,
+    // which key off text. U+FFFF is not a valid engine id or Origin name, so it can never collide
+    // with a real value and always sorts after one.
+    private const val SORTS_LAST = "￿"
+}
 
 /** What happened when [ModelManager.remove] was asked to remove a model. */
 data class ModelRemoval(

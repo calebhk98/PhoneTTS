@@ -51,6 +51,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phonetts.core.download.hf.DiagnosticsEntry
 import com.phonetts.core.download.hf.DiagnosticsKind
+import com.phonetts.core.format.ByteFormat
+import com.phonetts.core.format.CountFormat
+import com.phonetts.core.registry.NO_ENGINE_YET_LABEL
 import com.phonetts.core.download.hf.HfDownloadProgress
 import com.phonetts.core.download.hf.HfEndpoints
 import com.phonetts.core.download.hf.HfEngineClassifier
@@ -986,7 +989,7 @@ private fun formatDiagnosticsLine(
     formatter: DateFormat,
 ): String {
     val time = formatter.format(Date(entry.atMs))
-    val kind = if (entry.kind == DiagnosticsKind.FAILURE) "FAILED" else "downloaded, no engine yet"
+    val kind = if (entry.kind == DiagnosticsKind.FAILURE) "FAILED" else "downloaded, $NO_ENGINE_YET_LABEL"
     return "[$time] ${entry.modelId} - $kind: ${entry.detail}"
 }
 
@@ -1172,7 +1175,7 @@ private fun SpeedHintLine(
     // The leading "~" already signals these are estimates (issue #106 removed the "(both estimated)"
     // suffix that only wasted a line).
     Text(
-        "~${formatParamCount(speed.paramCount)} params · " +
+        "~${CountFormat.formatParamCount(speed.paramCount)} params · " +
             "~${formatRealtimeMultiple(speed.realtimeMultiple)}x real-time",
         style = MaterialTheme.typography.bodySmall,
     )
@@ -1222,7 +1225,7 @@ private fun DownloadProgress(
         )
         val etaText = progress.etaSeconds(now)?.let { " · ≈${formatDuration(it)} left" } ?: ""
         Text(
-            "${formatBytes(progress.bytesDone)} / ${formatBytes(bytesTotal)}$etaText",
+            "${ByteFormat.format(progress.bytesDone)} / ${ByteFormat.format(bytesTotal)}$etaText",
             style = MaterialTheme.typography.bodySmall,
         )
     }
@@ -1271,7 +1274,7 @@ private fun DownloadsSubheader(downloads: Map<String, HfDownloadProgress>) {
         val percent = if (total > 0L) ((done.toDouble() / total) * PERCENT_MAX).toInt().coerceIn(0, PERCENT_MAX) else 0
         val eta = aggregateEtaText(progresses, done, total, now)
         Text(
-            "${formatBytes(done)} / ${formatBytes(total)} · $percent% done$eta",
+            "${ByteFormat.format(done)} / ${ByteFormat.format(total)} · $percent% done$eta",
             style = MaterialTheme.typography.bodySmall,
         )
         val fraction = if (total > 0L) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
@@ -1351,13 +1354,7 @@ private fun DownloadControl(
 
 private fun formatSize(estimate: HfSizeEstimate): String {
     val prefix = if (estimate.isExact) "" else "≥"
-    return "$prefix${formatBytes(estimate.knownBytes)}"
-}
-
-private fun formatBytes(bytes: Long): String {
-    val mb = bytes / (1024.0 * 1024.0)
-    if (mb >= MB_TO_GB_THRESHOLD) return "%.2f GB".format(mb / 1024.0)
-    return "%.1f MB".format(mb)
+    return "$prefix${ByteFormat.format(estimate.knownBytes)}"
 }
 
 private fun formatDuration(seconds: Double): String {
@@ -1380,17 +1377,6 @@ private fun formatClock(seconds: Double): String {
     return "%d:%02d".format(minutes, secs)
 }
 
-/** Bug #5 display helper: an estimated parameter count as a compact "82M"/"1.2B" label. */
-private fun formatParamCount(count: Long): String {
-    if (count <= 0L) return "?"
-    val millions = count / 1_000_000.0
-    if (millions >= THOUSAND) return "%.1fB".format(millions / THOUSAND)
-    if (millions >= 1.0) return "%.0fM".format(millions)
-    val thousands = count / 1_000.0
-    if (thousands >= 1.0) return "%.0fK".format(thousands)
-    return count.toString()
-}
-
 /** Bug #5 display helper: one decimal place is plenty of precision for a heuristic estimate. */
 private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
 
@@ -1398,8 +1384,6 @@ private const val MAX_TAGS_SHOWN = 4
 private const val ERROR_BANNER_MAX_LINES = 3
 private const val BYTES_PER_MB = 1024L * 1024L
 private const val PARAMS_PER_M = 1_000_000.0
-private const val THOUSAND = 1000.0
-private const val MB_TO_GB_THRESHOLD = 1024.0
 private const val SECONDS_PER_MINUTE = 60L
 private const val MINUTES_PER_HOUR = 60L
 private const val SECONDS_PER_HOUR = 3600L

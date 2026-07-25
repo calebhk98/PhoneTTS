@@ -51,6 +51,8 @@ import com.phonetts.app.library.ReadingLibraryScreen
 import com.phonetts.app.library.ReadingLibraryViewModel
 import com.phonetts.app.manage.ModelManagementScreen
 import com.phonetts.app.manage.ModelManagementViewModel
+import com.phonetts.app.stats.StatsScreen
+import com.phonetts.app.stats.StatsViewModel
 import com.phonetts.app.ui.HelpScreen
 import com.phonetts.app.ui.MixVoicesScreen
 import com.phonetts.app.ui.MixVoicesViewModel
@@ -66,7 +68,7 @@ import com.phonetts.core.prefs.AppTheme
 
 // Not private: shared with NavDrawerScaffold (app/ui), which every sub-page uses to list every
 // destination in its own hamburger drawer (issue #1) - the same enum TtsScreen's drawer navigates.
-enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE, SETTINGS }
+enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE, SETTINGS, STATS }
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
@@ -109,6 +111,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         ensureNotificationPermission()
+        bindPlaybackService()
+        keepServiceStartedWhilePlaying()
         val sharedText = intent?.readSharedText()
         setContent {
             // Theme choice is hoisted above PhoneTtsTheme so a pick in the picker recomposes the
@@ -143,16 +147,50 @@ class MainActivity : ComponentActivity() {
         if (!granted) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    override fun onStart() {
-        super.onStart()
+    // Bind for the whole lifetime of the Activity, not just while it is in the foreground.
+    //
+    // This used to bind in onStart and unbind + detachController in onStop, which meant the service
+    // lost its controller the instant the app backgrounded - i.e. exactly when the screen locks and
+    // lock-screen controls are the only controls there are. Every MediaSession callback then hit
+    // `controller?.pause() ?: Unit` and silently did nothing. Worse, a service that is only ever
+    // BOUND (never started) is eligible for destruction as soon as its last client unbinds, so the
+    // notification and media session could disappear outright mid-playback.
+    //
+    // The service is also STARTED (not merely bound) when playback begins - see bindPlaybackService's
+    // caller in onCreate - so it survives independently of this Activity.
+    private fun bindPlaybackService() {
         bindService(Intent(this, PlaybackService::class.java), connection, BIND_AUTO_CREATE)
     }
 
-    override fun onStop() {
-        super.onStop()
+    /**
+     * START the playback service the moment playback begins, so it is a genuinely started foreground
+     * service rather than a bind-only one.
+     *
+     * A bound-only service dies with its last client. Because the Activity was the only client and it
+     * unbound whenever it backgrounded, the service could be destroyed mid-playback - taking the
+     * media session, the notification and its controls with it, and leaving the app process with no
+     * foreground component to protect it from being reclaimed on a 4 GB device. Starting it means its
+     * lifetime is owned by playback, not by whether a screen happens to be visible.
+     */
+    private fun keepServiceStartedWhilePlaying() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.CREATED) {
+                ttsViewModel.state.collect { state ->
+                    if (!state.playing) return@collect
+                    ContextCompat.startForegroundService(
+                        this@MainActivity,
+                        Intent(this@MainActivity, PlaybackService::class.java),
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
         ttsViewModel.onUserStopRequested = null
         binderState.value?.detachController()
-        unbindService(connection)
+        runCatching { unbindService(connection) } // no-op if the bind never succeeded
         binderState.value = null
     }
 
@@ -350,6 +388,28 @@ private fun AppNav(
                 SettingsScreen(ttsViewModel)
             }
         }
+        Screen.STATS -> {
+            val statsViewModel: StatsViewModel =
+                viewModel(
+                    factory =
+                        viewModelFactory {
+                            initializer {
+                                StatsViewModel(
+                                    usageStats = graph.usageStatsStore,
+                                    modelManager = graph.modelManager,
+                                    resourceUsageStore = graph.resourceUsageStore,
+                                    benchmarkHistory = graph.benchmarkHistory,
+                                    favoritesStore = graph.favoritesStore,
+                                    downloadDiagnosticsLog = graph.hfDownloader.diagnosticsLog,
+                                    deviceName = graph.deviceName,
+                                )
+                            }
+                        },
+                )
+            BackScaffold(title = "Stats", current = Screen.STATS, onNavigate = { screen = it }) {
+                StatsScreen(statsViewModel)
+            }
+        }
         Screen.HELP -> {
             val ttsState by ttsViewModel.state.collectAsState()
             BackScaffold(title = "Help", current = Screen.HELP, onNavigate = { screen = it }) {
@@ -368,6 +428,9 @@ private fun AppNav(
                     // has a copyable "why" a model (e.g. a LiteRT .tflite) failed to load or run.
                     errorLogEntries =
                         graph.durableErrorLog.entries().map { "[${it.source}] ${it.message}" },
+                    // Crash rows are written by CrashReporter's uncaught-exception handler and read
+                    // back here, so Help's copy/clear actually has something to show after a crash.
+                    onClearErrorLog = { graph.durableErrorLog.clear() },
                 )
             }
         }

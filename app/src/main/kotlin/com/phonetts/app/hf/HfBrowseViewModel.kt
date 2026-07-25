@@ -115,6 +115,15 @@ class HfBrowseViewModel(
     // listing or a user variant choice, so a permit is never held during user think-time.
     private val downloadSemaphore = Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
+    // Caps how many per-row size/file-tree lookups (loadSize) run at once (issue: unbounded
+    // per-row size fetches on Browse). Unlike downloads, these fire from a LaunchedEffect on EVERY
+    // visible row with no user action gating them - fast-scrolling a long result list used to fire
+    // one file-tree request per row with no limit at all, which can flood the HF file-tree endpoint
+    // and get the whole session rate-limited (degrading the Format/Supported/RTF filters that also
+    // depend on this same fetch). Mirrors [downloadSemaphore]'s pattern at a smaller size, since a
+    // size lookup is far cheaper than a download transfer but still a real network round trip.
+    private val sizeLookupSemaphore = Semaphore(MAX_CONCURRENT_SIZE_LOOKUPS)
+
     // How to re-run each download that has failed, keyed by repo id (issue: a network drop failed a
     // whole batch with no way to retry them). Held here rather than in UI state because it's a
     // callback, not display data - the UI only needs the failed *ids* (state.failedDownloadIds) to
@@ -651,13 +660,22 @@ class HfBrowseViewModel(
      * grey badge, [HfCompatibility]). Cached in state once known so re-opening the screen or
      * scrolling doesn't refetch. A model whose size can't be determined (network hiccup) simply
      * stays unknown - never a guessed number, and never labeled unsupported on a failed fetch.
+     *
+     * Called from a `LaunchedEffect` on EVERY visible row (issue: unbounded per-row size fetches on
+     * Browse) - the actual network fetch is gated behind [sizeLookupSemaphore] so fast-scrolling a
+     * long result list queues extra rows instead of firing them all at once and flooding the HF
+     * file-tree endpoint into a rate limit.
      */
     fun loadSize(modelId: String) {
         val current = mutableState.value
         if (modelId in current.sizeEstimates || modelId in current.sizeLoading) return
         mutableState.update { it.copy(sizeLoading = it.sizeLoading + modelId) }
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { catalog.listFiles(modelId) } }
+            runCatching {
+                sizeLookupSemaphore.withPermit {
+                    withContext(Dispatchers.IO) { catalog.listFiles(modelId) }
+                }
+            }
                 .onSuccess { files ->
                     val estimate = HfSizeEstimator.estimate(files)
                     // One fetch fills three facts the UI/filters need: the download size, how
@@ -677,6 +695,21 @@ class HfBrowseViewModel(
                 }.onFailure { e ->
                     if (e is CancellationException) throw e
                     mutableState.update { it.copy(sizeLoading = it.sizeLoading - modelId) }
+                    // A 429 here is an EXPECTED, self-resolving cooldown, exactly as it is on the
+                    // search path - not a real error. Routing it to logError put a raw red
+                    // "HTTP 429 for https://huggingface.co/api/models/.../tree/main" banner over the
+                    // screen, which is one of the ways Browse reads as "broken": scrolling a long
+                    // list fires one of these per visible row, so a throttled connection paints the
+                    // error banner while every row's size stays permanently unavailable.
+                    // Defer to the same cooldown the search path already shows and let the row retry
+                    // afterwards instead of failing forever.
+                    if (e is HfRateLimitedException) {
+                        // Retry this row's lookup once the cooldown elapses - the size/format/
+                        // compatibility facts the Format, Supported and RTF filters depend on all
+                        // come from this one fetch, so abandoning it silently degrades those filters.
+                        onRateLimited(e) { loadSize(modelId) }
+                        return@onFailure
+                    }
                     logError(modelId, e)
                 }
         }
@@ -994,6 +1027,12 @@ class HfBrowseViewModel(
         // mobile connection saturates past ~2-3 large parallel transfers, which surfaced as a batch of
         // socket failures misread as "No internet". Everything past this queues and starts as slots free.
         private const val MAX_CONCURRENT_DOWNLOADS = 3
+
+        // How many per-row loadSize() file-tree fetches may run at once (issue: unbounded per-row
+        // size fetches on Browse). A size lookup is a small GET, not a multi-file transfer, so this
+        // can be a little more generous than [MAX_CONCURRENT_DOWNLOADS] while still keeping a fast
+        // scroll from firing dozens of requests at the HF file-tree endpoint simultaneously.
+        private const val MAX_CONCURRENT_SIZE_LOOKUPS = 3
     }
 }
 

@@ -1,10 +1,10 @@
 package com.phonetts.core.model
 
 import com.phonetts.core.download.hf.HfEndpoints
+import com.phonetts.core.format.ByteFormat
+import com.phonetts.core.format.CountFormat
 import com.phonetts.core.registry.ModelUsage
 import com.phonetts.core.registry.UnresolvedModelUsage
-import kotlin.math.ln
-import kotlin.math.pow
 
 /**
  * One identified, downloaded model to include in the "Copy list" export (issue #98). Every field
@@ -70,23 +70,23 @@ object ModelListExport {
     ): String {
         val totalBytes = resolved.sumOf { it.sizeBytes } + unresolved.sumOf { it.sizeBytes }
         val count = resolved.size + unresolved.size
-        val lines = mutableListOf("Downloaded models ($count) - ${formatBytes(totalBytes)} total")
+        val lines = mutableListOf("Downloaded models ($count) - ${ByteFormat.format(totalBytes)} total")
         resolved.forEach { lines += resolvedLine(it) }
         unresolved.forEach { lines += unresolvedLine(it) }
         return lines.joinToString("\n")
     }
 
     private fun resolvedLine(model: ExportableModel): String {
-        val facts = mutableListOf("${originLabel(model.origin)} · ${formatBytes(model.sizeBytes)}")
-        model.peakRamBytes?.let { facts += "Est. RAM ~${formatBytes(it)}" }
-        model.paramCount?.let { facts += "~${formatParamCount(it)} params" }
+        val facts = mutableListOf("${model.origin.label} · ${ByteFormat.format(model.sizeBytes)}")
+        model.peakRamBytes?.let { facts += "Est. RAM ~${ByteFormat.format(it)}" }
+        model.paramCount?.let { facts += "~${CountFormat.formatParamCount(it)} params" }
         realtimeFact(model.realtimeMultiple, model.realtimeIsMeasured)?.let { facts += it }
         repoLink(model.hfRepoId, model.modelId)?.let { facts += it }
         return "• ${model.displayName} - ${facts.joinToString(" · ")}"
     }
 
     private fun unresolvedLine(unresolved: UnresolvedModelUsage): String {
-        val facts = mutableListOf("${formatBytes(unresolved.sizeBytes)} · no engine yet")
+        val facts = mutableListOf("${ByteFormat.format(unresolved.sizeBytes)} · no engine yet")
         repoLink(authoritativeRepoId = null, idToGuessFrom = unresolved.bundleId)?.let { facts += it }
         return "• ${unresolved.bundleId} - ${facts.joinToString(" · ")}"
     }
@@ -127,38 +127,5 @@ object ModelListExport {
         return "${id.substring(0, separator)}/${id.substring(separator + 1)}"
     }
 
-    private fun originLabel(origin: Origin): String =
-        when (origin) {
-            Origin.BUILT_IN -> "Built-in"
-            Origin.SIDELOADED -> "Sideloaded"
-        }
-
-    /** A compact "82M"/"1.2B" parameter-count label, mirroring the Manage/Browse screens' own. */
-    private fun formatParamCount(count: Long): String {
-        if (count <= 0L) return "?"
-        val millions = count / MILLION
-        if (millions >= THOUSAND) return "%.1fB".format(millions / THOUSAND)
-        if (millions >= 1.0) return "%.0fM".format(millions)
-        val thousands = count / THOUSAND_DIVISOR
-        if (thousands >= 1.0) return "%.0fK".format(thousands)
-        return count.toString()
-    }
-
     private fun formatRealtimeMultiple(multiple: Double): String = "%.1f".format(multiple)
-
-    /** "1.5 GB" / "320 KB" / "512 B" style formatting, mirroring the Manage screen's own. */
-    private fun formatBytes(bytes: Long): String {
-        if (bytes < UNIT) return "$bytes B"
-        val exponent = (ln(bytes.toDouble()) / ln(UNIT.toDouble())).toInt().coerceIn(1, UNIT_PREFIXES.size)
-        val value = bytes / UNIT.toDouble().pow(exponent)
-        val rounded = Math.round(value * ROUNDING_FACTOR) / ROUNDING_FACTOR
-        return "$rounded ${UNIT_PREFIXES[exponent - 1]}B"
-    }
-
-    private const val UNIT = 1024L
-    private const val ROUNDING_FACTOR = 10.0
-    private val UNIT_PREFIXES = charArrayOf('K', 'M', 'G', 'T')
-    private const val THOUSAND = 1000.0
-    private const val MILLION = 1_000_000.0
-    private const val THOUSAND_DIVISOR = 1_000.0
 }

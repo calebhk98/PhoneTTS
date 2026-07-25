@@ -15,19 +15,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,7 +35,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
-import com.phonetts.core.engine.Voice
+import com.phonetts.app.ui.pickers.ModelPicker
+import com.phonetts.app.ui.pickers.VoicePicker
 import com.phonetts.core.model.ModelDescriptor
 import java.text.DateFormat
 import java.util.Date
@@ -220,8 +215,15 @@ private fun SlotCard(
                 Text("No models downloaded yet.")
                 return@Column
             }
-            CompareModelPicker(models, selection.descriptor, onSelectModel)
-            CompareVoicePicker(selection.voices, selection.voiceId, onSelectVoice)
+            ModelPicker(models, selection.descriptor, onSelectModel, outlined = false, label = "Model")
+            VoicePicker(
+                voices = selection.voices,
+                selectedVoiceId = selection.voiceId,
+                onSelect = onSelectVoice,
+                outlined = false,
+                label = "Voice",
+                voiceLabel = { voice -> "${voice.name} (${voice.language})" },
+            )
             HorizontalDivider()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onReplay, enabled = hasResult && !playing) { Text("Replay $label") }
@@ -363,11 +365,24 @@ private fun RosterBuilder(
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Add an entry to the bracket", style = MaterialTheme.typography.titleMedium)
-            CompareModelPicker(models, pendingModel) {
-                pendingModel = it
-                pendingVoice = it.defaultVoiceId
-            }
-            CompareVoicePicker(pendingModel.voices, pendingVoice) { pendingVoice = it }
+            ModelPicker(
+                models = models,
+                selected = pendingModel,
+                onSelect = {
+                    pendingModel = it
+                    pendingVoice = it.defaultVoiceId
+                },
+                outlined = false,
+                label = "Model",
+            )
+            VoicePicker(
+                voices = pendingModel.voices,
+                selectedVoiceId = pendingVoice,
+                onSelect = { pendingVoice = it },
+                outlined = false,
+                label = "Voice",
+                voiceLabel = { voice -> "${voice.name} (${voice.language})" },
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { onAdd(pendingModel, pendingVoice) }) { Text("Add to bracket") }
                 // Convenience so you don't have to add every model by hand for a full-field bracket
@@ -589,67 +604,4 @@ private fun FlaggedLogDialog(
             }
         },
     )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CompareModelPicker(
-    models: List<ModelDescriptor>,
-    selected: ModelDescriptor?,
-    onSelect: (ModelDescriptor) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
-            value = selected?.displayName ?: "Select a model",
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Model") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            models.forEach { model ->
-                DropdownMenuItem(
-                    text = { Text(model.displayName) },
-                    onClick = {
-                        onSelect(model)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CompareVoicePicker(
-    voices: List<Voice>,
-    selectedVoiceId: String?,
-    onSelect: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val selectedName = voices.firstOrNull { it.id == selectedVoiceId }?.name ?: "Select a voice"
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        TextField(
-            value = selectedName,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Voice") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            voices.forEach { voice ->
-                DropdownMenuItem(
-                    text = { Text("${voice.name} (${voice.language})") },
-                    onClick = {
-                        onSelect(voice.id)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
 }

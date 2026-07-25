@@ -19,6 +19,7 @@ import com.phonetts.core.download.hf.HfCatalog
 import com.phonetts.core.engine.EngineContext
 import com.phonetts.core.engine.PlatformServices
 import com.phonetts.core.metrics.BenchmarkHistory
+import com.phonetts.core.metrics.UsageStatsStore
 import com.phonetts.core.prefs.AppThemePreference
 import com.phonetts.core.prefs.BlendedVoiceStore
 import com.phonetts.core.prefs.DocumentLibrary
@@ -31,6 +32,7 @@ import com.phonetts.core.prefs.ReadingTextPreferences
 import com.phonetts.core.prefs.ResourceUsageStore
 import com.phonetts.core.prefs.StorageLocationPreference
 import com.phonetts.core.resolver.DetectionFailureExplainer
+import com.phonetts.core.session.SessionStateStore
 import com.phonetts.core.registry.EngineLoader
 import com.phonetts.core.registry.EngineManager
 import com.phonetts.core.registry.EngineRegistry
@@ -296,7 +298,7 @@ class AppGraph(context: Context) {
     // every "must survive a restart" store below, mirroring how DownloadDiagnosticsLog persists but
     // generalised behind the :core DurableStore seam. Lives under filesDir/durable (app-private
     // internal storage), so it is untouched by a model-storage relocation (only weights move).
-    private val durableStore = FilesDurableStore(java.io.File(appContext.filesDir, FilesDurableStore.DIRECTORY_NAME))
+    private val durableStore = FilesDurableStore(durableDir(appContext))
 
     /**
      * The shared Favorites store the tournament (#113), home-favorites (#119), and persistence (#114)
@@ -306,6 +308,19 @@ class AppGraph(context: Context) {
      * now holds only the per-language default voice, not favorites.
      */
     val favoritesStore = FavoritesStore(durableStore)
+
+    // Cumulative listening/generation counters behind the Stats screen. Everything else Stats shows
+    // (storage, benchmark history, download health) is read from stores that already existed; these
+    // totals are the one genuinely new measurement, because GenerationStats and ListeningTimeEstimator
+    // both compute per-run figures and then throw them away.
+    val usageStatsStore = UsageStatsStore(durableStore)
+
+    // What the user was doing last time: reader text, the audio toggles, each list's sort/filter.
+    // None of it survived a restart before - no view model used SavedStateHandle, so anything not
+    // written to a store died with the process (routine on a 4 GB phone whenever the app is
+    // backgrounded). One document over the same durable store the favorites/error log already use,
+    // rather than another dozen loose SharedPreferences keys.
+    val sessionState = SessionStateStore(durableStore)
 
     /**
      * The durable app-wide error/diagnostics log (issue #88 + #114): survives process death, unlike
@@ -380,5 +395,21 @@ class AppGraph(context: Context) {
         // Where the in-app update check looks for newer APKs (the GitHub Releases of this repo).
         const val REPO_OWNER = "calebhk98"
         const val REPO_NAME = "PhoneTTS"
+
+        // The one place the durable-store directory path is built, so [durableStore] above and
+        // [durableErrorLogFor] below can never drift apart (SSOT).
+        private fun durableDir(context: Context): java.io.File =
+            java.io.File(context.applicationContext.filesDir, FilesDurableStore.DIRECTORY_NAME)
+
+        /**
+         * Builds the durable error log straight from a bare [Context], without needing a full
+         * [AppGraph]. [com.phonetts.app.diagnostics.CrashReporter] uses this to install the crash
+         * handler as the very first thing [com.phonetts.app.PhoneTtsApplication.onCreate] does - before
+         * [AppGraph] itself is built - so a crash during graph construction is also captured, not just
+         * crashes after startup finishes. Points at the exact same on-disk document [durableErrorLog]
+         * reads/writes, so anything recorded here shows up once the graph exists and MainActivity reads
+         * it for the Help screen (issue: crash log).
+         */
+        fun durableErrorLogFor(context: Context): DurableErrorLog = DurableErrorLog(FilesDurableStore(durableDir(context)))
     }
 }

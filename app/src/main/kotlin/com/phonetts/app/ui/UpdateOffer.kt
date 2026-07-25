@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.phonetts.app.update.ApkInstaller
+import com.phonetts.core.format.ByteFormat
 import com.phonetts.core.update.ApkDownloadState
 import com.phonetts.core.update.UpdateStatus
 import com.phonetts.core.update.percentOrNull
@@ -96,7 +97,10 @@ private fun IdleActions(
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(onClick = onDownload, enabled = update.apkDownloadUrl != null) {
-            Text("Download ${update.latestVersion}" + (update.apkSizeBytes?.let { " (${formatBytes(it)})" } ?: ""))
+            Text(
+                "Download ${update.latestVersion}" +
+                    (update.apkSizeBytes?.let { " (${ByteFormat.format(it)})" } ?: ""),
+            )
         }
         TextButton(onClick = onOpenInBrowser) { Text("Open in browser") }
     }
@@ -148,18 +152,10 @@ private fun progressLabel(
     download: ApkDownloadState.Downloading,
     percent: Int?,
 ): String {
-    val done = formatBytes(download.bytesDone)
-    val total = download.bytesTotal?.let { " of ${formatBytes(it)}" } ?: ""
+    val done = ByteFormat.format(download.bytesDone)
+    val total = download.bytesTotal?.let { " of ${ByteFormat.format(it)}" } ?: ""
     val prefix = percent?.let { "$it% - " } ?: "Downloading - "
     return "$prefix$done$total"
 }
 
-private fun formatBytes(bytes: Long): String {
-    val mb = bytes / (BYTES_PER_KB * BYTES_PER_KB)
-    if (mb >= MB_PER_GB) return "%.2f GB".format(mb / MB_PER_GB)
-    return "%.1f MB".format(mb)
-}
-
-private const val BYTES_PER_KB = 1024.0
-private const val MB_PER_GB = 1024.0
 private const val PERCENT_SCALE = 100f

@@ -65,6 +65,7 @@ val NAV_ITEMS: List<NavItem> =
         NavItem.ToScreen(Screen.LIBRARY, "Reading library"),
         NavItem.ToScreen(Screen.COMPARE, "Compare voices (A/B)"),
         NavItem.ToScreen(Screen.BENCHMARK, "Benchmarks"),
+        NavItem.ToScreen(Screen.STATS, "Stats"),
         NavItem.ToScreen(Screen.SETTINGS, "Settings"),
         NavItem.ToScreen(Screen.HELP, "Help"),
     )

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.phonetts.app.AppGraph
 import com.phonetts.core.download.hf.ModelSpeedEstimate
+import com.phonetts.core.format.ByteFormat
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.metrics.BenchmarkEta
 import com.phonetts.core.metrics.BenchmarkMetrics
@@ -324,7 +325,7 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun optionalFmt(value: Double?): String = value?.let { fmt(it) } ?: "unknown"
 
-    private fun ramText(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "unknown"
+    private fun ramText(bytes: Long?): String = bytes?.let { "~${ByteFormat.format(it)}" } ?: "unknown"
 
     companion object {
         // Multiple sentences on purpose (issue: TTFA == total Gen time): AbstractVoiceEngine emits
@@ -338,7 +339,6 @@ class BenchmarkViewModel(private val graph: AppGraph) : ViewModel() {
             "The quick brown fox jumps over the lazy dog. " +
                 "Pack my box with five dozen liquor jugs. " +
                 "The five boxing wizards jump quickly."
-        private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
         private const val PROGRESS_TICK_MILLIS = 1_000L
 
         /**

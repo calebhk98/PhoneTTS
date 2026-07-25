@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.phonetts.core.format.ByteFormat
 
 /**
  * Compare every downloaded model's real generation speed on the same phrase, and copy the numbers
@@ -262,9 +263,8 @@ private fun fmt(value: Double): String = "%.2f".format(value)
 // honesty (never a guessed number), just terser for the fixed-width cell.
 private fun optionalFmt(value: Double?): String = value?.let { fmt(it) } ?: "-"
 
-private fun ram(bytes: Long?): String = bytes?.let { "~${it / BYTES_PER_MEBIBYTE} MB" } ?: "?"
+private fun ram(bytes: Long?): String = bytes?.let { "~${ByteFormat.format(it)}" } ?: "?"
 
-private const val BYTES_PER_MEBIBYTE = 1024L * 1024L
 private val MODEL_COL_WIDTH = 200.dp
 private val NUM_COL_WIDTH = 72.dp
 

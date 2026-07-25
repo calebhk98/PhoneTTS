@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.phonetts.app.R
+import com.phonetts.core.format.ByteFormat
 
 /**
  * Shows a system notification with live byte-progress while a Browse download is in flight, and
@@ -117,11 +118,9 @@ class DownloadNotifier(private val context: Context) {
         bytesDone: Long,
         bytesTotal: Long?,
     ): String {
-        val total = bytesTotal ?: return formatMb(bytesDone)
-        return "${formatMb(bytesDone)} / ${formatMb(total)}"
+        val total = bytesTotal ?: return ByteFormat.format(bytesDone)
+        return "${ByteFormat.format(bytesDone)} / ${ByteFormat.format(total)}"
     }
-
-    private fun formatMb(bytes: Long): String = "%.1f MB".format(bytes / BYTES_PER_MB)
 
     // One id per repo (rather than one shared id) so concurrent downloads (issue #2) each keep their
     // own row in the shade instead of the latest update overwriting an unrelated repo's notification.
@@ -141,6 +140,5 @@ class DownloadNotifier(private val context: Context) {
         private const val CHANNEL_NAME = "Model downloads"
         private const val BASE_NOTIFICATION_ID = 20_000
         private const val PERCENT_MAX = 100
-        private const val BYTES_PER_MB = 1024.0 * 1024.0
     }
 }
