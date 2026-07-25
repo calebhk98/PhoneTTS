@@ -69,8 +69,28 @@ import com.phonetts.core.prefs.AppTheme
  * MIX/COMPARE are tabs inside the Voices hub; STATS/BENCHMARK/HELP are rows under Settings;
  * ONBOARDING is a first-run-only flow, never a nav destination. [NavigationReachabilityTest] (app
  * test sources) guards every value here against becoming unreachable.
+ *
+ * Issue #135 fix: group the drawer into "Reading" and a collapsed "Advanced" section for QA/benchmark
+ * tooling, so the main nav doesn't put these at equal weight with core reading features.
  */
-enum class Screen { ONBOARDING, MAIN, BROWSE, MANAGE, BENCHMARK, HELP, MIX, LIBRARY, COMPARE, SETTINGS, STATS, VOICES }
+enum class Screen {
+    ONBOARDING,
+    MAIN,
+    BROWSE,
+    MANAGE,
+    BENCHMARK,
+    HELP,
+    MIX,
+    LIBRARY,
+    COMPARE,
+    SETTINGS,
+    STATS,
+    VOICES,
+
+    // New: groupings for the drawer UI
+    READING_GROUP,
+    ADVANCED_GROUP,
+}
 
 class MainActivity : ComponentActivity() {
     private val graph by lazy { (application as PhoneTtsApplication).graph }
