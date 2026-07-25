@@ -277,6 +277,76 @@ the model unset - an unpinned subagent inherits the (expensive) parent model. Re
 main orchestrating loop only. This keeps fan-out cheap without hurting result quality on the seam-
 and UI-level tasks this repo involves.
 
+## Orchestrating parallel agents (learned the hard way, in one session)
+
+The rules above are about the code. These are about the *process* of changing it with a fleet of
+agents, and every one of them cost real work before it was written down.
+
+1. **"EXTERNAL WIRING REQUIRED" in an agent's report is a DEFECT, not a note.** If a change needs
+   one line in a file its author could not edit, the change is not done - it is dead code that
+   passes its own tests. This happened **five times in one session**: `SessionStateStore`'s
+   browse/manage/benchmark sections, SHA-256 verification on model downloads,
+   `DocumentLibraryMigration` (which would have made every existing user's saved library
+   permanently invisible), the backup module, and the durable Browse error log. Every one was
+   built, tested, committed - and inert. If you are the orchestrator, treat that phrase as blocking
+   and wire it before you claim the feature landed. If you are the agent, say it loudly at the TOP
+   of your report, not in a closing paragraph.
+2. **A stale "not wired yet" comment is worse than no comment.** Two `EXTERNAL WIRING REQUIRED`
+   notes in `HfBrowseViewModel` outlived their wiring and invited a second one. When you wire
+   something, delete the note that asked for it - and state the wiring as a fact ("VoicesHubScreen
+   passes X"), so the next reader can check it.
+3. **A comment asserting a guarantee is not the guarantee.** `HfDownloader` carried
+   "Curated/manifest downloads still verify SHA-256" while *nothing* verified anything. That
+   sentence is very likely why nobody looked for years: it reads like finished work. Before
+   trusting any comment that claims a safety property, grep for the call that would implement it.
+4. **Force a clean run before diagnosing a test failure.** Gradle's incremental state lies
+   constantly in this repo - especially with several agents writing at once. Repeatedly, "2 tests
+   failed" became "all pass" under `--rerun-tasks` with no code change, and several rounds of
+   "fixes" were spent on nothing. A failure you have not reproduced on a clean run is not yet a
+   failure.
+5. **Verify data an agent claims to have fetched.** An agent reported pinning the real SHA-256 of
+   21 curated model files. Spot-checking one meant downloading it and hashing it - it matched, but
+   fabricated-looking data (hashes, sizes, benchmark numbers, version strings) is exactly what to
+   sample before believing. Cheap check, catastrophic if skipped.
+6. **Shared tree vs. isolated worktree - pick deliberately, both bite.** Agents in the SHARED
+   checkout silently clobber each other's files (one agent's work was wiped mid-task and it
+   recovered onto its own branch, producing a second PR nobody asked for). Agents in ISOLATED
+   worktrees commit to their own branch, so their output does NOT reach yours unless you merge it
+   by hand. And never delete `.claude/worktrees` while any agent is live - doing so destroyed two
+   agents' work outright. Use worktrees for read-only research, the shared tree with strict
+   non-overlapping file ownership for writes, and merge worktree branches explicitly.
+7. **A test must assert a product invariant, not a runtime implementation detail.** An
+   investigation left a test asserting that a self-contradicting sort key MUST make TimSort throw.
+   It need not: that check is best-effort inside the JDK and depends on the merge path for a given
+   input size. It now asserts what actually matters - the sort either throws loudly or returns a
+   complete list, never silently dropping rows.
+8. **Robolectric needs headroom.** The `:app` suite kills its own test JVM ("non-zero exit value
+   10") when run as one batch while individual classes pass - Robolectric holds a full Android SDK
+   image per class. `app/build.gradle.kts` sets `maxHeapSize = "2g"` and `forkEvery = 8` for this.
+   Do not remove them; a runner that dies by exhaustion now blocks releases, because CI runs this
+   suite.
+
+## Device-only defect classes to check before claiming something works
+
+Everything in this repo that reached the owner as a real-world bug had passed a green build first.
+These are the categories that CI structurally cannot catch on a 4 GB phone, and they are worth a
+deliberate pass whenever you touch the relevant area:
+
+- **Main-thread I/O.** Any non-suspend store call from a `ViewModel.init{}`, a Compose `onClick`,
+  or an `Application.onCreate()` chain. `FilesDurableStore.write` says in its own kdoc that callers
+  must be off the main thread; both `AppGraph`'s migration and the library search path violated it.
+- **Lifecycle scope.** `repeatOnLifecycle(STARTED)` stops collecting the moment the app
+  backgrounds - which for a background-playback app is exactly when it matters. Two collectors in
+  `MainActivity` feed the playback service; they must agree, and they must be `CREATED`.
+- **Memory on 4 GB, no `largeHeap`.** Raw `FloatArray` audio is ~346 MB per hour at 24 kHz. Any
+  buffer, document, or export that materializes in full is an OOM waiting for a long input - and
+  EPUB import made book-length inputs normal. A safety mechanism that only engages when a
+  default-off toggle is set is not a safety mechanism.
+- **Bind-vs-start and null controllers.** A bound-only service dies with its last client; a service
+  reachable from a widget/tile/media button can be started with nothing attached, so any
+  `controller?.foo() ?: Unit` is a silent dead control (practices rule 2, still recurring).
+- **Exported components.** `TtsAutomationActivity` is exported with no permission gate (issue #153).
+
 ## Workflow conventions in this repo
 
 **The issue is the source of truth for what to do - the prompt only gets you up to speed.** Work is
