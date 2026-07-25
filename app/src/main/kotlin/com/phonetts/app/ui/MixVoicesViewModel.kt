@@ -11,6 +11,7 @@ import com.phonetts.core.engine.BlendedVoiceSpec
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.engine.Voice
 import com.phonetts.core.model.ModelDescriptor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -146,7 +147,14 @@ class MixVoicesViewModel(
                 // BufferedPlayback.play drives a blocking AudioTrack.write via the sink (issue #18-4b)
                 // - offload it off Main, same as the reader's play paths in TtsViewModel.
                 runCatching { withContext(Dispatchers.IO) { playback.play(audio, model.sampleRate, sink) } }
-                    .onFailure { e -> mutableState.update { it.copy(status = "Playback failed: ${e.message}") } }
+                    // A cancellation is the user starting another preview or hitting stop, not a
+                    // failure - reporting it as one put a spurious "Playback failed:
+                    // StandaloneCoroutine was cancelled" on screen for a deliberate action. Same
+                    // defect as the reader's transport had, in a second copy of the same pattern.
+                    .onFailure { e ->
+                        if (e is CancellationException) return@onFailure
+                        mutableState.update { it.copy(status = "Playback failed: ${e.message}") }
+                    }
             }
     }
 

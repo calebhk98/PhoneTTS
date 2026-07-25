@@ -194,6 +194,9 @@ class CompareViewModel(
         val tournament: TournamentUiState = TournamentUiState(),
     )
 
+    // Identifies the newest playback run so a superseded one cannot clobber its state. See playBuffer.
+    private var playbackRunToken = 0
+
     private val mutableState = MutableStateFlow(initialState(initialText))
     val state: StateFlow<UiState> = mutableState.asStateFlow()
 
@@ -385,10 +388,26 @@ class CompareViewModel(
     private suspend fun playBuffer(slot: Slot) {
         val audio = bufferFor(slot) ?: return
         val rate = if (slot == Slot.A) sampleRateA else sampleRateB
+        // Token-guarded exactly as TtsViewModel's transport is: a rapid slot switch cancels the
+        // previous playback coroutine, but a cancelled coroutine still runs the code after its last
+        // suspension point - so the OLD run's `playing = null` used to land AFTER the NEW run had set
+        // its own slot, leaving the UI showing nothing playing while audio played. Device-confirmed
+        // in the reader; the identical pattern lived here untouched because the fix was applied to
+        // one copy of the pattern instead of the pattern itself.
+        val token = beginPlaybackRun()
         mutableState.update { it.copy(playing = slot) }
         playAudio(audio, rate)
+        if (!isCurrentRun(token)) return
         mutableState.update { it.copy(playing = null) }
     }
+
+    // See playBuffer: only the newest playback run may write terminal playback state.
+    private fun beginPlaybackRun(): Int {
+        playbackRunToken += 1
+        return playbackRunToken
+    }
+
+    private fun isCurrentRun(token: Int): Boolean = token == playbackRunToken
 
     // Low-level playback shared by A/B replay AND tournament-slot playback (below): swaps in a
     // fresh BufferedPlayback and drives it off Main (issue #18-4b) through the same AudioTrackSink
@@ -876,10 +895,18 @@ class TournamentController(
         slot: Int,
         entryId: String,
     ) {
+        // Same token guard as CompareViewModel.playBuffer - a tournament replay tap while a slot is
+        // already playing cancels the previous run, whose trailing `playingSlot = null` would
+        // otherwise clear the slot the NEW run just lit up.
+        val token = ++playbackRunToken
         update { it.copy(playingSlot = slot) }
         play(entryAudio.getValue(entryId), entrySampleRate.getValue(entryId))
+        if (token != playbackRunToken) return
         update { it.copy(playingSlot = null) }
     }
+
+    // Identifies the newest slot playback; only it may clear playingSlot.
+    private var playbackRunToken = 0
 
     // Generate (once) + measure this entry's real-time factor, exactly the way RtfEstimator/
     // BenchmarkViewModel measure it elsewhere: wall-clock around a real synthesize() drain, over the
