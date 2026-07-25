@@ -810,12 +810,25 @@ class TtsViewModel(
      * generated rather than starting over (see that class's kdoc for why this is a deliberate,
      * disclosed change from the pre-SpeechSession behaviour, which cancelled generation outright).
      */
+    /**
+     * The user pressed Stop. That means stop EVERYTHING, generation included.
+     *
+     * The split between "stop the consumer" and "abandon the whole session" is the right shape at
+     * the SpeechSession layer - a producer that knows nothing about playback is exactly the point,
+     * and a skip/seek must not cancel generation. But Stop is a user intent, not a transport
+     * primitive: leaving the producer running would keep the phone synthesizing a whole book with
+     * no audio coming out, burning CPU and battery on a device this app specifically targets for
+     * being weak. Deciding that is the ViewModel's job, which is why it lives here and not in
+     * :core.
+     *
+     * The already-generated audio is NOT discarded - the buffer is retained, so pressing Play again
+     * replays it rather than re-synthesizing.
+     */
     fun stop() {
         // Tell the service (if bound) this stop is user-initiated, so it doesn't misread the
         // resulting playing→stopped edge as a natural end-of-document and chime (issue #32).
         onUserStopRequested?.invoke()
-        val s = mutableState.value
-        readerController.stop(s.selected, s.voiceId, s.params.speed, s.text.takeIf { it.isNotBlank() }?.let(::documentIdFor))
+        abandonPlayback()
     }
 
     // The stronger teardown for a model/voice switch (issue #45) - fully cancels generation too, so

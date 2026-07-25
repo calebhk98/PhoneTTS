@@ -1,11 +1,11 @@
 package com.phonetts.app.a11y
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.core.app.ApplicationProvider
 import com.phonetts.app.AppGraph
@@ -55,6 +55,15 @@ import org.robolectric.annotation.Config
  * field), or a `StateDescription`. A node with none of these is exactly the "TalkBack says just
  * `button`" bug issue #141 describes.
  *
+ * IMPORTANT implementation note: every semantics read MUST happen while the [ComposeContentTestRule]
+ * is still alive, i.e. inside the [Statement] passed to `rule.apply(...)` - a [SemanticsNode]'s
+ * `.config` is computed from its still-attached [androidx.compose.ui.layout.LayoutNode], and the
+ * rule's own teardown (run automatically once the wrapped `Statement.evaluate()` returns, as part of
+ * the `TestRule` contract) detaches that tree. Fetching a [SemanticsNode] inside the rule but reading
+ * its `.config` afterwards silently returns empty data (no crash, just every node looking
+ * unlabeled) - so this walks the tree and produces plain `Boolean`/`String` verdicts BEFORE the rule
+ * tears down, never leaking a live [SemanticsNode] across that boundary.
+ *
  * Deliberately scoped to the screens this session owns (see CLAUDE.md's per-session file split) -
  * TtsScreen/HfBrowseScreen/MixVoicesScreen are mid-restructure by other concurrent work and are not
  * this test's job to gate.
@@ -62,6 +71,9 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], shadows = [ShadowEnvironmentAllFilesAccess::class])
 class AccessibilityAuditTest {
+
+    /** One unlabeled clickable node's diagnostic info, captured while the node was still live. */
+    private data class UnlabeledControl(val bounds: Rect, val role: String?)
 
     private fun graph(): AppGraph = ApplicationProvider.getApplicationContext<PhoneTtsApplication>().graph
 
@@ -139,24 +151,6 @@ class AccessibilityAuditTest {
         )
     }
 
-    /** Mounts [content] on a fresh rule (Compose allows exactly one `setContent` per rule/activity -
-     * see [com.phonetts.app.ScreenSmokeTest] for why this loop can't share one `@get:Rule`) and
-     * returns every semantics node in the resulting (merged) tree that has a click action. */
-    private fun clickableNodesOf(testName: String, content: @Composable () -> Unit): List<SemanticsNode> {
-        val rule: ComposeContentTestRule = createComposeRule()
-        var nodes: List<SemanticsNode> = emptyList()
-        val statement =
-            object : Statement() {
-                override fun evaluate() {
-                    rule.setContent { PhoneTtsTheme { content() } }
-                    rule.waitForIdle()
-                    nodes = rule.onAllNodes(hasClickAction()).fetchSemanticsNodes()
-                }
-            }
-        rule.apply(statement, Description.createTestDescription(AccessibilityAuditTest::class.java, testName)).evaluate()
-        return nodes
-    }
-
     private fun SemanticsNode.accessibleName(): String? {
         config.getOrNull(SemanticsProperties.ContentDescription)?.firstOrNull { it.isNotBlank() }?.let { return it }
         config.getOrNull(SemanticsProperties.Text)?.firstOrNull { it.text.isNotBlank() }?.let { return it.text }
@@ -165,19 +159,40 @@ class AccessibilityAuditTest {
         return null
     }
 
+    /** Mounts [content] on a fresh rule (Compose allows exactly one `setContent` per rule/activity -
+     * see [com.phonetts.app.ScreenSmokeTest] for why this loop can't share one `@get:Rule`), then
+     * returns the diagnostic info for every clickable node with no accessible name - computed INSIDE
+     * the rule's lifecycle (see the class kdoc for why that matters). */
+    private fun unlabeledClickablesOf(testName: String, content: @Composable () -> Unit): List<UnlabeledControl> {
+        val rule = createComposeRule()
+        var unlabeled: List<UnlabeledControl> = emptyList()
+        val statement =
+            object : Statement() {
+                override fun evaluate() {
+                    rule.setContent { PhoneTtsTheme { content() } }
+                    rule.waitForIdle()
+                    unlabeled =
+                        rule.onAllNodes(hasClickAction()).fetchSemanticsNodes()
+                            .filter { it.accessibleName() == null }
+                            .map { UnlabeledControl(it.boundsInRoot, it.config.getOrNull(SemanticsProperties.Role)?.toString()) }
+                }
+            }
+        rule.apply(statement, Description.createTestDescription(AccessibilityAuditTest::class.java, testName)).evaluate()
+        return unlabeled
+    }
+
     @Test
     fun everyClickableControlHasAnAccessibleName() {
         val failures = mutableListOf<String>()
         renderers().forEach { (screenName, content) ->
-            val unnamed =
-                runCatching { clickableNodesOf(screenName, content) }
+            val unlabeled =
+                runCatching { unlabeledClickablesOf(screenName, content) }
                     .getOrElse { e -> throw AssertionError("$screenName failed to render: ${e.message}", e) }
-                    .filter { it.accessibleName() == null }
-            if (unnamed.isNotEmpty()) {
+            if (unlabeled.isNotEmpty()) {
                 failures +=
-                    "$screenName: ${unnamed.size} clickable control(s) with no contentDescription/text/" +
-                        "stateDescription (TalkBack would announce just \"button\") at bounds " +
-                        unnamed.joinToString(", ") { it.boundsInRoot.toString() }
+                    "$screenName: ${unlabeled.size} clickable control(s) with no contentDescription/text/" +
+                        "stateDescription (TalkBack would announce just \"button\") - " +
+                        unlabeled.joinToString(", ") { "role=${it.role} bounds=${it.bounds}" }
             }
         }
         assertTrue(
@@ -192,24 +207,41 @@ class AccessibilityAuditTest {
      * carries no selected-state semantics on its own the way a real `Tab`/`NavigationBarItem` does,
      * so [com.phonetts.app.compare.CompareScreen]'s A/B-vs-Tournament mode toggle has to add it
      * explicitly - this only exercises that one control's semantics, since the generic "has a name"
-     * test above can't tell selected from unselected. */
+     * test above can't tell selected from unselected. Same live-node-only-inside-the-rule rule as
+     * [unlabeledClickablesOf] applies here too. */
     @Test
     fun compareScreenModeToggleAnnouncesSelectedState() {
-        val nodes =
-            clickableNodesOf("CompareScreen-selected") {
-                CompareScreen(CompareViewModel(graph(), initialText = ""))
+        val rule = createComposeRule()
+        var selectedByLabel: Map<String, Boolean?> = emptyMap()
+        val statement =
+            object : Statement() {
+                override fun evaluate() {
+                    rule.setContent { PhoneTtsTheme { CompareScreen(CompareViewModel(graph(), initialText = "")) } }
+                    rule.waitForIdle()
+                    selectedByLabel =
+                        rule.onAllNodes(hasClickAction()).fetchSemanticsNodes()
+                            .mapNotNull { node ->
+                                val name = node.accessibleName() ?: return@mapNotNull null
+                                if (name != "A/B" && name != "Tournament") return@mapNotNull null
+                                name to node.config.getOrNull(SemanticsProperties.Selected)
+                            }
+                            .toMap()
+                }
             }
-        val modeButtons = nodes.filter { it.accessibleName() == "A/B" || it.accessibleName() == "Tournament" }
-        assertTrue("Expected to find the A/B and Tournament mode buttons", modeButtons.size == 2)
-        val selectedFlags = modeButtons.map { it.config.getOrNull(SemanticsProperties.Selected) }
+        rule.apply(
+            statement,
+            Description.createTestDescription(AccessibilityAuditTest::class.java, "compareScreenModeToggleAnnouncesSelectedState"),
+        ).evaluate()
+
+        assertTrue("Expected to find the A/B and Tournament mode buttons, found: $selectedByLabel", selectedByLabel.size == 2)
         assertTrue(
             "Each mode button should expose a `selected` semantics value so TalkBack announces which " +
-                "mode is active, not just its label: $selectedFlags",
-            selectedFlags.all { it != null },
+                "mode is active, not just its label: $selectedByLabel",
+            selectedByLabel.values.all { it != null },
         )
         assertTrue(
-            "Exactly one of A/B or Tournament should be selected by default",
-            selectedFlags.count { it == true } == 1,
+            "Exactly one of A/B or Tournament should be selected by default: $selectedByLabel",
+            selectedByLabel.values.count { it == true } == 1,
         )
     }
 }

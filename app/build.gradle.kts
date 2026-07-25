@@ -135,6 +135,15 @@ android {
         unitTests {
             isIncludeAndroidResources = true
             isReturnDefaultValues = true
+            // Robolectric loads a full Android SDK image per test class and holds a lot of it live.
+            // With the whole :app suite in one forked JVM the executor was dying outright ("finished
+            // with non-zero exit value 10") rather than reporting a test failure - individual classes
+            // passed, the batch did not. A bigger heap plus recycling the worker every N classes keeps
+            // it stable; CI now runs this suite, so a flaky-by-exhaustion runner would block releases.
+            all {
+                it.maxHeapSize = "2g"
+                it.forkEvery = 8
+            }
         }
     }
 

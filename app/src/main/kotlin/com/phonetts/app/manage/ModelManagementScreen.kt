@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -248,10 +249,15 @@ private fun AddModelFab(
             uri?.let(onImportFolder)
         }
     Box(modifier = modifier) {
+        // ExtendedFloatingActionButton does NOT merge its `text`/`icon` slots into its own semantics
+        // node (confirmed empirically: an isolated FAB has zero semantics children even with visible
+        // "Add model" text) - unlike a plain Button, so without this explicit contentDescription
+        // TalkBack announces only "button" here (issue #141).
         ExtendedFloatingActionButton(
             text = { Text("Add model") },
             icon = { Icon(Icons.Filled.Add, contentDescription = null) },
             onClick = { expanded = true },
+            modifier = Modifier.semantics { contentDescription = "Add model" },
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
