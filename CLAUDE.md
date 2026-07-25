@@ -95,9 +95,9 @@ defect in this repo. If you're tempted to skip one, re-read the defect it cites.
    a safe default - it used to mean a tapped pause button did nothing, with no log and no crash to
    find it by. If an action can fail, log it or surface it; never let the failure branch be a
    silent no-op.
-3. **UI state is derived from its one owner, never mirrored into a second field.** (About
-   *state*, distinct from rule 1 above the *"Practices"* header and rule 1 of the numbered rules,
-   which is about model *facts*.) `fun play() = startPlaybackFrom(0)` ignored the resume point
+3. **UI state is derived from its one owner, never mirrored into a second field.** (This is about
+   runtime *state* - distinct from rule 1 of *"The rules that must never be broken"* above, which
+   is SSOT for model *facts*.) `fun play() = startPlaybackFrom(0)` ignored the resume point
    `DocumentPosition` already recorded - the data existed, nothing read it. Worse, that resume
    point was keyed to *generation* progress, not *playback* progress, so a skip discarded audio
    that had already been generated but never heard, while the screen kept showing "playing." On a

@@ -38,7 +38,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       # Core-only: the pure-JVM modules prove correctness with no Android SDK (spec §9).
       - name: Run seam tests + lint (core-only)
-        run: ./gradlew -PskipApp=true :core:test ktlintCheck detekt --no-daemon
+        run: ./gradlew -PskipApp=true :core:test :integration:test ktlintCheck detekt --no-daemon
 
   apk:
     # Build the APK on branch pushes, tags and manual runs — not on PRs (the push build already
@@ -79,6 +79,12 @@ jobs:
           cmake --build app/src/main/cpp/espeak-ng/build-native --target data -j"$(nproc)"
           mkdir -p app/src/main/assets
           cp -r app/src/main/cpp/espeak-ng/build-native/espeak-ng-data app/src/main/assets/espeak-ng-data
+      # The :app Robolectric suite - per-screen smoke tests and the dynamic navigation-reachability
+      # test. CI never ran these, which is how a screen could be added and linked nowhere, or a
+      # screen could throw on load, without anything going red. Runs BEFORE assembleDebug so a
+      # broken screen fails the build rather than shipping in the release APK.
+      - name: Run :app unit tests (Robolectric)
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug -PwithEspeak=true --no-daemon
       - name: Resolve release tag
