@@ -18,6 +18,12 @@ the models; need `python3`, `onnxruntime`, `numpy`, and `espeak-ng` on PATH for 
 | **KittenTTS** (nano-0.1) | expr-voice-2-m | 194 | **10.25 s** | **480 KB** | 0.667 | none | ✅ PASS |
 | MeloTTS (MiaoMint en_v2) | speaker 0 | - | **10.54 s** | **908 KB** | 0.293 | none | ✅ PASS (now one-tap) |
 | **CosyVoice3-0.5B** (native ggml) | fleurs-en | 147 | **5.88 s** | **276 KB** | 0.829 | none | ✅ PASS (on-device path) |
+| **Inflect Micro v2** (ONNX) † | default | - | **3.96 s** | - | 0.581 | none | ✅ PASS (now one-tap) |
+| **Inflect Nano v2** (ONNX) † | default | - | **3.84 s** | - | 0.456 | none | ✅ PASS (now one-tap) |
+
+† Inflect was verified through a different, **stronger** protocol than the rows above and on a
+**shorter prompt** (one sentence, not three) - so its duration is not comparable with theirs. See
+[Inflect v2](#inflect-v2---verified-through-the-apps-own-pipeline) below.
 
 Every passing model clears the > 1 KB / > 2 s bar with large margins, confirming the validated
 `input`/`input_lengths`/`scales`→`output` (Piper) and `input_ids`/`style`/`speed`→`waveform`
@@ -81,6 +87,54 @@ It was proven in **two** stages instead:
 Greedy decode (`temperature 0`) falls into CV3's documented "silent_tokens" loop; the RAS sampler
 needs `temperature > 0` (0.8, seed 42 here) to produce well-formed speech - the driver and the app
 runtime both set this.
+
+## Inflect v2 - verified through the app's own pipeline
+
+Inflect v2 (`owensong/Inflect-{Micro,Nano}-v2-ONNX`) is the first model here proven **without** a
+Python reimplementation of the app's logic. `integration/.../RealInflectAutoLoadTest` drives the
+app's REAL code - `DirectoryBundleReader` → `Resolver` → `InflectEngine.inspect()` →
+`EngineManager` → the engine's own `synthesize()` - with only the platform backends swapped for
+their JVM twins (`JvmOnnxRuntime`, `EspeakCliPhonemizer`). So what ran is the shipping engine, not
+a script that agrees with it. Run it with
+`gradle :integration:test --tests "*RealInflectAutoLoadTest" -DrunRealModel=true`.
+
+Results, one sentence ("Text to speech turns written words into natural sounding audio."), speed
+1.0, 24 kHz:
+
+| Export | Duration | Peak | NaNs | Auto-detected as |
+|---|---|---|---|---|
+| Inflect Nano v2 | **3.84 s** (92,064 samples) | 0.456 | none | `inflect` |
+| Inflect Micro v2 | **3.96 s** (95,136 samples) | 0.581 | none | `inflect` |
+
+Four things this pinned down that a fake session could not:
+
+1. **The graphs' declared ranks.** `duration.onnx`'s `length_scale` and `decode.onnx`'s
+   `noise_scale` are declared **rank 0** (`shape=[]`), not `[1]`. ONNX Runtime enforces the declared
+   rank, so a 1-element vector fails at `run()`. This is why `:core` gained `Tensor.rank0Float`
+   alongside `Tensor.scalarFloat` - they are not interchangeable.
+2. **Speed is native, not resampled.** At speed 0.5 the real graph returns >1.5x the samples it
+   returns at 1.0. A post-hoc resample could not do that (it returns the same sample count at a
+   shifted pitch), so this is direct evidence for CLAUDE.md rule 2 on this engine.
+3. **`variation` is really wired.** Setting `noise_scale` to 0.0 vs 0.667 changes the sampled
+   waveform, so the second advertised knob is not a decorative descriptor entry.
+4. **The two-graph handoff.** `decode.onnx` consumes `duration.onnx`'s three outputs plus a
+   host-sampled `zp_noise` shaped from `m_p_exp`'s own runtime shape.
+
+Provenance, checked rather than trusted:
+
+- All four `.onnx` files were downloaded and hashed; every SHA-256 **matched upstream's own
+  published `onnx/checksums.sha256`**. Those are the values pinned in `BuiltInCatalog` (the two
+  `config.json` hashes are not covered by upstream's file, so those are this project's own).
+- The engine's phoneme table was diffed against upstream's real `runtime/text/symbols.py`: **178
+  symbols, byte-identical**, including the em dash and the combining mark that make it *not* the
+  StyleTTS2 table KittenTTS uses.
+
+**What this does NOT establish:** it has not run on a phone, and nothing here measures
+*intelligibility* - no ASR scoring and no listening test was performed. "Produces non-silent,
+finite, correctly-lengthened audio through the real pipeline" is the claim; "sounds good on a
+Galaxy A16" is not. Note also that the app's espeak bridge does not preserve punctuation the way
+upstream's Python frontend does (see `InflectFrontend`'s KDoc), so on-device prosody will differ
+from upstream's samples.
 
 ## What "verified" means and doesn't
 

@@ -159,6 +159,70 @@ object BuiltInCatalog {
             note = "Multi-speaker English VITS model.",
         )
 
+    // Inflect v2, the compact VITS-family end-to-end text-to-waveform pair. The PyTorch repos
+    // (owensong/Inflect-{Micro,Nano}-v2) ship only a .pth checkpoint; the ONNX repos below are
+    // upstream's own verified FP32 exports and are what InflectEngine's graph contract was read
+    // from. Two graphs plus the config.json the engine reads its sample rate out of - no separate
+    // voice table, because the release ships one fixed synthetic English voice.
+    //
+    // Every sha256 here was obtained by fetching the real file at `repoPath` and hashing the bytes.
+    // The four .onnx values additionally MATCH upstream's own published `onnx/checksums.sha256`,
+    // which is a cross-check on the download, not the source of the value. The two config.json
+    // values are not covered by that upstream file, so they are this project's own hashes.
+    val INFLECT_NANO_V2 =
+        BuiltInModel(
+            id = "inflect-nano-v2",
+            displayName = "Inflect - Nano v2 (English)",
+            repoId = "owensong/Inflect-Nano-v2-ONNX",
+            approxSizeMb = 16,
+            files =
+                listOf(
+                    BuiltInFile(
+                        repoPath = "onnx/duration.onnx",
+                        localName = "duration.onnx",
+                        sha256 = "6e5fe09584f979dcd2da4f89d5274385ad5197efcd5ddcaa5ac03db637d7451e",
+                    ),
+                    BuiltInFile(
+                        repoPath = "onnx/decode.onnx",
+                        localName = "decode.onnx",
+                        sha256 = "f98b1ba21f3d5306ee6cf96a02ba9783082ef99314e77f1ee0c03954dc7de2b8",
+                    ),
+                    BuiltInFile(
+                        repoPath = "config.json",
+                        localName = "config.json",
+                        sha256 = "8669007c29a215dfc6c4cbb4962c01440f4d806022584699404aee58e5249f03",
+                    ),
+                ),
+            note = "Smallest end-to-end English model. One fixed voice; speed and variation knobs.",
+        )
+
+    val INFLECT_MICRO_V2 =
+        BuiltInModel(
+            id = "inflect-micro-v2",
+            displayName = "Inflect - Micro v2 (English)",
+            repoId = "owensong/Inflect-Micro-v2-ONNX",
+            approxSizeMb = 38,
+            files =
+                listOf(
+                    BuiltInFile(
+                        repoPath = "onnx/duration.onnx",
+                        localName = "duration.onnx",
+                        sha256 = "b728ca2564b9e5b7d6cf5e446f65e02a6fe2f1880ba281466fec93a667dd2388",
+                    ),
+                    BuiltInFile(
+                        repoPath = "onnx/decode.onnx",
+                        localName = "decode.onnx",
+                        sha256 = "7940923add86f76e7fa78d910b0632ca1779f8cc9a2ca2b49236381a9ca77183",
+                    ),
+                    BuiltInFile(
+                        repoPath = "config.json",
+                        localName = "config.json",
+                        sha256 = "91ba9652f743f65e6be48eaa1aacea1db3d2941f5138ce309f359d4ce14f34e4",
+                    ),
+                ),
+            note = "Larger, higher-quality Inflect. Slower than Piper/KittenTTS on modest hardware.",
+        )
+
     // CosyVoice3-0.5B, the Tier-C autoregressive model - the deployable GGUF sibling of the
     // CosyVoice2 model proven in PyTorch (docs/MODEL-VERIFICATION.md). It runs ONLY on the native
     // ggml backend built with -PwithCosyVoice, so it declares requiresRuntimeId = the CosyVoice
@@ -200,5 +264,6 @@ object BuiltInCatalog {
         )
 
     /** Every recommended model, in display order (smallest-first is friendlier, but quality-first here). */
-    val ALL: List<BuiltInModel> = listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M, MELO_EN, COSYVOICE3_05B)
+    val ALL: List<BuiltInModel> =
+        listOf(PIPER_LESSAC, KITTEN_NANO, KOKORO_82M, MELO_EN, INFLECT_NANO_V2, INFLECT_MICRO_V2, COSYVOICE3_05B)
 }

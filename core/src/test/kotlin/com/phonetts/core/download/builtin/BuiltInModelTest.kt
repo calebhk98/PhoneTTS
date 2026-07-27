@@ -82,10 +82,15 @@ class BuiltInModelTest {
     }
 
     @Test
-    fun oneModelPerEngineFamilyAndCosyVoiceIsRuntimeGated() {
-        // Five curated models, one per engine family (Piper, KittenTTS, Kokoro, MeloTTS, CosyVoice3).
-        assertEquals(5, BuiltInCatalog.ALL.size)
-        // Only the native CosyVoice3 declares a required runtime; the four ONNX models run anywhere.
+    fun onlyTheNativeModelIsRuntimeGated() {
+        // Deliberately NO count assertion (CLAUDE.md: no magic counts in tests). ALL is a
+        // hand-curated list with no second source of truth to derive a number from, so asserting
+        // its length only ever restates the diff - it never catches a defect. What DOES matter is
+        // the gating invariant below, which decides whether a one-tap download can land a model
+        // this build cannot run.
+        assertTrue(BuiltInCatalog.ALL.isNotEmpty(), "the curated catalog must not be empty")
+        // Only the native CosyVoice3 declares a required runtime; every other curated model is ONNX
+        // and runs in any build.
         val gated = BuiltInCatalog.ALL.filter { it.requiresRuntimeId != null }
         assertEquals(listOf("cosyvoice"), gated.map { it.requiresRuntimeId })
         assertEquals("cosyvoice3-0.5b", gated.single().id)

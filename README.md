@@ -138,6 +138,7 @@ The engines that currently ship with verified model facts (the set grows as modu
 | Kokoro-82M | 82M | 24k | 54 voices, 8 languages; own g2p (misaki) w/ espeak fallback |
 | MeloTTS | small core + ~110M BERT | 44.1k | Multilingual; heavier real footprint |
 | CosyVoice3-0.5B | ~500M | 24k | Autoregressive, non-deterministic, multi-component |
+| Inflect v2 (Micro / Nano) | 9.4M / 4.0M | 24k | English, one fixed voice; two graphs; speed + variation knobs |
 
 Per-model facts are confirmed against the actual shipped files and recorded in descriptors -
 see `docs/research/model-facts.md`. Additional engine modules (e.g. MMS, F5-TTS, and native-runtime

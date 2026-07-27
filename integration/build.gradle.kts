@@ -46,4 +46,6 @@ tasks.test {
     // build_jvm_cosyvoice.sh) and can reuse a pre-downloaded GGUF stack to skip the 745 MB fetch.
     System.getProperty("cosyvoice.nativeLib")?.let { systemProperty("cosyvoice.nativeLib", it) }
     System.getProperty("cosyvoice.modelDir")?.let { systemProperty("cosyvoice.modelDir", it) }
+    // Inflect's real-model test can reuse an already-downloaded ONNX pair instead of re-fetching.
+    System.getProperty("inflect.modelDir")?.let { systemProperty("inflect.modelDir", it) }
 }

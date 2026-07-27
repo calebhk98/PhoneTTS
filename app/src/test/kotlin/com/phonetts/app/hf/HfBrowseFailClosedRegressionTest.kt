@@ -149,16 +149,13 @@ class HfBrowseFailClosedRegressionTest {
             "a throwing runtime probe must hide the model it was asked about, not appear as available",
             BuiltInCatalog.COSYVOICE3_05B.id in recommendedIds,
         )
+        // Derived from the catalog itself, not a hand-written list of four ids (CLAUDE.md: derive
+        // anything that must track reality). The hand-written version silently stopped covering
+        // any model added to BuiltInCatalog afterwards - which is exactly the case this asserts.
+        val ungatedIds = BuiltInCatalog.ALL.filter { it.requiresRuntimeId == null }.map { it.id }
         assertTrue(
             "every OTHER recommended model (no runtime requirement) must still show",
-            recommendedIds.containsAll(
-                listOf(
-                    BuiltInCatalog.PIPER_LESSAC.id,
-                    BuiltInCatalog.KITTEN_NANO.id,
-                    BuiltInCatalog.KOKORO_82M.id,
-                    BuiltInCatalog.MELO_EN.id,
-                ),
-            ),
+            recommendedIds.containsAll(ungatedIds),
         )
     }
 
