@@ -295,7 +295,8 @@ class TtsViewModel(
             readerController.state.collect { r ->
                 mutableState.update {
                     it.copy(
-                        playing = r.playing,
+                        // UI/service "playing" means an attached run, including a paused one.
+                        playing = r.playing || r.paused,
                         paused = r.paused,
                         generating = r.generating,
                         sentencesReady = r.sentencesReady,

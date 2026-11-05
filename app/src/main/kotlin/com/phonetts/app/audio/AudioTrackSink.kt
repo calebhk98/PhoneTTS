@@ -20,7 +20,11 @@ import kotlin.math.max
  * unrelated question of which PCM width the speaker driver accepts).
  */
 class AudioTrackSink : AudioSink {
+    @Volatile
     private var track: AudioTrack? = null
+
+    @Volatile
+    private var paused = false
     private var useFloatEncoding = true
     private var sampleRateHz = 0
 
@@ -111,6 +115,7 @@ class AudioTrackSink : AudioSink {
     // into (or bailing out of) a track the system parked while nothing was flowing.
     override fun onChunk(samples: FloatArray) {
         val active = track ?: return
+        if (!awaitResumed(active)) return
         ensurePlaying(active)
         if (useFloatEncoding) {
             writeAllFloat(active, samples)
@@ -128,7 +133,9 @@ class AudioTrackSink : AudioSink {
     // the first sentence or two, then silence for the rest of generation" rather than a real stop.
     // A genuinely barge-in-released track is never reached here (onChunk's `track` lookup above
     // already returns early once stop() has nulled it), so this can't resurrect a deliberate stop.
+    @Synchronized
     private fun ensurePlaying(active: AudioTrack) {
+        if (paused || track !== active) return
         if (active.playState != AudioTrack.PLAYSTATE_PLAYING) runCatching { active.play() }
     }
 
@@ -158,7 +165,9 @@ class AudioTrackSink : AudioSink {
         var offset = 0
         var zeroStreak = 0
         while (offset < samples.size) {
+            if (!awaitResumed(active)) return
             val written = active.write(samples, offset, samples.size - offset, AudioTrack.WRITE_BLOCKING)
+            if (track !== active) return // Stop may release the track during a blocking write.
             if (written < 0) failWrite(written)
             if (written == 0) {
                 zeroStreak = handleZeroProgress(active, zeroStreak) ?: return
@@ -177,7 +186,9 @@ class AudioTrackSink : AudioSink {
         var offset = 0
         var zeroStreak = 0
         while (offset < shorts.size) {
+            if (!awaitResumed(active)) return
             val written = active.write(shorts, offset, shorts.size - offset, AudioTrack.WRITE_BLOCKING)
+            if (track !== active) return // Stop may release the track during a blocking write.
             if (written < 0) failWrite(written)
             if (written == 0) {
                 zeroStreak = handleZeroProgress(active, zeroStreak) ?: return
@@ -198,6 +209,7 @@ class AudioTrackSink : AudioSink {
         zeroStreak: Int,
     ): Int? {
         if (track !== active) return null // a real barge-in: stop()/onFormat() already moved on
+        if (paused) return 0 // a deliberate pause is not a failed write
         val nextStreak = zeroStreak + 1
         if (nextStreak >= MAX_ZERO_WRITE_RETRIES) failWrite(0)
         return nextStreak
@@ -207,16 +219,27 @@ class AudioTrackSink : AudioSink {
     // AudioTrack.pause() halts output immediately but KEEPS the buffered PCM, so a WRITE_BLOCKING
     // write in flight simply blocks (the ring buffer stops draining) until resume(), and no queued
     // audio is lost - the opposite of stop()'s flush. A no-op if there's no live track.
+    @Synchronized
     override fun pause() {
+        paused = true
         track?.let { active -> runCatching { active.pause() } }
     }
 
     // Resume after [pause]: re-arm the track so the parked write continues and playback picks up
     // exactly where it stopped. Guarded so resuming a track that's somehow already playing is a no-op.
+    @Synchronized
     override fun resume() {
+        paused = false
         track?.let { active ->
             if (active.playState != AudioTrack.PLAYSTATE_PLAYING) runCatching { active.play() }
         }
+    }
+
+    // AudioTrack.write can return short/zero when paused. Keep its unwritten tail until Resume,
+    // and let Stop release this wait by clearing track. This runs only on the playback thread.
+    private fun awaitResumed(active: AudioTrack): Boolean {
+        while (paused && track === active) Thread.sleep(DRAIN_POLL_MILLIS)
+        return track === active
     }
 
     // A negative return is one of AudioTrack's ERROR_* codes (bad state, dead object, invalid
@@ -269,9 +292,13 @@ class AudioTrackSink : AudioSink {
         val target = framesWritten
         val remainingFrames = (target - headPositionFrames(active)).coerceAtLeast(0L)
         val remainingMillis = if (sampleRateHz > 0) remainingFrames * MILLIS_PER_SECOND / sampleRateHz else 0L
-        val deadlineNanos = System.nanoTime() + (remainingMillis + DRAIN_GRACE_MILLIS) * NANOS_PER_MILLI
-        while (track === active && headPositionFrames(active) < target && System.nanoTime() < deadlineNanos) {
-            runCatching { Thread.sleep(DRAIN_POLL_MILLIS) }
+        var deadlineNanos = System.nanoTime() + (remainingMillis + DRAIN_GRACE_MILLIS) * NANOS_PER_MILLI
+        while (track === active && headPositionFrames(active) < target) {
+            val beforePause = System.nanoTime()
+            if (!awaitResumed(active)) return
+            deadlineNanos += System.nanoTime() - beforePause
+            if (System.nanoTime() >= deadlineNanos) return
+            Thread.sleep(DRAIN_POLL_MILLIS)
         }
     }
 
@@ -288,8 +315,12 @@ class AudioTrackSink : AudioSink {
     // [stop] (the deliberate immediate-cutoff path, issue #45) and defensively at the top of
     // [onFormat] in case a previous session's track was never cleaned up - deliberately NOT used by
     // [onEnd] (natural completion), see its kdoc above.
+    @Synchronized
     private fun releaseImmediately() {
-        track?.let { active ->
+        val previous = track
+        track = null
+        paused = false
+        previous?.let { active ->
             runCatching {
                 active.pause()
                 active.flush()
@@ -297,7 +328,6 @@ class AudioTrackSink : AudioSink {
             }
             active.release()
         }
-        track = null
     }
 
     companion object {
