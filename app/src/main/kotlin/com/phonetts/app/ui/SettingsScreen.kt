@@ -158,8 +158,8 @@ fun SettingsScreen(
 
         SettingsSection("Long documents") {
             SettingToggle(
-                "Spill audio to disk",
-                "For book-length text: keep memory low by writing older audio to disk during a long synthesis.",
+                "Use less audio memory",
+                "Keep 30 seconds of audio in memory instead of 2 minutes. Older audio is saved to disk in either mode.",
                 state.longDocumentMode,
                 viewModel::setLongDocumentMode,
             )

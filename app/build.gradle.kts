@@ -266,6 +266,7 @@ dependencies {
     // --- :app unit tests (app/src/test) - Robolectric + Compose UI testing on plain JVM, no ---
     // --- emulator. This module previously had NO test source set at all (the highest-priority ---
     // --- gap: see app/src/test/kotlin/com/phonetts/app for what's now covered). ---
+    testImplementation(testFixtures(project(":core")))
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)

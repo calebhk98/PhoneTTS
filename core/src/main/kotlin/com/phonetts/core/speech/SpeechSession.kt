@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -147,11 +148,16 @@ private class ConsumerRun(
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpeechSession(
-    private val scope: CoroutineScope,
+    scope: CoroutineScope,
     private val dispatcher: CoroutineDispatcher,
     private val sampleRate: Int,
     audio: GeneratedAudio = GeneratedAudio(),
 ) : Closeable {
+    // A session owns its collectors as well as generation/playback. Closing it must release all
+    // of them without cancelling the caller's (usually ViewModel-wide) scope.
+    private val sessionJob = SupervisorJob(scope.coroutineContext[Job])
+    private val sessionScope = CoroutineScope(scope.coroutineContext + sessionJob)
+
     /** The producer half - see [SentenceProducer]. Exposed for direct inspection if a caller needs it. */
     val producer = SentenceProducer(audio)
 
@@ -186,7 +192,12 @@ class SpeechSession(
     /** The one SSOT snapshot - see the class doc. Safe to collect from construction onward. */
     val state: StateFlow<SpeechSessionState> =
         combine(producerSnapshot, consumerSnapshot) { p, c -> p.toState(c) }
-            .stateIn(scope, SharingStarted.Eagerly, SpeechSessionState())
+            .stateIn(sessionScope, SharingStarted.Eagerly, SpeechSessionState())
+
+    init {
+        // Wait for cancelled producers/consumers to finish before deleting their spill file.
+        sessionJob.invokeOnCompletion { producer.audio.close() }
+    }
 
     /**
      * Start the producer: drive [flow] - the caller's already-configured `synthesize()` call,
@@ -202,10 +213,11 @@ class SpeechSession(
         flow: Flow<FloatArray>,
         totalSentencesHint: Int? = null,
     ) {
+        check(sessionJob.isActive) { "SpeechSession is closed" }
         check(genJob == null) { "SpeechSession.start() called more than once - start a new SpeechSession instead" }
         totalHintState.value = totalSentencesHint
         startedState.value = true
-        genJob = scope.launch(dispatcher) { producer.run(flow) }
+        genJob = sessionScope.launch(dispatcher) { producer.run(flow) }
     }
 
     /**
@@ -220,12 +232,14 @@ class SpeechSession(
         sink: AudioSink,
         fromIndex: Int? = null,
     ) {
+        check(sessionJob.isActive) { "SpeechSession is closed" }
+        require(fromIndex == null || fromIndex >= 0) { "negative playback index" }
         val startIndex = fromIndex ?: (activeRun.value?.currentPosition ?: 0)
         teardownCurrentRun()
         val run = ConsumerRun(BufferedPlayback(), startIndex)
         activeRun.value = run
         playJob =
-            scope.launch(dispatcher) {
+            sessionScope.launch(dispatcher) {
                 try {
                     run.playback.play(producer.audio, sampleRate, sink, fromIndex = startIndex)
                 } finally {
@@ -261,14 +275,14 @@ class SpeechSession(
 
     /**
      * Abandon this session entirely: stop the consumer, cancel the producer, and release the
-     * buffer's resources (a no-op for a non-spilled [GeneratedAudio]). Use this when the document,
+     * buffer's resources once the cancelled jobs finish. Use this when the document,
      * voice, or parameters change - never for pause/seek, which must leave generation running.
      */
     override fun close() {
         teardownCurrentRun()
         genJob?.cancel()
         genJob = null
-        producer.audio.close()
+        sessionJob.cancel()
     }
 
     private fun teardownCurrentRun() {

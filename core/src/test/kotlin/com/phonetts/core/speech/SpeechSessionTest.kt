@@ -3,7 +3,9 @@ package com.phonetts.core.speech
 import com.phonetts.core.audio.RecordingSink
 import com.phonetts.core.engine.SynthesisParams
 import com.phonetts.core.testing.FakeEngine
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
@@ -15,6 +17,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -30,6 +33,51 @@ private const val RATE = 24_000
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpeechSessionTest {
+    @Test
+    fun nonzeroSeekReportsPositionOnceAndResumeDoesNotSkipAudio() =
+        runTest(UnconfinedTestDispatcher()) {
+            val session = SpeechSession(backgroundScope, UnconfinedTestDispatcher(testScheduler), RATE)
+            session.start(
+                flow {
+                    repeat(4) { emit(floatArrayOf(it.toFloat())) }
+                    delay(10)
+                    emit(floatArrayOf(4f))
+                },
+            )
+            session.seek(RecordingSink(), 2)
+            runCurrent()
+            assertEquals(4, session.state.value.currentSentence)
+            session.stop()
+            val resumed = RecordingSink()
+            session.play(resumed)
+            advanceTimeBy(11)
+            runCurrent()
+            assertEquals(listOf(4f), resumed.recorded.toList())
+            assertEquals(5, session.state.value.currentSentence)
+        }
+
+    @Test
+    fun closeReleasesAllSessionJobsWithoutCancellingTheOwner() =
+        runTest(UnconfinedTestDispatcher()) {
+            val owner = Job()
+            val scope = CoroutineScope(coroutineContext + owner)
+            val session = SpeechSession(scope, UnconfinedTestDispatcher(testScheduler), RATE)
+            session.start(
+                flow {
+                    emit(floatArrayOf(1f))
+                    delay(100)
+                },
+            )
+            runCurrent()
+            session.close()
+            runCurrent()
+            assertTrue(owner.isActive)
+            assertTrue(owner.children.none(), "closed sessions must not retain state collectors or audio")
+            assertFailsWith<IllegalStateException> { session.play(RecordingSink()) }
+            session.close() // teardown is idempotent
+            owner.cancel()
+        }
+
     private fun fiveSentenceEngine(): FakeEngine =
         FakeEngine(
             id = "fake",

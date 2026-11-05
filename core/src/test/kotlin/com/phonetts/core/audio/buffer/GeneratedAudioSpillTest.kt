@@ -15,6 +15,23 @@ private const val RATE = 24_000
 // what was generated, byte-for-byte, whether a chunk is served from RAM or from the scratch file.
 class GeneratedAudioSpillTest {
     @Test
+    fun sampleCountsSupportBackwardAndFutureSeeksWithoutReadingTheSpill() {
+        val spillFile = File.createTempFile("phonetts_spill_counts_", ".bin")
+        val audio = GeneratedAudio(ChunkSpill(spillFile, maxLiveSamples = 1))
+        audio.append(FloatArray(3))
+        audio.append(FloatArray(5))
+        audio.append(FloatArray(2))
+        // Remove the backing bytes: progress must use metadata, never reload audio from disk.
+        java.io.RandomAccessFile(spillFile, "rw").use { it.setLength(0) }
+        assertEquals(10L, audio.sampleCountUpTo(3))
+        assertEquals(3L, audio.sampleCountUpTo(1))
+        assertEquals(10L, audio.sampleCountUpTo(100))
+        assertEquals(0L, audio.sampleCountUpTo(0))
+        audio.close()
+        assertTrue(audio.snapshot().isEmpty(), "close must release retained audio")
+    }
+
+    @Test
     fun spilledChunksReadBackByteIdenticalFromIndexZero() {
         val chunks = (0 until 8).map { i -> FloatArray(4) { (i * 10 + it) + 0.5f } }
         val spillFile = File.createTempFile("phonetts_spill_test_", ".bin")

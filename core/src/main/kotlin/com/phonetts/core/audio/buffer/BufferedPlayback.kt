@@ -110,7 +110,7 @@ class BufferedPlayback {
                 val chunk = audio.chunkAt(index)
                 sink.onChunk(chunk)
                 playedSamplesState.value += chunk.size
-                playedChunksState.value = index + 1
+                playedChunksState.value += 1
                 index + 1
             }
             else -> {
