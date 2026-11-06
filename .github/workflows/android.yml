@@ -55,6 +55,9 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+        with:
+          # The action defaults to "tools platform-tools"; the legacy tools package no longer exists.
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       # espeak-ng phonemizer (issue #13 — ship it so Piper/Kokoro/KittenTTS/MeloTTS get real IPA
       # phonemes instead of raw text). Three steps: install the NDK the native JNI bridge needs,
