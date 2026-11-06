@@ -535,13 +535,13 @@ private fun PlaybackCard(
 /**
  * The persistent bottom transport - docked to the Scaffold instead of scrolling with the rest of the
  * page, like a real media app's mini-player (issue: "designed to look like a desktop website"). Holds
- * the sentence seek bar (while playing), the live status line, and the transport row itself (prev,
+ * the persistent sentence seek bar, the live status line, and the transport row itself (prev,
  * play/pause, next, stop) with the [PlaybackOverflowMenu] anchored at its end for the rarely-used
  * Load model / Generate / Sample voice actions - so Play stays the one obvious primary action.
  * Absent entirely until at least one model is installed (nothing to transport yet).
  */
 @Composable
-private fun BottomTransportBar(
+internal fun BottomTransportBar(
     state: TtsViewModel.UiState,
     viewModel: TtsViewModel,
 ) {
@@ -551,9 +551,7 @@ private fun BottomTransportBar(
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            if (state.playing) {
-                SentenceSeekBar(state, viewModel, modifier = Modifier.padding(horizontal = 16.dp))
-            }
+            SentenceSeekBar(state, viewModel, modifier = Modifier.padding(horizontal = 16.dp))
             // Live playback state, and the synthesis-free listening estimate ("~6 min at 1.25x", issue
             // #23) when idle. The estimate is suppressed once real generation stats exist, so the rough
             // "~4 sec" estimate and the measured "Generated 2.6s" never sit on screen contradicting each
@@ -637,8 +635,8 @@ private fun PlaybackOverflowMenu(
  * Playback position as a sentence-level seek bar. Time/duration isn't plumbed through, but this
  * reader navigates by sentence anyway (that's what skip does), so the slider seeks to a sentence and
  * reads "Sentence X of N". Absent when there's nothing to move between (one sentence or blank). Seeks
- * on release, not mid-drag, so dragging across a long document doesn't re-trigger synthesis at every
- * step (each seek restarts the one generation flow from that sentence).
+ * on release, not mid-drag. Available before generation and during paused/stopped playback; the
+ * saved resume sentence keeps its position after Stop.
  */
 @Composable
 private fun SentenceSeekBar(
@@ -649,8 +647,8 @@ private fun SentenceSeekBar(
     val sentenceCount = remember(state.text) { TextChunker.intoSentences(state.text).size }
     if (sentenceCount <= 1) return
     val lastIndex = sentenceCount - 1
-    val current = (state.currentSentenceIndex ?: 0).coerceIn(0, lastIndex)
-    var dragValue by remember { mutableStateOf<Float?>(null) }
+    val current = (state.currentSentenceIndex ?: state.resumeSentenceIndex ?: 0).coerceIn(0, lastIndex)
+    var dragValue by remember(state.text) { mutableStateOf<Float?>(null) }
     val value = (dragValue ?: current.toFloat()).coerceIn(0f, lastIndex.toFloat())
     Column(modifier = modifier.fillMaxWidth()) {
         Slider(

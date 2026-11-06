@@ -115,9 +115,8 @@ class TtsViewModel(
         // default, applied only on the playback sink, never to generation or export.
         val tempoBoost: Boolean = false,
         val tempoFactor: Float = DEFAULT_TEMPO_FACTOR,
-        // Long-document mode (issue #34): when on, a generation's GeneratedAudio spills older chunks
-        // to a disk scratch file past a live window, bounding RAM for book-length synthesis. Off by
-        // default; when off, generation is byte-for-byte the in-RAM behaviour it always was.
+        // Long-document mode (issue #34): when on, a generation uses a smaller resident audio window.
+        // Older audio spills to disk in both modes, bounding RAM even with this toggle off.
         val longDocumentMode: Boolean = false,
         val stats: GenerationStats? = null,
         // The modelId currently loaded into EngineManager (or null if none). Compared against
@@ -296,7 +295,8 @@ class TtsViewModel(
             readerController.state.collect { r ->
                 mutableState.update {
                     it.copy(
-                        playing = r.playing,
+                        // UI/service "playing" means an attached run, including a paused one.
+                        playing = r.playing || r.paused,
                         paused = r.paused,
                         generating = r.generating,
                         sentencesReady = r.sentencesReady,

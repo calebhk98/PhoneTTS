@@ -103,18 +103,13 @@ class ReaderPlaybackController(
         val paramValues: Map<String, Float>,
     )
 
-    // One retained generation attempt: a SpeechSession plus the document sentence its buffer's
-    // index 0 corresponds to, and a running cache of chunk sizes so elapsed-sample math (used for
-    // both the scrubber and listening-stats deltas below) is O(1) amortized rather than re-summed
-    // from scratch on every tick.
+    // One retained generation attempt, with its document-relative start sentence.
     private class Attempt(
         val key: GenKey,
         val fromSentence: Int,
         val session: SpeechSession,
         val sampleRate: Int,
     ) {
-        private var cachedUpTo = 0
-        private var cachedSamples = 0L
         var lastRecordedSamples = 0L
 
         fun covers(sentence: Int): Boolean {
@@ -124,19 +119,7 @@ class ReaderPlaybackController(
 
         fun bufferIndexFor(sentence: Int): Int = sentence - fromSentence
 
-        /** Exact sample count delivered up to local buffer index [localIndex] (a seek backward
-         * resets and re-sums; forward progress is O(1) amortized). */
-        fun sampleCountUpTo(localIndex: Int): Long {
-            if (localIndex < cachedUpTo) {
-                cachedUpTo = 0
-                cachedSamples = 0L
-            }
-            while (cachedUpTo < localIndex) {
-                cachedSamples += session.producer.audio.chunkAt(cachedUpTo).size
-                cachedUpTo++
-            }
-            return cachedSamples
-        }
+        fun sampleCountUpTo(localIndex: Int): Long = session.producer.audio.sampleCountUpTo(localIndex)
     }
 
     private var attempt: Attempt? = null
@@ -270,8 +253,10 @@ class ReaderPlaybackController(
         descriptor: ModelDescriptor,
         longDocumentMode: Boolean,
     ): GeneratedAudio {
-        if (!longDocumentMode) return GeneratedAudio()
-        return GeneratedAudio(ChunkSpill(graph.newSpillFile(), descriptor.sampleRate * SPILL_WINDOW_SECONDS))
+        // Always bound retained audio. The preference selects a smaller window, never disables
+        // the ceiling: paused/stopped playback may keep generating an entire book.
+        val windowSeconds = if (longDocumentMode) SPILL_WINDOW_SECONDS else DEFAULT_WINDOW_SECONDS
+        return GeneratedAudio(ChunkSpill(graph.newSpillFile(), descriptor.sampleRate * windowSeconds))
     }
 
     private fun launchGeneration(
@@ -464,5 +449,6 @@ class ReaderPlaybackController(
         // Seconds of audio kept resident in RAM before long-document mode spills older chunks to
         // disk (issue #34) - same policy constant the old TtsViewModel used.
         const val SPILL_WINDOW_SECONDS = 30
+        const val DEFAULT_WINDOW_SECONDS = 120
     }
 }

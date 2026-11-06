@@ -33,6 +33,8 @@ class GeneratedAudio(
     private var spilledCount = 0
     private var liveSamples = 0
     private var total = 0
+    private val cumulativeSamples = ArrayList<Long>()
+    private var closed = false
 
     private val countState = MutableStateFlow(0)
     private val completeState = MutableStateFlow(false)
@@ -46,9 +48,11 @@ class GeneratedAudio(
     /** Append one generated chunk. Called only by the producer. */
     @Synchronized
     fun append(chunk: FloatArray) {
+        check(!closed) { "audio buffer is closed" }
         check(!completeState.value) { "cannot append after generation is complete" }
         live.addLast(chunk)
         liveSamples += chunk.size
+        cumulativeSamples.add((cumulativeSamples.lastOrNull() ?: 0L) + chunk.size)
         total++
         evictIfNeeded()
         countState.value = total
@@ -66,6 +70,14 @@ class GeneratedAudio(
         return requireSpill().read(index)
     }
 
+    /** Samples before [endIndexExclusive], clamped to available audio for seeks ahead of generation.
+     * Uses metadata only: progress must never reload spilled FloatArrays on the UI thread. */
+    @Synchronized
+    fun sampleCountUpTo(endIndexExclusive: Int): Long {
+        val end = endIndexExclusive.coerceIn(0, total)
+        return if (end == 0) 0L else cumulativeSamples[end - 1]
+    }
+
     /** An immutable snapshot of everything generated so far, in order (spilled chunks read back from disk). */
     @Synchronized
     fun snapshot(): List<FloatArray> {
@@ -75,9 +87,18 @@ class GeneratedAudio(
         return out
     }
 
-    /** Release the scratch spill file, if any. Safe to call when no spill is configured. */
+    /** Release retained samples and the scratch file after producer/consumer jobs have stopped. */
     @Synchronized
     override fun close() {
+        if (closed) return
+        closed = true
+        live.clear()
+        cumulativeSamples.clear()
+        liveSamples = 0
+        spilledCount = 0
+        total = 0
+        countState.value = 0
+        completeState.value = true
         spill?.close()
     }
 

@@ -5,18 +5,14 @@ package com.phonetts.core.prefs
  * [PlaybackCuePreferences] / [DefaultVoicePreference]: `:core` holds the pure toggle, `:app` supplies the
  * SharedPreferences-backed store and the actual scratch file).
  *
- * When enabled, the app backs a generation's
- * [com.phonetts.core.audio.buffer.GeneratedAudio] with a
- * [com.phonetts.core.audio.buffer.ChunkSpill] so a book-length synthesis spills older audio chunks
- * to disk instead of holding everything in RAM (issue #34). Off by default: the in-RAM behaviour is
- * what makes instant pause/resume/replay cheapest, and only very long documents need the ceiling, so
- * ordinary use pays nothing.
+ * The reader always spills older generated audio to disk. Enabling this preference reduces its
+ * resident window from two minutes to thirty seconds; it never disables the memory ceiling.
  */
 class LongDocumentPreferences(private val store: PreferenceStore) {
-    /** Whether generated audio should spill to disk past the live window. Off by default. */
+    /** Whether the reader should use its smaller resident audio window. Off by default. */
     fun enabled(): Boolean = store.getString(LONG_DOCUMENT_MODE_KEY) == TRUE
 
-    /** Turns long-document (spill-to-disk) mode on or off. */
+    /** Selects the smaller resident audio window. */
     fun setEnabled(enabled: Boolean) {
         store.putString(LONG_DOCUMENT_MODE_KEY, if (enabled) TRUE else FALSE)
     }
